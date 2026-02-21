@@ -14,10 +14,12 @@ func TestPathsForLinuxWithXDG(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PathsFor() error = %v", err)
 	}
-	if p.ConfigPath != "/xdg/config/kan/config.toml" {
+	wantConfig := filepath.Join("/xdg/config", "kan", "config.toml")
+	wantDB := filepath.Join("/xdg/data", "kan", "kan.db")
+	if p.ConfigPath != wantConfig {
 		t.Fatalf("unexpected config path %q", p.ConfigPath)
 	}
-	if p.DBPath != "/xdg/data/kan/kan.db" {
+	if p.DBPath != wantDB {
 		t.Fatalf("unexpected db path %q", p.DBPath)
 	}
 }
@@ -59,10 +61,12 @@ func TestPathsForDarwinFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PathsFor() error = %v", err)
 	}
-	if p.ConfigPath != "/Users/me/Library/Application Support/kan/config.toml" {
+	wantConfig := filepath.Join("/Users/me/Library/Application Support", "kan", "config.toml")
+	wantDB := filepath.Join("/Users/me/Library/Application Support", "kan", "kan.db")
+	if p.ConfigPath != wantConfig {
 		t.Fatalf("unexpected config path %q", p.ConfigPath)
 	}
-	if p.DBPath != "/Users/me/Library/Application Support/kan/kan.db" {
+	if p.DBPath != wantDB {
 		t.Fatalf("unexpected db path %q", p.DBPath)
 	}
 }
@@ -73,10 +77,12 @@ func TestPathsForUnknownFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PathsFor() error = %v", err)
 	}
-	if p.ConfigPath != "/cfg/kan/config.toml" {
+	wantConfig := filepath.Join("/cfg", "kan", "config.toml")
+	wantData := filepath.Join("/data", "kan")
+	if p.ConfigPath != wantConfig {
 		t.Fatalf("unexpected config path %q", p.ConfigPath)
 	}
-	if p.DataDir != "/data/kan" {
+	if p.DataDir != wantData {
 		t.Fatalf("unexpected data dir %q", p.DataDir)
 	}
 }
@@ -87,10 +93,12 @@ func TestPathsForLinuxFallbackWithoutXDG(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PathsFor() error = %v", err)
 	}
-	if p.ConfigPath != "/home/me/.config/kan/config.toml" {
+	wantConfig := filepath.Join("/home/me/.config", "kan", "config.toml")
+	wantDB := filepath.Join("/home/me/.local/share", "kan", "kan.db")
+	if p.ConfigPath != wantConfig {
 		t.Fatalf("unexpected config path %q", p.ConfigPath)
 	}
-	if p.DBPath != "/home/me/.local/share/kan/kan.db" {
+	if p.DBPath != wantDB {
 		t.Fatalf("unexpected db path %q", p.DBPath)
 	}
 }

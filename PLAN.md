@@ -969,3 +969,13 @@ Goal: define the path to expose this system as an MCP-capable planning backend.
   - doc references used: `just` settings docs for `windows-shell` behavior and Windows shell precedence
   - note: Context7 retried before edit and unavailable (`Monthly quota exceeded`)
   - follow-up cleanup: windows CI step now runs `just ci` directly in `pwsh`; `windows-shell` in `Justfile` controls recipe shell path explicitly
+- [x] 2026-02-21: Windows path-separator test portability fix (`internal/platform`)
+  - user request: explain and then fix windows-only `internal/platform` test failures
+  - docs consulted first:
+    - Go `path/filepath` package docs (`filepath.Join` uses OS-specific separators)
+    - fallback source due Context7 quota block: `go doc path/filepath` locally
+  - Context7 retry before edit failed (`Monthly quota exceeded`)
+  - root cause: tests asserted hardcoded Unix-style path strings while `PathsFor` uses `filepath.Join`, which emits `\\` separators on windows hosts
+  - edit: updated expected paths in `internal/platform/paths_test.go` to use `filepath.Join` for Linux/Darwin/fallback cases
+  - command: `GOCACHE=$(pwd)/.go-cache just test-pkg ./internal/platform` -> success
+  - command: `GOCACHE=$(pwd)/.go-cache just check-llm` -> success
