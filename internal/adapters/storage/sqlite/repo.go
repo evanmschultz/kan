@@ -66,6 +66,7 @@ func (r *Repository) migrate(ctx context.Context) error {
 			slug TEXT NOT NULL,
 			name TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
+			metadata_json TEXT NOT NULL DEFAULT '{}',
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL,
 			archived_at TEXT
@@ -106,23 +107,34 @@ func (r *Repository) migrate(ctx context.Context) error {
 			return fmt.Errorf("migrate sqlite: %w", err)
 		}
 	}
+	if _, err := r.db.ExecContext(ctx, `ALTER TABLE projects ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'`); err != nil && !isDuplicateColumnErr(err) {
+		return fmt.Errorf("migrate sqlite add projects.metadata_json: %w", err)
+	}
 	return nil
 }
 
 func (r *Repository) CreateProject(ctx context.Context, p domain.Project) error {
-	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO projects(id, slug, name, description, created_at, updated_at, archived_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`, p.ID, p.Slug, p.Name, p.Description, ts(p.CreatedAt), ts(p.UpdatedAt), nullableTS(p.ArchivedAt))
+	metaJSON, err := json.Marshal(p.Metadata)
+	if err != nil {
+		return fmt.Errorf("encode project metadata: %w", err)
+	}
+	_, err = r.db.ExecContext(ctx, `
+		INSERT INTO projects(id, slug, name, description, metadata_json, created_at, updated_at, archived_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, p.ID, p.Slug, p.Name, p.Description, string(metaJSON), ts(p.CreatedAt), ts(p.UpdatedAt), nullableTS(p.ArchivedAt))
 	return err
 }
 
 func (r *Repository) UpdateProject(ctx context.Context, p domain.Project) error {
+	metaJSON, err := json.Marshal(p.Metadata)
+	if err != nil {
+		return fmt.Errorf("encode project metadata: %w", err)
+	}
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE projects
-		SET slug = ?, name = ?, description = ?, updated_at = ?, archived_at = ?
+		SET slug = ?, name = ?, description = ?, metadata_json = ?, updated_at = ?, archived_at = ?
 		WHERE id = ?
-	`, p.Slug, p.Name, p.Description, ts(p.UpdatedAt), nullableTS(p.ArchivedAt), p.ID)
+	`, p.Slug, p.Name, p.Description, string(metaJSON), ts(p.UpdatedAt), nullableTS(p.ArchivedAt), p.ID)
 	if err != nil {
 		return err
 	}
@@ -131,7 +143,7 @@ func (r *Repository) UpdateProject(ctx context.Context, p domain.Project) error 
 
 func (r *Repository) GetProject(ctx context.Context, id string) (domain.Project, error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT id, slug, name, description, created_at, updated_at, archived_at
+		SELECT id, slug, name, description, metadata_json, created_at, updated_at, archived_at
 		FROM projects
 		WHERE id = ?
 	`, id)
@@ -140,7 +152,7 @@ func (r *Repository) GetProject(ctx context.Context, id string) (domain.Project,
 
 func (r *Repository) ListProjects(ctx context.Context, includeArchived bool) ([]domain.Project, error) {
 	query := `
-		SELECT id, slug, name, description, created_at, updated_at, archived_at
+		SELECT id, slug, name, description, metadata_json, created_at, updated_at, archived_at
 		FROM projects
 	`
 	if !includeArchived {
@@ -157,13 +169,20 @@ func (r *Repository) ListProjects(ctx context.Context, includeArchived bool) ([]
 	out := []domain.Project{}
 	for rows.Next() {
 		var (
-			p          domain.Project
-			createdRaw string
-			updatedRaw string
-			archived   sql.NullString
+			p           domain.Project
+			metadataRaw string
+			createdRaw  string
+			updatedRaw  string
+			archived    sql.NullString
 		)
-		if err := rows.Scan(&p.ID, &p.Slug, &p.Name, &p.Description, &createdRaw, &updatedRaw, &archived); err != nil {
+		if err := rows.Scan(&p.ID, &p.Slug, &p.Name, &p.Description, &metadataRaw, &createdRaw, &updatedRaw, &archived); err != nil {
 			return nil, err
+		}
+		if strings.TrimSpace(metadataRaw) == "" {
+			metadataRaw = "{}"
+		}
+		if err := json.Unmarshal([]byte(metadataRaw), &p.Metadata); err != nil {
+			return nil, fmt.Errorf("decode project metadata_json: %w", err)
 		}
 		p.CreatedAt = parseTS(createdRaw)
 		p.UpdatedAt = parseTS(updatedRaw)
@@ -308,16 +327,23 @@ type scanner interface {
 
 func scanProject(s scanner) (domain.Project, error) {
 	var (
-		p          domain.Project
-		createdRaw string
-		updatedRaw string
-		archived   sql.NullString
+		p           domain.Project
+		metadataRaw string
+		createdRaw  string
+		updatedRaw  string
+		archived    sql.NullString
 	)
-	if err := s.Scan(&p.ID, &p.Slug, &p.Name, &p.Description, &createdRaw, &updatedRaw, &archived); err != nil {
+	if err := s.Scan(&p.ID, &p.Slug, &p.Name, &p.Description, &metadataRaw, &createdRaw, &updatedRaw, &archived); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.Project{}, app.ErrNotFound
 		}
 		return domain.Project{}, err
+	}
+	if strings.TrimSpace(metadataRaw) == "" {
+		metadataRaw = "{}"
+	}
+	if err := json.Unmarshal([]byte(metadataRaw), &p.Metadata); err != nil {
+		return domain.Project{}, fmt.Errorf("decode project metadata_json: %w", err)
 	}
 	p.CreatedAt = parseTS(createdRaw)
 	p.UpdatedAt = parseTS(updatedRaw)
@@ -388,4 +414,11 @@ func parseNullTS(v sql.NullString) *time.Time {
 	}
 	ts := parseTS(v.String)
 	return &ts
+}
+
+func isDuplicateColumnErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "duplicate column name")
 }

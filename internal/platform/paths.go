@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 type Paths struct {
@@ -13,14 +14,40 @@ type Paths struct {
 	DBPath     string
 }
 
+type Options struct {
+	AppName string
+	DevMode bool
+}
+
 func DefaultPaths() (Paths, error) {
+	return DefaultPathsWithOptions(Options{AppName: "kan"})
+}
+
+func DefaultPathsWithOptions(opts Options) (Paths, error) {
+	appName := strings.TrimSpace(opts.AppName)
+	if appName == "" {
+		appName = "kan"
+	}
+	if opts.DevMode {
+		appName += "-dev"
+	}
+
 	configDir, err := os.UserConfigDir()
 	if err != nil {
 		return Paths{}, fmt.Errorf("user config dir: %w", err)
 	}
-	dataDir, err := os.UserCacheDir()
-	if err != nil {
-		return Paths{}, fmt.Errorf("user data dir: %w", err)
+	dataDir := configDir
+	if runtime.GOOS == "linux" {
+		home, homeErr := os.UserHomeDir()
+		if homeErr != nil {
+			return Paths{}, fmt.Errorf("user home dir: %w", homeErr)
+		}
+		dataDir = filepath.Join(home, ".local", "share")
+	}
+	if runtime.GOOS == "windows" {
+		if v := strings.TrimSpace(os.Getenv("LOCALAPPDATA")); v != "" {
+			dataDir = v
+		}
 	}
 
 	env := map[string]string{
@@ -29,12 +56,16 @@ func DefaultPaths() (Paths, error) {
 		"APPDATA":         os.Getenv("APPDATA"),
 		"LOCALAPPDATA":    os.Getenv("LOCALAPPDATA"),
 	}
-	return PathsFor(runtime.GOOS, env, configDir, dataDir)
+	return PathsFor(runtime.GOOS, env, configDir, dataDir, appName)
 }
 
-func PathsFor(goos string, env map[string]string, userConfigDir, userDataDir string) (Paths, error) {
+func PathsFor(goos string, env map[string]string, userConfigDir, userDataDir, appName string) (Paths, error) {
 	if userConfigDir == "" || userDataDir == "" {
 		return Paths{}, fmt.Errorf("empty base dirs")
+	}
+	appName = strings.TrimSpace(appName)
+	if appName == "" {
+		return Paths{}, fmt.Errorf("empty app name")
 	}
 
 	configBase := userConfigDir
@@ -61,11 +92,12 @@ func PathsFor(goos string, env map[string]string, userConfigDir, userDataDir str
 		// Fallback for other platforms.
 	}
 
-	appConfigDir := filepath.Join(configBase, "kan")
-	appDataDir := filepath.Join(dataBase, "kan")
+	appConfigDir := filepath.Join(configBase, appName)
+	appDataDir := filepath.Join(dataBase, appName)
+	dbName := appName + ".db"
 	return Paths{
 		ConfigPath: filepath.Join(appConfigDir, "config.toml"),
 		DataDir:    appDataDir,
-		DBPath:     filepath.Join(appDataDir, "kan.db"),
+		DBPath:     filepath.Join(appDataDir, dbName),
 	}, nil
 }

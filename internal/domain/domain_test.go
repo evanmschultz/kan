@@ -17,6 +17,9 @@ func TestNewProjectAndSlug(t *testing.T) {
 	if p.Name != "My Big Project!" {
 		t.Fatalf("unexpected name %q", p.Name)
 	}
+	if p.Metadata.Owner != "" || len(p.Metadata.Tags) != 0 {
+		t.Fatalf("expected empty metadata defaults, got %#v", p.Metadata)
+	}
 }
 
 func TestNewProjectValidation(t *testing.T) {
@@ -43,6 +46,40 @@ func TestProjectArchiveRestore(t *testing.T) {
 	p.Restore(later.Add(time.Minute))
 	if p.ArchivedAt != nil {
 		t.Fatal("expected archived_at to be nil")
+	}
+}
+
+func TestProjectUpdateDetailsWithMetadata(t *testing.T) {
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	p, err := NewProject("p1", "Original", "desc", now)
+	if err != nil {
+		t.Fatalf("NewProject() error = %v", err)
+	}
+
+	err = p.UpdateDetails("  Updated Name ", "  Updated Desc ", ProjectMetadata{
+		Owner:    "  Evan ",
+		Icon:     ":rocket:",
+		Color:    "62",
+		Homepage: " https://example.com ",
+		Tags:     []string{"Dev", "dev", "Roadmap"},
+	}, now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("UpdateDetails() error = %v", err)
+	}
+	if p.Name != "Updated Name" || p.Slug != "updated-name" {
+		t.Fatalf("unexpected name/slug update %#v", p)
+	}
+	if p.Description != "Updated Desc" {
+		t.Fatalf("unexpected description %q", p.Description)
+	}
+	if p.Metadata.Owner != "Evan" {
+		t.Fatalf("unexpected owner %q", p.Metadata.Owner)
+	}
+	if p.Metadata.Homepage != "https://example.com" {
+		t.Fatalf("unexpected homepage %q", p.Metadata.Homepage)
+	}
+	if len(p.Metadata.Tags) != 2 || p.Metadata.Tags[0] != "dev" || p.Metadata.Tags[1] != "roadmap" {
+		t.Fatalf("unexpected metadata tags %#v", p.Metadata.Tags)
 	}
 }
 

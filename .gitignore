@@ -4,3 +4,5 @@ dist/
 kan
 bin/
 .artifacts/
+.tmp/
+.go-cache

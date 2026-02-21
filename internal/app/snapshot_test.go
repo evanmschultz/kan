@@ -14,6 +14,7 @@ func TestExportSnapshotIncludesExpectedData(t *testing.T) {
 	now := time.Date(2026, 2, 22, 10, 0, 0, 0, time.UTC)
 
 	p1, _ := domain.NewProject("p1", "Alpha", "", now)
+	p1.Metadata = domain.ProjectMetadata{Owner: "team-a", Tags: []string{"alpha"}}
 	p2, _ := domain.NewProject("p2", "Beta", "", now)
 	p2.Archive(now.Add(time.Minute))
 	repo.projects[p1.ID] = p1
@@ -56,6 +57,16 @@ func TestExportSnapshotIncludesExpectedData(t *testing.T) {
 	if len(snapAll.Projects) != 2 || len(snapAll.Columns) != 2 || len(snapAll.Tasks) != 2 {
 		t.Fatalf("unexpected all snapshot sizes p=%d c=%d t=%d", len(snapAll.Projects), len(snapAll.Columns), len(snapAll.Tasks))
 	}
+	foundMeta := false
+	for _, sp := range snapAll.Projects {
+		if sp.ID == p1.ID && sp.Metadata.Owner == "team-a" {
+			foundMeta = true
+			break
+		}
+	}
+	if !foundMeta {
+		t.Fatalf("expected metadata to round-trip in export, got %#v", snapAll.Projects)
+	}
 }
 
 func TestImportSnapshotCreatesAndUpdates(t *testing.T) {
@@ -75,7 +86,7 @@ func TestImportSnapshotCreatesAndUpdates(t *testing.T) {
 	snap := Snapshot{
 		Version: SnapshotVersion,
 		Projects: []SnapshotProject{
-			{ID: "p1", Name: "New Name", Description: "updated", Slug: "new-name", CreatedAt: now, UpdatedAt: now.Add(time.Minute)},
+			{ID: "p1", Name: "New Name", Description: "updated", Slug: "new-name", Metadata: domain.ProjectMetadata{Owner: "owner-1", Tags: []string{"a"}}, CreatedAt: now, UpdatedAt: now.Add(time.Minute)},
 			{ID: "p2", Name: "Project Two", Description: "new", Slug: "project-two", CreatedAt: now, UpdatedAt: now.Add(time.Minute)},
 		},
 		Columns: []SnapshotColumn{
@@ -94,6 +105,9 @@ func TestImportSnapshotCreatesAndUpdates(t *testing.T) {
 
 	if got := repo.projects["p1"]; got.Name != "New Name" || got.Description != "updated" {
 		t.Fatalf("unexpected updated project %#v", got)
+	}
+	if got := repo.projects["p1"]; got.Metadata.Owner != "owner-1" {
+		t.Fatalf("expected metadata owner updated, got %#v", got.Metadata)
 	}
 	if _, ok := repo.projects["p2"]; !ok {
 		t.Fatal("expected new project p2")

@@ -22,13 +22,14 @@ type Snapshot struct {
 }
 
 type SnapshotProject struct {
-	ID          string     `json:"id"`
-	Slug        string     `json:"slug"`
-	Name        string     `json:"name"`
-	Description string     `json:"description"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
-	ArchivedAt  *time.Time `json:"archived_at,omitempty"`
+	ID          string                 `json:"id"`
+	Slug        string                 `json:"slug"`
+	Name        string                 `json:"name"`
+	Description string                 `json:"description"`
+	Metadata    domain.ProjectMetadata `json:"metadata"`
+	CreatedAt   time.Time              `json:"created_at"`
+	UpdatedAt   time.Time              `json:"updated_at"`
+	ArchivedAt  *time.Time             `json:"archived_at,omitempty"`
 }
 
 type SnapshotColumn struct {
@@ -288,6 +289,7 @@ func snapshotProjectFromDomain(p domain.Project) SnapshotProject {
 		Slug:        p.Slug,
 		Name:        p.Name,
 		Description: p.Description,
+		Metadata:    p.Metadata,
 		CreatedAt:   p.CreatedAt.UTC(),
 		UpdatedAt:   p.UpdatedAt.UTC(),
 		ArchivedAt:  copyTimePtr(p.ArchivedAt),
@@ -334,6 +336,7 @@ func (p SnapshotProject) toDomain() domain.Project {
 		Slug:        slug,
 		Name:        strings.TrimSpace(p.Name),
 		Description: strings.TrimSpace(p.Description),
+		Metadata:    p.Metadata,
 		CreatedAt:   p.CreatedAt.UTC(),
 		UpdatedAt:   p.UpdatedAt.UTC(),
 		ArchivedAt:  copyTimePtr(p.ArchivedAt),

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -17,7 +18,16 @@ const (
 )
 
 type ServiceConfig struct {
-	DefaultDeleteMode DeleteMode
+	DefaultDeleteMode        DeleteMode
+	StateTemplates           []StateTemplate
+	AutoCreateProjectColumns bool
+}
+
+type StateTemplate struct {
+	ID       string
+	Name     string
+	WIPLimit int
+	Position int
 }
 
 type IDGenerator func() string
@@ -28,6 +38,8 @@ type Service struct {
 	idGen             IDGenerator
 	clock             Clock
 	defaultDeleteMode DeleteMode
+	stateTemplates    []StateTemplate
+	autoProjectCols   bool
 }
 
 func NewService(repo Repository, idGen IDGenerator, clock Clock, cfg ServiceConfig) *Service {
@@ -40,12 +52,18 @@ func NewService(repo Repository, idGen IDGenerator, clock Clock, cfg ServiceConf
 	if cfg.DefaultDeleteMode == "" {
 		cfg.DefaultDeleteMode = DeleteModeArchive
 	}
+	templates := sanitizeStateTemplates(cfg.StateTemplates)
+	if len(templates) == 0 {
+		templates = defaultStateTemplates()
+	}
 
 	return &Service{
 		repo:              repo,
 		idGen:             idGen,
 		clock:             clock,
 		defaultDeleteMode: cfg.DefaultDeleteMode,
+		stateTemplates:    templates,
+		autoProjectCols:   cfg.AutoCreateProjectColumns,
 	}
 }
 
@@ -67,27 +85,62 @@ func (s *Service) EnsureDefaultProject(ctx context.Context) (domain.Project, err
 		return domain.Project{}, err
 	}
 
-	columnNames := []string{"To Do", "In Progress", "Done"}
-	for i, name := range columnNames {
-		column, colErr := domain.NewColumn(s.idGen(), project.ID, name, i, 0, now)
-		if colErr != nil {
-			return domain.Project{}, colErr
-		}
-		if colErr = s.repo.CreateColumn(ctx, column); colErr != nil {
-			return domain.Project{}, colErr
-		}
+	if err := s.createDefaultColumns(ctx, project.ID, now); err != nil {
+		return domain.Project{}, err
 	}
 
 	return project, nil
 }
 
+type CreateProjectInput struct {
+	Name        string
+	Description string
+	Metadata    domain.ProjectMetadata
+}
+
 func (s *Service) CreateProject(ctx context.Context, name, description string) (domain.Project, error) {
+	return s.CreateProjectWithMetadata(ctx, CreateProjectInput{
+		Name:        name,
+		Description: description,
+	})
+}
+
+func (s *Service) CreateProjectWithMetadata(ctx context.Context, in CreateProjectInput) (domain.Project, error) {
 	now := s.clock()
-	project, err := domain.NewProject(s.idGen(), name, description, now)
+	project, err := domain.NewProject(s.idGen(), in.Name, in.Description, now)
 	if err != nil {
 		return domain.Project{}, err
 	}
+	if err := project.UpdateDetails(project.Name, project.Description, in.Metadata, now); err != nil {
+		return domain.Project{}, err
+	}
 	if err := s.repo.CreateProject(ctx, project); err != nil {
+		return domain.Project{}, err
+	}
+	if s.autoProjectCols {
+		if err := s.createDefaultColumns(ctx, project.ID, now); err != nil {
+			return domain.Project{}, err
+		}
+	}
+	return project, nil
+}
+
+type UpdateProjectInput struct {
+	ProjectID   string
+	Name        string
+	Description string
+	Metadata    domain.ProjectMetadata
+}
+
+func (s *Service) UpdateProject(ctx context.Context, in UpdateProjectInput) (domain.Project, error) {
+	project, err := s.repo.GetProject(ctx, in.ProjectID)
+	if err != nil {
+		return domain.Project{}, err
+	}
+	if err := project.UpdateDetails(in.Name, in.Description, in.Metadata, s.clock()); err != nil {
+		return domain.Project{}, err
+	}
+	if err := s.repo.UpdateProject(ctx, project); err != nil {
 		return domain.Project{}, err
 	}
 	return project, nil
@@ -121,6 +174,20 @@ type UpdateTaskInput struct {
 	Priority    domain.Priority
 	DueAt       *time.Time
 	Labels      []string
+}
+
+type SearchTasksFilter struct {
+	ProjectID       string
+	Query           string
+	CrossProject    bool
+	IncludeArchived bool
+	States          []string
+}
+
+type TaskMatch struct {
+	Project domain.Project
+	Task    domain.Task
+	StateID string
 }
 
 func (s *Service) CreateTask(ctx context.Context, in CreateTaskInput) (domain.Task, error) {
@@ -283,4 +350,214 @@ func (s *Service) SearchTasks(ctx context.Context, projectID, query string, incl
 		}
 	}
 	return out, nil
+}
+
+func (s *Service) SearchTaskMatches(ctx context.Context, in SearchTasksFilter) ([]TaskMatch, error) {
+	stateFilter := map[string]struct{}{}
+	for _, raw := range in.States {
+		state := strings.TrimSpace(strings.ToLower(raw))
+		if state == "" {
+			continue
+		}
+		stateFilter[state] = struct{}{}
+	}
+	allowAllStates := len(stateFilter) == 0
+	wantsArchivedState := allowAllStates
+	if !allowAllStates {
+		_, wantsArchivedState = stateFilter["archived"]
+	}
+
+	targetProjects := []domain.Project{}
+	if in.CrossProject {
+		projects, err := s.repo.ListProjects(ctx, in.IncludeArchived)
+		if err != nil {
+			return nil, err
+		}
+		targetProjects = append(targetProjects, projects...)
+	} else {
+		projectID := strings.TrimSpace(in.ProjectID)
+		if projectID == "" {
+			return nil, domain.ErrInvalidID
+		}
+		project, err := s.repo.GetProject(ctx, projectID)
+		if err != nil {
+			return nil, err
+		}
+		if !in.IncludeArchived && project.ArchivedAt != nil {
+			return nil, nil
+		}
+		targetProjects = append(targetProjects, project)
+	}
+
+	query := strings.TrimSpace(strings.ToLower(in.Query))
+	out := make([]TaskMatch, 0)
+	for _, project := range targetProjects {
+		columns, err := s.repo.ListColumns(ctx, project.ID, true)
+		if err != nil {
+			return nil, err
+		}
+		stateByColumn := make(map[string]string, len(columns))
+		for _, column := range columns {
+			stateByColumn[column.ID] = normalizeStateID(column.Name)
+		}
+
+		tasks, err := s.repo.ListTasks(ctx, project.ID, true)
+		if err != nil {
+			return nil, err
+		}
+		for _, task := range tasks {
+			stateID := stateByColumn[task.ColumnID]
+			if stateID == "" {
+				stateID = "unknown"
+			}
+			if task.ArchivedAt != nil {
+				if !in.IncludeArchived || !wantsArchivedState {
+					continue
+				}
+				stateID = "archived"
+			} else if !allowAllStates {
+				if _, ok := stateFilter[stateID]; !ok {
+					continue
+				}
+			}
+
+			if query != "" {
+				if !strings.Contains(strings.ToLower(task.Title), query) &&
+					!strings.Contains(strings.ToLower(task.Description), query) &&
+					!labelsContainQuery(task.Labels, query) {
+					continue
+				}
+			}
+
+			out = append(out, TaskMatch{
+				Project: project,
+				Task:    task,
+				StateID: stateID,
+			})
+		}
+	}
+
+	slices.SortFunc(out, func(a, b TaskMatch) int {
+		if a.Project.ID == b.Project.ID {
+			if a.StateID == b.StateID {
+				if a.Task.ColumnID == b.Task.ColumnID {
+					if a.Task.Position == b.Task.Position {
+						return strings.Compare(a.Task.ID, b.Task.ID)
+					}
+					return a.Task.Position - b.Task.Position
+				}
+				return strings.Compare(a.Task.ColumnID, b.Task.ColumnID)
+			}
+			return strings.Compare(a.StateID, b.StateID)
+		}
+		return strings.Compare(a.Project.ID, b.Project.ID)
+	})
+
+	return out, nil
+}
+
+func labelsContainQuery(labels []string, query string) bool {
+	for _, label := range labels {
+		if strings.Contains(strings.ToLower(label), query) {
+			return true
+		}
+	}
+	return false
+}
+
+func defaultStateTemplates() []StateTemplate {
+	return []StateTemplate{
+		{ID: "todo", Name: "To Do", WIPLimit: 0, Position: 0},
+		{ID: "progress", Name: "In Progress", WIPLimit: 0, Position: 1},
+		{ID: "done", Name: "Done", WIPLimit: 0, Position: 2},
+	}
+}
+
+func sanitizeStateTemplates(in []StateTemplate) []StateTemplate {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]StateTemplate, 0, len(in))
+	seen := map[string]struct{}{}
+	for idx, state := range in {
+		state.Name = strings.TrimSpace(state.Name)
+		state.ID = strings.TrimSpace(strings.ToLower(state.ID))
+		if state.Name == "" {
+			continue
+		}
+		if state.ID == "" {
+			state.ID = normalizeStateID(state.Name)
+		}
+		dedupeID := strings.ReplaceAll(state.ID, "-", "")
+		if _, ok := seen[dedupeID]; ok {
+			continue
+		}
+		seen[dedupeID] = struct{}{}
+		if state.Position < 0 {
+			state.Position = idx
+		}
+		if state.WIPLimit < 0 {
+			state.WIPLimit = 0
+		}
+		out = append(out, state)
+	}
+	slices.SortFunc(out, func(a, b StateTemplate) int {
+		if a.Position == b.Position {
+			return strings.Compare(a.ID, b.ID)
+		}
+		return a.Position - b.Position
+	})
+	return out
+}
+
+func normalizeStateID(name string) string {
+	name = strings.TrimSpace(strings.ToLower(name))
+	if name == "" {
+		return ""
+	}
+	var b strings.Builder
+	lastDash := false
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+			lastDash = false
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+			lastDash = false
+		default:
+			if !lastDash {
+				b.WriteByte('-')
+				lastDash = true
+			}
+		}
+	}
+	normalized := strings.Trim(b.String(), "-")
+	switch normalized {
+	case "to-do", "todo":
+		return "todo"
+	case "in-progress", "progress", "doing":
+		return "progress"
+	case "done", "complete", "completed":
+		return "done"
+	default:
+		return normalized
+	}
+}
+
+func (s *Service) createDefaultColumns(ctx context.Context, projectID string, now time.Time) error {
+	for idx, state := range s.stateTemplates {
+		position := state.Position
+		if position < 0 {
+			position = idx
+		}
+		column, err := domain.NewColumn(s.idGen(), projectID, state.Name, position, state.WIPLimit, now)
+		if err != nil {
+			return fmt.Errorf("create default column %q: %w", state.Name, err)
+		}
+		if err := s.repo.CreateColumn(ctx, column); err != nil {
+			return fmt.Errorf("persist default column %q: %w", state.Name, err)
+		}
+	}
+	return nil
 }

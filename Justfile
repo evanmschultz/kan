@@ -21,6 +21,15 @@ test-unit:
 test-tui:
   @go test ./internal/tui
 
+test-pkg pkg:
+  @go test {{pkg}}
+
+test-golden:
+  @go test ./internal/tui -run 'Golden'
+
+test-golden-update:
+  @go test ./internal/tui -run 'Golden' -update
+
 build:
   @go build -o ./kan ./cmd/kan
 
@@ -29,6 +38,12 @@ build-all:
 
 run:
   @go run ./cmd/kan
+
+run-dev:
+  @go run ./cmd/kan --dev
+
+paths:
+  @go run ./cmd/kan paths
 
 run-bin: build
   @./kan
@@ -53,6 +68,13 @@ vhs: vhs-board vhs-workflow
 clean-vhs:
   @rm -rf .artifacts/vhs
 
+release-check:
+  @if ! command -v goreleaser >/dev/null; then \
+    echo "goreleaser is required for release checks (brew install goreleaser/tap/goreleaser)"; \
+    exit 1; \
+  fi
+  @goreleaser release --snapshot --clean --skip=publish
+
 coverage:
   @tmp=$(mktemp); \
   go test ./... -cover | tee "$tmp"; \
@@ -60,3 +82,5 @@ coverage:
   rm -f "$tmp"
 
 ci: fmt test coverage build-all
+
+check-llm: ci

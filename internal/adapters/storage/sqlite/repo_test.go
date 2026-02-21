@@ -2,12 +2,14 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/evanschultz/kan/internal/app"
 	"github.com/evanschultz/kan/internal/domain"
+	_ "modernc.org/sqlite"
 )
 
 func TestRepository_ProjectColumnTaskLifecycle(t *testing.T) {
@@ -137,6 +139,10 @@ func TestRepository_ProjectAndColumnUpdates(t *testing.T) {
 
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Alpha", "desc", now)
+	project.Metadata = domain.ProjectMetadata{
+		Owner: "owner-1",
+		Tags:  []string{"kan"},
+	}
 	if err := repo.CreateProject(ctx, project); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
 	}
@@ -154,6 +160,9 @@ func TestRepository_ProjectAndColumnUpdates(t *testing.T) {
 	}
 	if len(activeProjects) != 1 || activeProjects[0].Name != "Beta" {
 		t.Fatalf("unexpected active projects %#v", activeProjects)
+	}
+	if activeProjects[0].Metadata.Owner != "owner-1" || len(activeProjects[0].Metadata.Tags) != 1 {
+		t.Fatalf("expected metadata persisted, got %#v", activeProjects[0].Metadata)
 	}
 
 	project.Archive(now.Add(2 * time.Minute))
@@ -216,6 +225,53 @@ func TestRepository_ProjectAndColumnUpdates(t *testing.T) {
 	}
 	if len(allCols) != 1 || allCols[0].ArchivedAt == nil {
 		t.Fatalf("expected archived column in all list, got %#v", allCols)
+	}
+}
+
+func TestRepository_MigratesLegacyProjectsTable(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "legacy.db")
+	db, err := sql.Open(driverName, dbPath)
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = db.Close()
+	})
+	_, err = db.ExecContext(ctx, `
+		CREATE TABLE projects (
+			id TEXT PRIMARY KEY,
+			slug TEXT NOT NULL,
+			name TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			archived_at TEXT
+		)
+	`)
+	if err != nil {
+		t.Fatalf("create legacy table error = %v", err)
+	}
+
+	repo, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open() on legacy db error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	project, _ := domain.NewProject("p1", "Legacy", "", time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC))
+	project.Metadata = domain.ProjectMetadata{Owner: "evan"}
+	if err := repo.CreateProject(ctx, project); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	loaded, err := repo.GetProject(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("GetProject() error = %v", err)
+	}
+	if loaded.Metadata.Owner != "evan" {
+		t.Fatalf("expected metadata owner to persist after migration, got %#v", loaded.Metadata)
 	}
 }
 

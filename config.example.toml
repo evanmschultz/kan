@@ -1,0 +1,61 @@
+# kan example configuration
+#
+# Resolution order:
+# 1) CLI flags (--config, --db, --app, --dev)
+# 2) Environment (KAN_CONFIG, KAN_DB_PATH, KAN_APP_NAME, KAN_DEV_MODE)
+# 3) This TOML file
+# 4) Platform defaults (use `kan paths` to print active paths)
+#
+# Dev mode stores data under "<app>-dev" so local builds do not clash with released installs.
+
+[database]
+# Leave empty to use platform defaults; set explicit path to pin DB location.
+path = ""
+
+[delete]
+# archive | hard
+default_mode = "archive"
+
+[task_fields]
+show_priority = true
+show_due_date = true
+show_labels = true
+show_description = false
+
+[board]
+show_wip_warnings = true
+# none | priority | state
+group_by = "none"
+
+[[board.states]]
+id = "todo"
+name = "To Do"
+wip_limit = 0
+position = 0
+
+[[board.states]]
+id = "progress"
+name = "In Progress"
+wip_limit = 0
+position = 1
+
+[[board.states]]
+id = "done"
+name = "Done"
+wip_limit = 0
+position = 2
+
+[search]
+# When true, `/` can search across all projects.
+cross_project = false
+include_archived = false
+# Valid values are board state IDs plus "archived".
+states = ["todo", "progress", "done"]
+
+[keys]
+command_palette = ":"
+quick_actions = "."
+multi_select = "space"
+activity_log = "g"
+undo = "z"
+redo = "Z"

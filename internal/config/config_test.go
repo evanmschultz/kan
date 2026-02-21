@@ -99,3 +99,69 @@ func TestEnsureConfigDir(t *testing.T) {
 		t.Fatalf("expected dir to exist, stat error %v", err)
 	}
 }
+
+func TestLoadBoardSearchAndKeysOverrides(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	content := `
+[database]
+path = "/custom/kan.db"
+
+[board]
+show_wip_warnings = false
+group_by = "priority"
+
+[[board.states]]
+id = "todo"
+name = "To Do"
+wip_limit = 2
+position = 0
+
+[[board.states]]
+id = "doing"
+name = "Doing"
+wip_limit = 3
+position = 1
+
+[search]
+cross_project = true
+include_archived = true
+states = ["todo", "doing", "archived"]
+
+[keys]
+command_palette = ":"
+quick_actions = "."
+multi_select = "space"
+activity_log = "g"
+undo = "u"
+redo = "U"
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	cfg, err := Load(path, Default("/tmp/default.db"))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Board.GroupBy != "priority" || cfg.Board.ShowWIPWarnings {
+		t.Fatalf("unexpected board settings %#v", cfg.Board)
+	}
+	if !cfg.Search.CrossProject || !cfg.Search.IncludeArchived {
+		t.Fatalf("unexpected search settings %#v", cfg.Search)
+	}
+	if len(cfg.Board.States) != 2 || cfg.Board.States[1].ID != "doing" {
+		t.Fatalf("unexpected board states %#v", cfg.Board.States)
+	}
+	if cfg.Keys.QuickActions != "." {
+		t.Fatalf("unexpected keys config %#v", cfg.Keys)
+	}
+}
+
+func TestValidateRejectsUnknownSearchState(t *testing.T) {
+	cfg := Default("/tmp/kan.db")
+	cfg.Search.States = []string{"todo", "unknown"}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected unknown search state validation error")
+	}
+}

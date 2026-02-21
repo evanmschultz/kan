@@ -11,10 +11,28 @@ Enter
 Sleep 1s
 Type "n"
 Type "Draft roadmap"
+Tab
+Type "plan next sprint"
+Tab
+Type "l"
+Tab
+Type "2026-03-01"
+Tab
+Type "planning,kan"
 Enter
 Sleep 600ms
+Type "i"
+Sleep 500ms
 Type "e"
-Type "Draft roadmap | plan next sprint | high | 2026-03-01 | planning,kan"
+Type "Draft roadmap"
+Tab
+Type "plan next sprint"
+Tab
+Type "l"
+Tab
+Type "2026-03-01"
+Tab
+Type "planning,kan"
 Enter
 Sleep 700ms
 Type "]"

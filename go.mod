@@ -5,6 +5,7 @@ go 1.26.0
 replace github.com/charmbracelet/x/exp/teatest/v2 => ./third_party/teatest_v2
 
 require (
+	charm.land/bubbles/v2 v2.0.0-rc.1
 	charm.land/bubbletea/v2 v2.0.0-rc.2
 	charm.land/lipgloss/v2 v2.0.0-beta.3.0.20260212100304-e18737634dea
 	github.com/charmbracelet/x/exp/teatest/v2 v2.0.0-20260216111343-536eb63c1f4c
@@ -14,7 +15,7 @@ require (
 )
 
 require (
-	charm.land/bubbles/v2 v2.0.0-rc.1 // indirect
+	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aymanbagabas/go-udiff v0.3.1 // indirect
 	github.com/charmbracelet/colorprofile v0.4.2 // indirect
 	github.com/charmbracelet/ultraviolet v0.0.0-20251205161215-1948445e3318 // indirect

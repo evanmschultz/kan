@@ -1,8 +1,8 @@
 # Kan TUI Plan + Worklog
 
 Created: 2026-02-21  
-Status: In progress (Phase 0-3 complete, Phase 4 underway)  
-Execution gate: Active implementation
+Status: In progress (Phase 0-5 baseline complete, detailed Phase 6 remediation plan approved)  
+Execution gate: Planning update only in this step (no code changes)
 
 ## 1) Product Goal
 Build a polished, Charm-style Kanban TUI with local SQLite persistence, multiple projects, customizable columns, strong keyboard support (`vim` + arrows), mouse support, and cross-platform releases (macOS/Linux/Windows).
@@ -180,6 +180,195 @@ Rule: GitHub Actions should call `just` recipes, not duplicate shell logic per w
 - Goreleaser + Homebrew packaging.
 - Deliverable: first public tagged release.
 
+## Phase 5: UX + Workflow Expansion (Current)
+- Config system expansion:
+  - richer app config (states, key overrides, search defaults, dev/prod paths)
+  - tracked example config template and docs for installed/dev use
+- Project lifecycle UX:
+  - create/edit projects from TUI
+  - project metadata support (description + timeline fields)
+- Search + filtering:
+  - cross-project search
+  - state-aware filtering (`todo`, `progress`, `done`, `archived`, user-defined states)
+- Help + onboarding:
+  - richer branded help screen (Fang-inspired presentation)
+  - first-run onboarding flow
+- Board interaction upgrades:
+  - command palette
+  - quick action menu
+  - multi-select + bulk actions
+  - activity log panel
+  - undo/redo basics
+- Card/field UX upgrades:
+  - priority picker (done)
+  - due date picker modal
+  - label suggestions / picker
+- Planning features:
+  - optional swimlane grouping modes
+  - WIP limit visibility and warnings
+- Deliverable: production-usable daily-driver UX with configurable workflow semantics.
+
+## Phase 6: UX Remediation + Search/State Overhaul (Approved Next)
+This phase is intentionally split into small execution chunks so we can ship incrementally and keep VHS + teatest feedback tight.
+
+### Phase 6.1: Search Form UX and Focus Model
+- Convert search to a single coherent modal with focusable controls in this exact order:
+  - query -> states -> scope -> archived -> apply.
+- Remove duplicated state/query labeling in the search modal (no duplicate prompt text and external labels).
+- Keep `tab` / `shift+tab` as the primary focus movement; keep direct hotkeys as optional shortcuts.
+- Ensure scope and archived are not hidden-only toggles; both must be keyboard-focusable controls.
+- Clarify actions:
+  - `apply search`: run current query + filters.
+  - `clear query`: clear only query text.
+  - `reset filters`: reset query + states + scope + archived back to configured defaults.
+- Acceptance:
+  - No repeated labels in search UI.
+  - User can tab through every control including scope and archived.
+  - `clear query` and `reset filters` have distinct behavior and help text.
+
+### Phase 6.2: State Selector Driven by Config + Project State Model
+- Replace free-text state search entry with a multi-select state selector.
+- State options source rules:
+  - project scope: active project states only.
+  - cross-project scope: union of states across included projects.
+  - include configured defaults from TOML as initial active selection.
+- Archived behavior:
+  - keep explicit archived toggle in search controls.
+  - avoid duplicate "archived" state rendering if already represented as a pseudo-state.
+- Ensure state IDs are canonical and mapped from project state config, not inferred from display labels alone.
+- Acceptance:
+  - Search modal never shows duplicate states.
+  - State filtering respects active project definitions and cross-project union logic.
+
+### Phase 6.3: Command Palette Usability Upgrade
+- Command palette should filter commands live as user types (fuzzy/substring acceptable).
+- Enter executes highlighted command; full command text should not be required.
+- Tab autocompletes top match.
+- Show short descriptions and aliases for commands.
+- Add search-context hints:
+  - examples: `reset filters`, `clear query`, `search all projects`, `search current project`.
+- Define explicit command semantics for `clear search`:
+  - either remove it in favor of `clear query` + `reset filters`, or keep as alias with documented target behavior.
+- Acceptance:
+  - Typing narrows command list immediately.
+  - Enter runs highlighted entry with no ambiguity.
+
+### Phase 6.4: Board List Marker and Card Visual Consistency
+- Restore kancli-style row semantics:
+  - only focused task gets the left accent marker bar.
+  - remove global marker from every row.
+  - do not mix `>` with universal bars in a way that creates double indicators.
+- Keep card text compact and readable with predictable truncation.
+- Ensure focused row styling remains clear in both active and inactive columns.
+- Acceptance:
+  - Exactly one row marker per focused list (or none when empty).
+  - Dense lists remain readable and visually stable.
+
+### Phase 6.5: Confirmation Modals for Destructive/State-Changing Actions
+- Add confirmation modal flows for:
+  - archive task
+  - hard delete task
+  - soft delete/default delete action (if mapped separately)
+  - optional restore confirmation (configurable)
+- Provide clear copy including task title and action impact.
+- Modal actions:
+  - confirm
+  - cancel
+  - keyboard + mouse support.
+- Add config gates:
+  - `confirm.archive`
+  - `confirm.delete`
+  - `confirm.hard_delete`
+  - `confirm.restore` (optional)
+- Acceptance:
+  - No destructive action executes without configured confirmation behavior.
+
+### Phase 6.6: Modal Layering and Interaction Consistency
+- Keep all primary modals (new/edit/info/help/search/confirm) centered in full viewport (X/Y center).
+- Ensure background layout does not shift when modal opens.
+- Keep `enter` mapped to task info (same behavior as `i`) in board mode.
+- Info modal remains read-first; `e` from info enters edit modal for selected task.
+- Remove repeated instructional footer text when it duplicates field labels already visible in the form.
+- Acceptance:
+  - Modal centering is consistent across viewport sizes.
+  - Enter and `i` are functionally equivalent in board mode.
+
+### Phase 6.7: Due DateTime, Validation, and Urgency Signals
+- Keep current lightweight due picker approach (fast list shortcuts + direct typing).
+- Do not adopt external calendar dependency in this phase.
+- Support datetime input while keeping date-only compatibility:
+  - date-only accepted
+  - datetime accepted (user-typed for precision control).
+- Warn in-form when parsed datetime is already in the past.
+- Add urgency logic:
+  - `OVERDUE` when `now > due_at`
+  - `DUE SOON` within configured windows.
+- Add board summary status row using this format:
+  - `<overdue_count> overdue * <due_soon_count> due soon`
+  - example: `3 overdue * 5 due soon`
+- Acceptance:
+  - User can set date-only or datetime.
+  - Past-due warning appears before save.
+  - Summary row reflects current filtered task set.
+
+### Phase 6.8: Due Window Config and TOML Surface
+- Add/confirm TOML keys for urgency thresholds and display:
+  - `ui.due_soon_windows = ["24h", "1h"]` (user configurable)
+  - `ui.show_due_summary = true`
+- Keep defaults sane, and allow full override.
+- Ensure parse errors report exact key and invalid value.
+- Acceptance:
+  - Users can customize due-soon thresholds without code changes.
+  - Invalid durations fail validation with clear error messages.
+
+### Phase 6.9: Project State Configuration and Metadata Alignment
+- Extend project model/config to hold explicit state definitions per project:
+  - stable state `id`
+  - display `name`
+  - order/position
+  - optional visual metadata (color/icon).
+- Ensure board columns and search selectors read from the same state model source.
+- Cross-project search should merge state IDs/names safely without duplicate display confusion.
+- Acceptance:
+  - Project states are first-class config/metadata, not duplicated ad hoc in UI.
+
+### Phase 6.10: Help + Command Discoverability Pass
+- Keep Fang-style help modal but update command sections to reflect new search commands and confirmations.
+- Ensure help explains:
+  - info modal (`i`/`enter`)
+  - edit handoff (`e`)
+  - search apply vs clear query vs reset filters
+  - destructive action confirmations.
+- Add a short "search quick guide" block in help.
+- Acceptance:
+  - Help content matches actual runtime bindings and command semantics.
+
+### Phase 6.11: Test and VHS Coverage Expansion for New UX Contracts
+- Add/update teatest coverage for:
+  - search focus traversal including scope/archived controls
+  - state multi-select filtering
+  - command palette live filtering and enter/Tab behavior
+  - destructive action confirm modal flow
+  - due datetime parsing + past warning + due summary rendering
+  - list marker behavior (only focused row bar).
+- Add/update VHS scripts for before/after visual validation of these flows.
+- Acceptance:
+  - CI coverage floors remain above package thresholds.
+  - VHS artifacts show expected modal centering and list marker behavior.
+
+### Phase 6.12: Execution Order and Checkpoints
+- 6.1 + 6.2 first (search UX + state model) because they unblock filter correctness.
+- 6.3 next (command palette discoverability).
+- 6.4 + 6.5 + 6.6 as a UI consistency batch.
+- 6.7 + 6.8 + 6.9 as due/config/state semantics batch.
+- 6.10 + 6.11 finalize docs/test/contracts.
+- 6.12 checkpoint review:
+  - confirm all search semantics
+  - confirm no duplicate state rendering
+  - confirm due summary output:
+    - `3 overdue * 5 due soon` format
+  - confirm no unresolved UX regressions before returning to remaining stretch items (multi-select, activity log, swimlanes, undo/redo).
+
 ## 9) Definition of Done (MVP)
 - Multi-project board is fully usable from TUI.
 - SQLite persistence is reliable and migration-backed.
@@ -238,4 +427,123 @@ Rule: GitHub Actions should call `just` recipes, not duplicate shell logic per w
 - [x] 2026-02-21: Started Phase 4 quality pass:
   - expanded teatest coverage for interaction states (full-help toggle and project picker flow)
   - improved TUI package coverage from 73.7% to 77.1%
-- [ ] Next: Phase 4 quality/release hardening (teatest/golden depth, CI enhancements, release polish).
+- [x] 2026-02-21: Added golden-style TUI regression fixtures:
+  - `internal/tui/model_teatest_test.go` captures final terminal output and asserts with Charm golden helper
+  - added fixtures under `internal/tui/testdata/*.golden`
+- [x] 2026-02-21: Hardened CI + release verification pipeline:
+  - `ci.yml` now has concurrency control, Go cache, and a release snapshot verification job
+  - `release.yml` now has concurrency control and Go cache
+  - added local `just release-check` recipe for goreleaser snapshot validation
+- [x] 2026-02-21: Added release-facing docs and golden test ergonomics:
+  - added `README.md` with run/config/keymap/import-export/dev workflow docs
+  - added `just test-golden` and `just test-golden-update` recipes
+- [x] 2026-02-21: Prioritized app UX over release execution:
+  - release/homebrew work remains roadmap-only
+  - shifted active implementation back to TUI product polish
+- [x] 2026-02-21: TUI layout refresh pass with VHS verification:
+  - enabled alt-screen rendering for proper full-screen UX
+  - added project tabs row and column task counts
+  - introduced persistent overview/selection panel
+  - improved edit modal guidance formatting and placement
+  - updated golden fixtures after visual/layout changes
+- [x] 2026-02-21: TUI layout stabilization pass (VHS + CI verified):
+  - removed duplicate single-project tabs row (tabs only render for multi-project sessions)
+  - stopped inline modal flow insertion that was pushing/clipping content
+  - mode overlays now occupy the side panel (wide) or replace stacked panel region (narrow)
+  - status line is hidden for idle `ready` state to reduce visual noise
+  - help bar is now guaranteed to stay bottom-anchored via content height fitting
+  - updated picker click offset + board top math for optional tabs row
+  - refreshed golden fixtures and re-ran `just vhs` + `just ci`
+- [x] 2026-02-21: Task editor and card rendering ergonomics pass:
+  - fixed edit-mode prefill trap causing `expected 5 fields` after typing a full edit payload
+  - edit mode now starts with empty input + visible current-value template guidance
+  - corrected board column sizing to use actual board pane width in split layout
+  - constrained card metadata width to prevent multi-line card row wrapping
+  - revalidated via VHS captures (`board`, `workflow`) and `just ci`
+- [x] 2026-02-21: Kancli-inspired visual pass (from `.tmp/kancli`):
+  - adopted kancli-style palette (blue accent `62`, muted gray help/text)
+  - changed board columns to hidden-border baseline with rounded border only on focused column
+  - simplified main layout so board uses full width (closer to kancli’s column-first composition)
+  - moved active input overlays above the board so edit/search inputs stay visible on dense boards
+  - retuned column width heuristics and metadata truncation for compact list-style cards
+  - updated golden fixtures and revalidated with `just vhs` and `just ci`
+- [x] 2026-02-21: Modal/input reliability and coverage recovery pass:
+  - added explicit AGENTS guardrail to query Context7 before code/test fixes
+  - improved add/edit form defaults to placeholders (prevents `mediumhigh` / `-2026-...` append traps)
+  - strengthened form navigation key handling (`tab`, `ctrl+i`, `shift+tab`, arrows) and focused field highlighting
+  - centered modal overlays above board content and refreshed TUI golden fixtures
+  - expanded TUI tests for modal rendering, parser helpers, row mapping, and validation branches
+  - restored TUI coverage gate: `internal/tui` now 77.5% in `just ci`
+- [x] 2026-02-21: UX refinement slice from direct review feedback:
+  - added `i` task-info modal (read-first flow) with `e` shortcut to enter edit modal
+  - kept direct `e` in board list for immediate edit
+  - changed priority entry to an in-form picker (`h/l` or `←/→`) instead of free text typing
+  - removed redundant modal footer legends that duplicated field explanations
+  - restyled task list rows with a left-side marker bar to better match kancli card feel
+  - recentered overlays across full viewport composition and refreshed goldens/VHS
+- [x] 2026-02-21: Priority fixup requested by user:
+  - updated `AGENTS.md` to strict Context7-first + `just`-only test rules
+  - made modal overlays truly viewport-centered
+  - mapped `enter` to open task info (same as `i`) and added test coverage
+- [x] 2026-02-21: Phase 5 implementation kickoff:
+  - [x] config expansion + example template + dev/prod path logic
+  - [x] project create/edit metadata flows
+  - [x] cross-project + state-aware search/filter
+  - [x] Fang-style help/onboarding presentation
+  - [x] command palette + quick actions
+  - [ ] multi-select + bulk actions
+  - [x] due picker + label suggestions
+  - [ ] WIP warnings + swimlanes + activity log + undo/redo
+- [ ] Next: close remaining Phase 5 stretch features (multi-select/bulk, activity log, undo/redo, swimlane/grouping polish) after UX baseline is stable.
+- [x] 2026-02-21: Completed Phase 5 slices 1-5 baseline:
+  - Slice 1: config/platform foundation + example TOML + docs
+  - Slice 2: project metadata domain/storage/app + create/edit workflows
+  - Slice 3: cross-project/state-aware search wired through app and TUI
+  - Slice 4: Fang-style help modal + project management UX polish
+  - Slice 5: command palette + quick actions + full verification (`just ci`, `just vhs`)
+- [x] 2026-02-21: Completed Phase 5 Slice 1 details:
+  - dev/prod path resolution via `--dev` / `KAN_DEV_MODE` and namespaced app paths via `--app` / `KAN_APP_NAME`
+  - new `kan paths` command for active config/data/db path introspection
+  - added `config.example.toml` with state/search/key defaults and override precedence notes
+  - updated `README.md` and `Justfile` (`run-dev`, `paths`, `test-pkg`, `check-llm`)
+  - added config tests for board/search/key overrides and state validation
+- [x] 2026-02-21: Completed Phase 5 Slice 2 details:
+  - added project metadata in domain (`owner`, `icon`, `color`, `homepage`, `tags`)
+  - persisted metadata via SQLite `projects.metadata_json` with migration-safe column add
+  - wired app service create/update project APIs and TUI add/edit project modals
+  - snapshot import/export now preserves project metadata
+- [x] 2026-02-21: Completed Phase 5 Slice 3 details:
+  - added app-level `SearchTaskMatches` with cross-project/state-aware filtering
+  - added TUI search modal fields for query + states
+  - added toggles for cross-project scope (`ctrl+p`) and archived inclusion (`ctrl+a`)
+  - added search-results modal with jump-to-project/task flow
+- [x] 2026-02-21: Completed Phase 5 Slice 4 details:
+  - replaced plain help with Fang-style centered overlay and workflow hints
+  - improved modal composition so overlays render above board/help without layout shift
+  - added `i`/`enter` task-info modal flow with `e` handoff into edit mode
+- [x] 2026-02-21: Completed Phase 5 Slice 5 details:
+  - added command palette (`:`) with project/search/help/archive commands
+  - added quick actions menu (`.`) for common task actions
+  - expanded TUI test coverage and refreshed golden outputs
+  - verified with `just ci` and `just vhs`
+- [x] 2026-02-21: Worklog update (current pass):
+  - consulted Context7 for Bubble Tea/Bubbles/Lip Gloss patterns before edits
+  - updated `AGENTS.md` to stricter Context7-first + `just`-recipe workflow template
+  - reconciled Plan tracker status to reflect implemented Phase 5 baseline and pending stretch items
+- [x] 2026-02-21: UX feature follow-up implementation:
+  - added centered due-date picker modal (`ctrl+d` from task form due field)
+  - wired due picker keyboard flow (`j/k`, `enter`, `esc`) and return-focus behavior
+  - added label suggestion hints in task form based on existing project labels
+  - added TUI tests for due picker flow and label-suggestion rendering
+- [x] 2026-02-21: Verification + remediation loop:
+  - `just test-pkg ./internal/tui` initially failed due sandbox cache path permissions; reran with local `GOCACHE`
+  - fixed compile issue (`tea.KeyCtrlD` not available) by supporting `D` as due-picker shortcut in forms
+  - golden output changed; refreshed fixtures with `just test-golden-update` and revalidated with cache-busted test run
+  - full gate passed via `GOCACHE=$(pwd)/.go-cache just ci` (coverage floor preserved)
+  - visual regression pass re-run with `just vhs` after one transient VHS tool panic; second run succeeded
+- [x] 2026-02-21: Final verification commands:
+  - `GOCACHE=$(pwd)/.go-cache just test-golden`
+  - `just paths` (verified default dev-mode path resolution output)
+- [x] 2026-02-21: Planning-only update (no code changes):
+  - expanded Phase 6 into 12 detailed subphases covering search/state UX, command palette behavior, destructive-action confirmations, list marker rules, modal consistency, due datetime warnings, due summary row, and TOML-configurable due-soon windows
+  - documented date picker decision: keep current lightweight picker + typed datetime support, no external datepicker dependency for now

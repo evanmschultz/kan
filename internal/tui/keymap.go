@@ -11,7 +11,12 @@ type keyMap struct {
 	moveUp         key.Binding
 	moveDown       key.Binding
 	addTask        key.Binding
+	taskInfo       key.Binding
 	editTask       key.Binding
+	newProject     key.Binding
+	editProject    key.Binding
+	commandPalette key.Binding
+	quickActions   key.Binding
 	deleteTask     key.Binding
 	archiveTask    key.Binding
 	moveTaskLeft   key.Binding
@@ -33,7 +38,12 @@ func newKeyMap() keyMap {
 		moveUp:         key.NewBinding(key.WithKeys("k", "up"), key.WithHelp("k/↑", "task up")),
 		moveDown:       key.NewBinding(key.WithKeys("j", "down"), key.WithHelp("j/↓", "task down")),
 		addTask:        key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "new task")),
+		taskInfo:       key.NewBinding(key.WithKeys("i", "enter"), key.WithHelp("i/enter", "task info")),
 		editTask:       key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit task")),
+		newProject:     key.NewBinding(key.WithKeys("N"), key.WithHelp("N", "new project")),
+		editProject:    key.NewBinding(key.WithKeys("M"), key.WithHelp("M", "edit project")),
+		commandPalette: key.NewBinding(key.WithKeys(":"), key.WithHelp(":", "command palette")),
+		quickActions:   key.NewBinding(key.WithKeys("."), key.WithHelp(".", "quick actions")),
 		deleteTask:     key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete (default)")),
 		archiveTask:    key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "archive task")),
 		moveTaskLeft:   key.NewBinding(key.WithKeys("["), key.WithHelp("[", "move task left")),
@@ -48,13 +58,13 @@ func newKeyMap() keyMap {
 
 func (k keyMap) ShortHelp() []key.Binding {
 	return []key.Binding{
-		k.addTask, k.editTask, k.moveLeft, k.moveRight, k.moveUp, k.moveDown, k.search, k.projects, k.quit,
+		k.addTask, k.taskInfo, k.editTask, k.newProject, k.commandPalette, k.quickActions, k.search, k.quit,
 	}
 }
 
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.addTask, k.editTask, k.search, k.projects, k.toggleArchived, k.toggleHelp, k.reload, k.quit},
+		{k.addTask, k.taskInfo, k.editTask, k.newProject, k.editProject, k.commandPalette, k.quickActions, k.search, k.projects, k.toggleArchived, k.toggleHelp, k.reload, k.quit},
 		{k.moveLeft, k.moveRight, k.moveUp, k.moveDown, k.moveTaskLeft, k.moveTaskRight},
 		{k.deleteTask, k.archiveTask, k.hardDeleteTask, k.restoreTask},
 	}

@@ -370,6 +370,82 @@ func TestListAndSortHelpers(t *testing.T) {
 	}
 }
 
+func TestSearchTaskMatchesAcrossProjectsAndStates(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	p1, _ := domain.NewProject("p1", "Inbox", "", now)
+	p2, _ := domain.NewProject("p2", "Client", "", now)
+	repo.projects[p1.ID] = p1
+	repo.projects[p2.ID] = p2
+
+	c1, _ := domain.NewColumn("c1", p1.ID, "To Do", 0, 0, now)
+	c2, _ := domain.NewColumn("c2", p1.ID, "In Progress", 1, 0, now)
+	c3, _ := domain.NewColumn("c3", p2.ID, "In Progress", 0, 0, now)
+	repo.columns[c1.ID] = c1
+	repo.columns[c2.ID] = c2
+	repo.columns[c3.ID] = c3
+
+	t1, _ := domain.NewTask(domain.TaskInput{
+		ID:          "t1",
+		ProjectID:   p1.ID,
+		ColumnID:    c1.ID,
+		Position:    0,
+		Title:       "Roadmap draft",
+		Description: "planning",
+		Priority:    domain.PriorityMedium,
+	}, now)
+	t2, _ := domain.NewTask(domain.TaskInput{
+		ID:          "t2",
+		ProjectID:   p1.ID,
+		ColumnID:    c2.ID,
+		Position:    0,
+		Title:       "Implement parser",
+		Description: "roadmap parser",
+		Priority:    domain.PriorityHigh,
+	}, now)
+	t3, _ := domain.NewTask(domain.TaskInput{
+		ID:          "t3",
+		ProjectID:   p2.ID,
+		ColumnID:    c3.ID,
+		Position:    0,
+		Title:       "Client sync",
+		Description: "roadmap review",
+		Priority:    domain.PriorityLow,
+	}, now)
+	t3.Archive(now.Add(time.Minute))
+	repo.tasks[t1.ID] = t1
+	repo.tasks[t2.ID] = t2
+	repo.tasks[t3.ID] = t3
+
+	svc := NewService(repo, nil, func() time.Time { return now }, ServiceConfig{})
+
+	matches, err := svc.SearchTaskMatches(context.Background(), SearchTasksFilter{
+		CrossProject:    true,
+		IncludeArchived: false,
+		States:          []string{"progress"},
+		Query:           "parser",
+	})
+	if err != nil {
+		t.Fatalf("SearchTaskMatches() error = %v", err)
+	}
+	if len(matches) != 1 || matches[0].Task.ID != "t2" || matches[0].StateID != "progress" {
+		t.Fatalf("unexpected active matches %#v", matches)
+	}
+
+	matches, err = svc.SearchTaskMatches(context.Background(), SearchTasksFilter{
+		CrossProject:    true,
+		IncludeArchived: true,
+		States:          []string{"archived"},
+		Query:           "roadmap",
+	})
+	if err != nil {
+		t.Fatalf("SearchTaskMatches(archived) error = %v", err)
+	}
+	if len(matches) != 1 || matches[0].Task.ID != "t3" || matches[0].StateID != "archived" {
+		t.Fatalf("unexpected archived matches %#v", matches)
+	}
+}
+
 func TestEnsureDefaultProjectAlreadyExists(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Now()
@@ -386,6 +462,94 @@ func TestEnsureDefaultProjectAlreadyExists(t *testing.T) {
 	}
 	if len(repo.columns) != 0 {
 		t.Fatalf("expected no default columns to be inserted, got %d", len(repo.columns))
+	}
+}
+
+func TestCreateProjectWithMetadataAndAutoColumns(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	ids := []string{"p1", "c1", "c2"}
+	idx := 0
+	svc := NewService(repo, func() string {
+		id := ids[idx]
+		idx++
+		return id
+	}, func() time.Time { return now }, ServiceConfig{
+		AutoCreateProjectColumns: true,
+		StateTemplates: []StateTemplate{
+			{ID: "todo", Name: "To Do", Position: 0},
+			{ID: "doing", Name: "Doing", Position: 1},
+		},
+	})
+
+	project, err := svc.CreateProjectWithMetadata(context.Background(), CreateProjectInput{
+		Name:        "Roadmap",
+		Description: "Q2 plan",
+		Metadata: domain.ProjectMetadata{
+			Owner: "Evan",
+			Tags:  []string{"Roadmap", "roadmap"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateProjectWithMetadata() error = %v", err)
+	}
+	if project.Metadata.Owner != "Evan" || len(project.Metadata.Tags) != 1 {
+		t.Fatalf("unexpected project metadata %#v", project.Metadata)
+	}
+	columns, err := svc.ListColumns(context.Background(), project.ID, false)
+	if err != nil {
+		t.Fatalf("ListColumns() error = %v", err)
+	}
+	if len(columns) != 2 {
+		t.Fatalf("expected 2 auto-created columns, got %d", len(columns))
+	}
+	if columns[0].Name != "To Do" || columns[1].Name != "Doing" {
+		t.Fatalf("unexpected column names %#v", columns)
+	}
+}
+
+func TestUpdateProject(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "old desc", now)
+	repo.projects[project.ID] = project
+
+	svc := NewService(repo, nil, func() time.Time { return now.Add(time.Minute) }, ServiceConfig{})
+	updated, err := svc.UpdateProject(context.Background(), UpdateProjectInput{
+		ProjectID:   project.ID,
+		Name:        "Platform",
+		Description: "new desc",
+		Metadata: domain.ProjectMetadata{
+			Owner: "team-kan",
+			Tags:  []string{"go", "Go"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("UpdateProject() error = %v", err)
+	}
+	if updated.Name != "Platform" || updated.Description != "new desc" {
+		t.Fatalf("unexpected updated project %#v", updated)
+	}
+	if updated.Metadata.Owner != "team-kan" || len(updated.Metadata.Tags) != 1 || updated.Metadata.Tags[0] != "go" {
+		t.Fatalf("unexpected metadata %#v", updated.Metadata)
+	}
+}
+
+func TestStateTemplateSanitization(t *testing.T) {
+	got := sanitizeStateTemplates([]StateTemplate{
+		{ID: "", Name: " To Do ", Position: 3},
+		{ID: "todo", Name: "Duplicate", Position: 1},
+		{ID: "", Name: "In Progress", Position: 2, WIPLimit: -1},
+		{ID: "", Name: " ", Position: 4},
+	})
+	if len(got) != 2 {
+		t.Fatalf("expected 2 sanitized states, got %#v", got)
+	}
+	if got[0].ID != "progress" || got[1].ID != "todo" {
+		t.Fatalf("unexpected sanitized IDs %#v", got)
+	}
+	if got[0].WIPLimit != 0 {
+		t.Fatalf("expected clamped wip limit, got %d", got[0].WIPLimit)
 	}
 }
 
