@@ -25,9 +25,15 @@ jobs:
           go-version-file: go.mod
           cache: true
       - uses: taiki-e/install-action@just
-      - name: Run CI pipeline
+      - name: Run CI pipeline (unix)
+        if: runner.os != 'Windows'
         shell: bash
         run: just ci
+      - name: Run CI pipeline (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & "C:\Program Files\Git\bin\bash.exe" -lc "just ci"
 
   release-snapshot-check:
     name: release snapshot check

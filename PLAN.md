@@ -954,3 +954,10 @@ Goal: define the path to expose this system as an MCP-capable planning backend.
     - `TERM=xterm-256color GOCACHE=$(pwd)/.go-cache just test-golden` (after testcache clean) -> success
     - `GOCACHE=$(pwd)/.go-cache just check-llm` -> success
   - note: Context7 retried before edits and remained unavailable (`Monthly quota exceeded`)
+- [x] 2026-02-21: Windows-only CI shell remediation follow-up
+  - symptom: `windows-latest` still failed with `Windows Subsystem for Linux has no installed distributions` while running `just ci`
+  - root cause refinement: `just` recipes invoke `bash`; on hosted windows this can resolve to WSL shim when not forced through Git Bash
+  - edit: split CI run step by OS and run windows job via explicit Git Bash invocation:
+    - unix: `shell: bash`, `run: just ci`
+    - windows: `shell: pwsh`, `& "C:\Program Files\Git\bin\bash.exe" -lc "just ci"`
+  - expected result: windows matrix run bypasses WSL shim and executes recipes in Git Bash
