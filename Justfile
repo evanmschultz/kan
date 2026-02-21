@@ -1,4 +1,4 @@
-set shell := ["zsh", "-eu", "-o", "pipefail", "-c"]
+set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 
 default:
   @just --list
