@@ -26,6 +26,7 @@ jobs:
           cache: true
       - uses: taiki-e/install-action@just
       - name: Run CI pipeline
+        shell: bash
         run: just ci
 
   release-snapshot-check:

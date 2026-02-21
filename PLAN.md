@@ -926,3 +926,31 @@ Goal: define the path to expose this system as an MCP-capable planning backend.
   - docs: added `third_party/teatest_v2/README.md` with purpose, wiring, maintenance, error troubleshooting, and removal criteria
   - note: Context7 attempted again before edits and failed due monthly quota (`Monthly quota exceeded`)
   - command: `just check-llm` -> success (all packages cached green, coverage floor preserved)
+- [x] 2026-02-21: CI shell failure remediation (`just ci` on GitHub ubuntu)
+  - symptom: workflow failed before running recipes with `just could not find the shell: ...` for `zsh`
+  - root cause: `Justfile` hard-coded `set shell := ["zsh", ...]`, but ubuntu runner image does not guarantee `zsh`
+  - edit: changed `Justfile` shell to `bash` (`set shell := ["bash", "-eu", "-o", "pipefail", "-c"]`)
+  - command: `just ci` -> success locally after change
+  - note: Context7 attempted before edit and unavailable due quota (`Monthly quota exceeded`)
+- [x] 2026-02-21: CI `fmt` recipe portability fix after ubuntu runner failure
+  - symptom: `just ci` failed on ubuntu with `rg: command not found` in `fmt`
+  - root cause: `fmt` depended on ripgrep being installed in runner image
+  - initial attempted fix used shell fallback + make-style `$$` escaping; this caused local syntax/runtime issues and was corrected
+  - final fix: `fmt` now formats tracked Go files via `git ls-files '*.go'` and `gofmt -w "$@"` (no ripgrep dependency)
+  - verification: `just ci` passes locally after final fix
+  - note: Context7 was retried before edits and unavailable due quota (`Monthly quota exceeded`)
+- [x] 2026-02-21: CI matrix remediation for shell portability + TUI golden determinism
+  - investigation scope: `Justfile`, `.github/workflows/ci.yml`, `internal/tui/model_teatest_test.go`, golden fixtures, and recent CI logs
+  - command: `gh run list ...` failed in sandbox (`error connecting to api.github.com`), so run-log analysis used provided GitHub log excerpts + local reproduction
+  - online/docs check: searched Just shell behavior docs; verified `windows-shell` setting guidance and bash/powershell defaults
+  - root cause #1 (windows): workflow step ran `just ci` with default shell on `windows-latest`, causing bash resolution through WSL with no distro installed
+  - fix #1: set `shell: bash` on the CI step that executes `just ci` in `.github/workflows/ci.yml`
+  - root cause #2 (linux/macos): TUI golden tests asserted raw terminal control streams that vary by terminal capability (`TERM`) across runners
+  - fix #2: in golden tests, force deterministic terminal env via `teatest.WithProgramOptions(tea.WithEnvironment([]string{"TERM=dumb"))` and regenerate goldens
+  - commands run:
+    - `just fmt` -> success
+    - `GOCACHE=$(pwd)/.go-cache just test-golden-update` -> success
+    - `GOCACHE=$(pwd)/.go-cache just test-golden` -> success
+    - `TERM=xterm-256color GOCACHE=$(pwd)/.go-cache just test-golden` (after testcache clean) -> success
+    - `GOCACHE=$(pwd)/.go-cache just check-llm` -> success
+  - note: Context7 retried before edits and remained unavailable (`Monthly quota exceeded`)

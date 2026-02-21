@@ -107,7 +107,12 @@ func TestModelGoldenBoardOutput(t *testing.T) {
 		[]domain.Column{c1},
 		[]domain.Task{task},
 	))
-	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(96, 28))
+	tm := teatest.NewTestModel(
+		t,
+		m,
+		teatest.WithInitialTermSize(96, 28),
+		teatest.WithProgramOptions(tea.WithEnvironment([]string{"TERM=dumb"})),
+	)
 	var captured bytes.Buffer
 	stream := io.TeeReader(tm.Output(), &captured)
 
@@ -144,7 +149,12 @@ func TestModelGoldenHelpExpandedOutput(t *testing.T) {
 		[]domain.Column{c1},
 		[]domain.Task{task},
 	))
-	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(96, 28))
+	tm := teatest.NewTestModel(
+		t,
+		m,
+		teatest.WithInitialTermSize(96, 28),
+		teatest.WithProgramOptions(tea.WithEnvironment([]string{"TERM=dumb"})),
+	)
 	var captured bytes.Buffer
 	stream := io.TeeReader(tm.Output(), &captured)
 
