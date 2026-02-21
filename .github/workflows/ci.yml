@@ -32,8 +32,7 @@ jobs:
       - name: Run CI pipeline (windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: |
-          & "C:\Program Files\Git\bin\bash.exe" -lc "just ci"
+        run: just ci
 
   release-snapshot-check:
     name: release snapshot check

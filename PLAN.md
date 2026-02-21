@@ -961,3 +961,11 @@ Goal: define the path to expose this system as an MCP-capable planning backend.
     - unix: `shell: bash`, `run: just ci`
     - windows: `shell: pwsh`, `& "C:\Program Files\Git\bin\bash.exe" -lc "just ci"`
   - expected result: windows matrix run bypasses WSL shim and executes recipes in Git Bash
+- [x] 2026-02-21: Final windows CI shell-resolution fix for `just`
+  - symptom: windows job still invoked WSL shim (`System32\\bash.exe`) even when launching `just ci` from Git Bash
+  - root cause: `Justfile` global `shell := ["bash", ...]` allows Windows process resolution to prefer `C:\\Windows\\System32\\bash.exe` before PATH
+  - fix: added `set windows-shell := ["C:/Program Files/Git/bin/bash.exe", "-eu", "-o", "pipefail", "-c"]` to force Git Bash for all `just` recipes on Windows
+  - command: `just ci` -> success locally
+  - doc references used: `just` settings docs for `windows-shell` behavior and Windows shell precedence
+  - note: Context7 retried before edit and unavailable (`Monthly quota exceeded`)
+  - follow-up cleanup: windows CI step now runs `just ci` directly in `pwsh`; `windows-shell` in `Justfile` controls recipe shell path explicitly
