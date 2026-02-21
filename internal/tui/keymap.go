@@ -1,0 +1,61 @@
+package tui
+
+import "charm.land/bubbles/v2/key"
+
+type keyMap struct {
+	quit           key.Binding
+	reload         key.Binding
+	toggleHelp     key.Binding
+	moveLeft       key.Binding
+	moveRight      key.Binding
+	moveUp         key.Binding
+	moveDown       key.Binding
+	addTask        key.Binding
+	editTask       key.Binding
+	deleteTask     key.Binding
+	archiveTask    key.Binding
+	moveTaskLeft   key.Binding
+	moveTaskRight  key.Binding
+	hardDeleteTask key.Binding
+	restoreTask    key.Binding
+	search         key.Binding
+	projects       key.Binding
+	toggleArchived key.Binding
+}
+
+func newKeyMap() keyMap {
+	return keyMap{
+		quit:           key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
+		reload:         key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "reload")),
+		toggleHelp:     key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "toggle help")),
+		moveLeft:       key.NewBinding(key.WithKeys("h", "left"), key.WithHelp("h/←", "column left")),
+		moveRight:      key.NewBinding(key.WithKeys("l", "right"), key.WithHelp("l/→", "column right")),
+		moveUp:         key.NewBinding(key.WithKeys("k", "up"), key.WithHelp("k/↑", "task up")),
+		moveDown:       key.NewBinding(key.WithKeys("j", "down"), key.WithHelp("j/↓", "task down")),
+		addTask:        key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "new task")),
+		editTask:       key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit task")),
+		deleteTask:     key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete (default)")),
+		archiveTask:    key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "archive task")),
+		moveTaskLeft:   key.NewBinding(key.WithKeys("["), key.WithHelp("[", "move task left")),
+		moveTaskRight:  key.NewBinding(key.WithKeys("]"), key.WithHelp("]", "move task right")),
+		hardDeleteTask: key.NewBinding(key.WithKeys("D", "shift+d"), key.WithHelp("D", "hard delete")),
+		restoreTask:    key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "restore task")),
+		search:         key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "search")),
+		projects:       key.NewBinding(key.WithKeys("p", "P"), key.WithHelp("p/P", "project picker")),
+		toggleArchived: key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "toggle archived")),
+	}
+}
+
+func (k keyMap) ShortHelp() []key.Binding {
+	return []key.Binding{
+		k.addTask, k.editTask, k.moveLeft, k.moveRight, k.moveUp, k.moveDown, k.search, k.projects, k.quit,
+	}
+}
+
+func (k keyMap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{
+		{k.addTask, k.editTask, k.search, k.projects, k.toggleArchived, k.toggleHelp, k.reload, k.quit},
+		{k.moveLeft, k.moveRight, k.moveUp, k.moveDown, k.moveTaskLeft, k.moveTaskRight},
+		{k.deleteTask, k.archiveTask, k.hardDeleteTask, k.restoreTask},
+	}
+}

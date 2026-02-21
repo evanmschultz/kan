@@ -1,0 +1,151 @@
+package app
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/evanschultz/kan/internal/domain"
+)
+
+func TestExportSnapshotIncludesExpectedData(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 2, 22, 10, 0, 0, 0, time.UTC)
+
+	p1, _ := domain.NewProject("p1", "Alpha", "", now)
+	p2, _ := domain.NewProject("p2", "Beta", "", now)
+	p2.Archive(now.Add(time.Minute))
+	repo.projects[p1.ID] = p1
+	repo.projects[p2.ID] = p2
+
+	c1, _ := domain.NewColumn("c1", p1.ID, "To Do", 0, 0, now)
+	c2, _ := domain.NewColumn("c2", p2.ID, "Done", 0, 0, now)
+	repo.columns[c1.ID] = c1
+	repo.columns[c2.ID] = c2
+
+	t1, _ := domain.NewTask(domain.TaskInput{ID: "t1", ProjectID: p1.ID, ColumnID: c1.ID, Position: 0, Title: "Task A", Priority: domain.PriorityLow}, now)
+	t2, _ := domain.NewTask(domain.TaskInput{ID: "t2", ProjectID: p2.ID, ColumnID: c2.ID, Position: 0, Title: "Task B", Priority: domain.PriorityHigh}, now)
+	t2.Archive(now.Add(2 * time.Minute))
+	repo.tasks[t1.ID] = t1
+	repo.tasks[t2.ID] = t2
+
+	svc := NewService(repo, nil, func() time.Time { return now.Add(3 * time.Minute) }, ServiceConfig{})
+
+	snapActive, err := svc.ExportSnapshot(context.Background(), false)
+	if err != nil {
+		t.Fatalf("ExportSnapshot(active) error = %v", err)
+	}
+	if snapActive.Version != SnapshotVersion {
+		t.Fatalf("unexpected version %q", snapActive.Version)
+	}
+	if len(snapActive.Projects) != 1 || snapActive.Projects[0].ID != p1.ID {
+		t.Fatalf("unexpected active projects %#v", snapActive.Projects)
+	}
+	if len(snapActive.Columns) != 1 || snapActive.Columns[0].ID != c1.ID {
+		t.Fatalf("unexpected active columns %#v", snapActive.Columns)
+	}
+	if len(snapActive.Tasks) != 1 || snapActive.Tasks[0].ID != t1.ID {
+		t.Fatalf("unexpected active tasks %#v", snapActive.Tasks)
+	}
+
+	snapAll, err := svc.ExportSnapshot(context.Background(), true)
+	if err != nil {
+		t.Fatalf("ExportSnapshot(all) error = %v", err)
+	}
+	if len(snapAll.Projects) != 2 || len(snapAll.Columns) != 2 || len(snapAll.Tasks) != 2 {
+		t.Fatalf("unexpected all snapshot sizes p=%d c=%d t=%d", len(snapAll.Projects), len(snapAll.Columns), len(snapAll.Tasks))
+	}
+}
+
+func TestImportSnapshotCreatesAndUpdates(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 2, 22, 10, 0, 0, 0, time.UTC)
+
+	existingProject, _ := domain.NewProject("p1", "Old Name", "", now)
+	existingCol, _ := domain.NewColumn("c1", existingProject.ID, "Old Col", 0, 0, now)
+	existingTask, _ := domain.NewTask(domain.TaskInput{ID: "t1", ProjectID: existingProject.ID, ColumnID: existingCol.ID, Position: 0, Title: "Old Task", Priority: domain.PriorityLow}, now)
+
+	repo.projects[existingProject.ID] = existingProject
+	repo.columns[existingCol.ID] = existingCol
+	repo.tasks[existingTask.ID] = existingTask
+
+	svc := NewService(repo, nil, func() time.Time { return now }, ServiceConfig{})
+	due := now.Add(48 * time.Hour)
+	snap := Snapshot{
+		Version: SnapshotVersion,
+		Projects: []SnapshotProject{
+			{ID: "p1", Name: "New Name", Description: "updated", Slug: "new-name", CreatedAt: now, UpdatedAt: now.Add(time.Minute)},
+			{ID: "p2", Name: "Project Two", Description: "new", Slug: "project-two", CreatedAt: now, UpdatedAt: now.Add(time.Minute)},
+		},
+		Columns: []SnapshotColumn{
+			{ID: "c1", ProjectID: "p1", Name: "Doing", Position: 1, WIPLimit: 2, CreatedAt: now, UpdatedAt: now.Add(time.Minute)},
+			{ID: "c2", ProjectID: "p2", Name: "To Do", Position: 0, WIPLimit: 0, CreatedAt: now, UpdatedAt: now.Add(time.Minute)},
+		},
+		Tasks: []SnapshotTask{
+			{ID: "t1", ProjectID: "p1", ColumnID: "c1", Position: 2, Title: "Updated Task", Description: "details", Priority: domain.PriorityHigh, DueAt: &due, Labels: []string{"a", "b"}, CreatedAt: now, UpdatedAt: now.Add(time.Minute)},
+			{ID: "t2", ProjectID: "p2", ColumnID: "c2", Position: 0, Title: "New Task", Priority: domain.PriorityMedium, CreatedAt: now, UpdatedAt: now.Add(time.Minute)},
+		},
+	}
+
+	if err := svc.ImportSnapshot(context.Background(), snap); err != nil {
+		t.Fatalf("ImportSnapshot() error = %v", err)
+	}
+
+	if got := repo.projects["p1"]; got.Name != "New Name" || got.Description != "updated" {
+		t.Fatalf("unexpected updated project %#v", got)
+	}
+	if _, ok := repo.projects["p2"]; !ok {
+		t.Fatal("expected new project p2")
+	}
+	if got := repo.columns["c1"]; got.Name != "Doing" || got.Position != 1 {
+		t.Fatalf("unexpected updated column %#v", got)
+	}
+	if _, ok := repo.columns["c2"]; !ok {
+		t.Fatal("expected new column c2")
+	}
+	if got := repo.tasks["t1"]; got.Title != "Updated Task" || got.Priority != domain.PriorityHigh {
+		t.Fatalf("unexpected updated task %#v", got)
+	}
+	if _, ok := repo.tasks["t2"]; !ok {
+		t.Fatal("expected new task t2")
+	}
+}
+
+func TestImportSnapshotValidateErrors(t *testing.T) {
+	repo := newFakeRepo()
+	svc := NewService(repo, nil, time.Now, ServiceConfig{})
+
+	badVersion := Snapshot{Version: "kan.snapshot.v999"}
+	if err := svc.ImportSnapshot(context.Background(), badVersion); err == nil {
+		t.Fatal("expected version validation error")
+	}
+
+	now := time.Date(2026, 2, 22, 10, 0, 0, 0, time.UTC)
+	badRefs := Snapshot{
+		Version:  SnapshotVersion,
+		Projects: []SnapshotProject{{ID: "p1", Name: "A", Slug: "a", CreatedAt: now, UpdatedAt: now}},
+		Columns:  []SnapshotColumn{{ID: "c1", ProjectID: "missing", Name: "To Do", Position: 0, CreatedAt: now, UpdatedAt: now}},
+	}
+	if err := svc.ImportSnapshot(context.Background(), badRefs); err == nil {
+		t.Fatal("expected reference validation error")
+	}
+}
+
+type failingSnapshotRepo struct {
+	*fakeRepo
+	err error
+}
+
+func (f failingSnapshotRepo) ListProjects(context.Context, bool) ([]domain.Project, error) {
+	return nil, f.err
+}
+
+func TestExportSnapshotPropagatesError(t *testing.T) {
+	expected := errors.New("boom")
+	svc := NewService(failingSnapshotRepo{fakeRepo: newFakeRepo(), err: expected}, nil, time.Now, ServiceConfig{})
+	_, err := svc.ExportSnapshot(context.Background(), false)
+	if !errors.Is(err, expected) {
+		t.Fatalf("expected error %v, got %v", expected, err)
+	}
+}
