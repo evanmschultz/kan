@@ -1,7 +1,8 @@
 .DS_Store
 coverage.out
 dist/
-kan
+/kan
+/kan.exe
 bin/
 .artifacts/
 .tmp/

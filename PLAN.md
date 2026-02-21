@@ -23,6 +23,9 @@ Build a polished, Charm-style Kanban TUI with local SQLite persistence, multiple
 - Tooling requirement: use `just` recipes as the primary dev/CI interface.
 - Canonical lifecycle states are fixed and non-configurable for now:
   - `todo`, `progress`, `done`, `archived`.
+- UI display labels for lifecycle states are fixed:
+  - `To Do`, `In Progress`, `Done`, `Archived`.
+  - internal stored value remains `todo|progress|done|archived` (for deterministic queries and MCP payloads).
 - Completion contracts are required across all work-item levels (phase/task/subtask/etc):
   - transition into `progress` and `done` must evaluate contract criteria.
   - LLM-driven transitions must receive contract context and validation feedback.
@@ -237,6 +240,10 @@ This phase is intentionally split into small execution chunks so we can ship inc
   - `todo`
   - `progress`
   - `done`.
+- Display names should be:
+  - `To Do`
+  - `In Progress`
+  - `Done`.
 - Include configured filter defaults from TOML as initial active selection (from canonical set only).
 - Archived behavior:
   - keep explicit archived toggle in search controls.
@@ -328,14 +335,14 @@ This phase is intentionally split into small execution chunks so we can ship inc
   - Invalid durations fail validation with clear error messages.
 
 ### Phase 6.9: Lifecycle Simplification and Column Mapping Alignment
-- Remove configurable lifecycle state taxonomies for this phase.
+- Remove configurable lifecycle state definitions for this phase.
 - Keep canonical lifecycle states:
   - `todo`
   - `progress`
   - `done`
   - `archived`.
 - Map board columns/sections to canonical lifecycle states deterministically.
-- If display labels vary by project, treat them as presentation aliases only (not data-state identities).
+- Use fixed display labels (`To Do`, `In Progress`, `Done`, `Archived`) for consistency.
 - Acceptance:
   - No project-specific state definitions can diverge lifecycle logic.
   - Search, board rendering, and transitions all operate on one canonical state model.
@@ -574,6 +581,9 @@ Goal: capture all edits with provenance and prepare incremental sync semantics f
   - `field_changes` (structured diff)
   - `occurred_at`.
 - Keep events append-only for audit and replay potential.
+- `system` actor definition:
+  - internal app automation (migration/backfill/normalization/rule-driven maintenance), never anonymous.
+  - must include stable `actor_id` (ex: `kan-system`) and source metadata.
 
 ### Phase 10.2: Agent Cursor/Checkpoint Tracking
 - Add per-agent cursor:
@@ -601,10 +611,30 @@ Goal: capture all edits with provenance and prepare incremental sync semantics f
   - "agent changed Y"
   - "system changed Z".
 
+### Phase 10.4: Authorization Model and Dangerous Mode Policy
+- Default-safe authorization policy:
+  - agent destructive actions require user approval by default.
+  - agent transitions into `progress` and `done` require completion-contract validation by default.
+- Add TOML policy surface for action-level permissions:
+  - `permissions.agent.require_user_approval_for = [...]`
+  - `permissions.agent.allow_without_approval = [...]`
+  - `permissions.agent.allow_transition_on_contract_failure = false` (default).
+- Add explicit dangerous-mode TOML section (default disabled):
+  - `dangerous.agent.enabled = false`
+  - `dangerous.agent.allow_destructive_without_approval = false`
+  - `dangerous.agent.allow_transition_without_contract_pass = false`
+  - `dangerous.agent.startup_warning = true`.
+- Dangerous mode behavior:
+  - when enabled, app must show persistent warning in help/status and startup.
+  - all dangerous-mode actions must still be fully actor-attributed in `change_events`.
+- Implementation requirement:
+  - update `config.example.toml`, config validation, docs, and runtime permission checks together in one slice.
+
 ### Phase 10 Acceptance
 - Every meaningful write emits an actor-attributed event.
 - Per-agent cursor model is defined and testable locally.
 - Delta payload contract is documented for later MCP implementation.
+- Authorization policy and dangerous-mode config are validated and documented.
 
 ## Phase 11: MCP/HTTP Integration Roadmap (Not Implemented Yet)
 Goal: define the path to expose this system as an MCP-capable planning backend.
@@ -658,20 +688,29 @@ Goal: define the path to expose this system as an MCP-capable planning backend.
   - mandatory contract support at every work-item level.
   - transition guards required for `todo -> progress` and `progress -> done`.
   - LLM transition responses must include active contract and unmet checks.
+- Transition enforcement:
+  - default hard block for agent transitions when contract checks fail.
+  - user override allowed with explicit confirmation and reason (logged).
+- Evidence schema:
+  - hybrid model: structured evidence entries + free-form notes.
+- Parent-child completion default:
+  - required children must be `done` before parent can move to `done` (unless explicit policy override).
+- Contract versioning:
+  - transitions record `contract_version` and evaluated snapshot for auditability.
+- Dangerous mode:
+  - exists as explicit TOML opt-in, defaults off, includes startup and in-app warnings.
+- Actor identity:
+  - `system` is internal automation, must be identified and audited like all other actors.
 
 ## Remaining Open Questions (Next Refinement Round)
-- Transition enforcement mode:
-  - should user-initiated transitions be hard-blocked on contract failure, or allow explicit override with reason?
-- Child completion policy defaults:
-  - should all parents require all children complete, or allow configurable policies by `kind`?
-- Evidence schema:
-  - should `completion_evidence` be free-form text only, structured entries, or both?
 - Nesting depth and performance guardrails:
   - default max depth and practical limits for very large trees.
 - Template bootstrapping:
   - what default templates ship for software projects, phases, and subtasks?
 - Collaboration readiness:
   - what minimum auth/identity model is required before enabling remote shared mode later?
+- Dangerous mode operational UX:
+  - should dangerous mode require a typed confirmation phrase each launch, or only a persistent warning banner?
 
 ## Additional Roadmap Gaps to Track
 - Template system:
@@ -686,6 +725,10 @@ Goal: define the path to expose this system as an MCP-capable planning backend.
   - daily/weekly digest summaries for human and agent handoff.
 - Remote collaboration foundation:
   - conflict strategy, permission boundaries, and data ownership model.
+- Policy ergonomics:
+  - role presets (`strict`, `balanced`, `dangerous`) to simplify TOML setup for common workflows.
+- Config implementation guardrails:
+  - example TOML, migration notes, and validation errors must stay synchronized across releases.
 
 ## Parallel Workstream Candidates (Can Start Now)
 - Safe to run now with low coupling to roadmap-phase schema work:
@@ -888,6 +931,11 @@ Goal: define the path to expose this system as an MCP-capable planning backend.
   - added completion contract requirements for all work-item levels, including transition guard behavior for `todo -> progress` and `progress -> done`
   - added explicit LLM transition context requirement: contract + unmet checks must be returned when state updates are attempted
   - expanded remaining-open-questions and parallel-workstream guidance to reflect new consensus
+- [x] 2026-02-21: Consensus hardening update (planning only; no code changes):
+  - locked UI state labels to `To Do|In Progress|Done|Archived` while preserving canonical internal enum values
+  - added dangerous-mode authorization roadmap (TOML policy, startup warnings, audit requirements)
+  - defined `system` actor as internal automation with mandatory attribution metadata
+  - converted transition/evidence/child-policy/versioning items from open questions into locked defaults
 - [x] 2026-02-21: Repo-wide comment/docstring hardening pass (active)
   - objective: enforce explicit comment/docstring coverage across all Go code blocks, including tests
   - command: `ls -la` (repo inventory) -> success
@@ -979,3 +1027,21 @@ Goal: define the path to expose this system as an MCP-capable planning backend.
   - edit: updated expected paths in `internal/platform/paths_test.go` to use `filepath.Join` for Linux/Darwin/fallback cases
   - command: `GOCACHE=$(pwd)/.go-cache just test-pkg ./internal/platform` -> success
   - command: `GOCACHE=$(pwd)/.go-cache just check-llm` -> success
+- [x] 2026-02-21: Investigated release-snapshot failure (`couldn't find main file: stat cmd/kan`)
+  - user request: investigate/discuss only, no fixes yet
+  - evidence:
+    - `.goreleaser.yml` expects build `main: ./cmd/kan`
+    - `git ls-files` returns no tracked files under `cmd/`
+    - `git check-ignore -v cmd/kan/main.go` shows ignore rule `.gitignore:4:kan`
+    - `git status --ignored` shows `!! cmd/` (entire directory ignored)
+  - root cause: ignore pattern `kan` is currently matching `cmd/kan`, so entrypoint sources exist locally but are not versioned; CI checkout does not contain them
+  - why test-matrix can still look mostly green: `go test ./...` in CI only sees tracked packages from checkout, so it does not validate missing ignored entrypoint package
+  - why release check fails: goreleaser explicitly resolves `./cmd/kan`, which is absent in clean CI checkout
+- [x] 2026-02-21: Repository integrity audit for ignored/untracked source drift (investigation-only)
+  - objective: verify whether ignored-but-required source exists beyond `cmd/kan`
+  - command: compared local vs tracked Go files (`find ... '*.go'` vs `git ls-files '*.go'`)
+    - untracked go files detected: `cmd/kan/main.go`, `cmd/kan/main_test.go`, `.tmp/kancli/*` (scratch area)
+  - command: per-dir tracked audit (`cmd`, `internal`, `.github`, `third_party`, `vhs`)
+    - only unexpected untracked source under first-class dirs: `cmd/kan/*.go`
+  - command: `git check-ignore -v cmd/kan/main.go` -> matched by `.gitignore` pattern `kan`
+  - conclusion: primary repo-integrity issue is broad ignore rule `kan` unintentionally masking `cmd/kan`; no second ignored source tree found under core project dirs

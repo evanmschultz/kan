@@ -46,6 +46,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Verify required entrypoint sources are tracked
+        run: git ls-files --error-unmatch cmd/kan/main.go cmd/kan/main_test.go
       - name: Validate goreleaser snapshot
         uses: goreleaser/goreleaser-action@v6
         with:
