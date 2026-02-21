@@ -1,7 +1,7 @@
 # Kan TUI Plan + Worklog
 
 Created: 2026-02-21  
-Status: In progress (Phase 0-5 baseline complete, detailed Phase 6 remediation plan approved)  
+Status: In progress (Phase 0-6 active, MCP-oriented roadmap expansion added)  
 Execution gate: Planning update only in this step (no code changes)
 
 ## 1) Product Goal
@@ -21,6 +21,11 @@ Build a polished, Charm-style Kanban TUI with local SQLite persistence, multiple
 - CI target OS: macOS, Linux, Windows (manual dev testing on macOS).
 - Quality requirement: Teatest included for TUI behavior tests.
 - Tooling requirement: use `just` recipes as the primary dev/CI interface.
+- Canonical lifecycle states are fixed and non-configurable for now:
+  - `todo`, `progress`, `done`, `archived`.
+- Completion contracts are required across all work-item levels (phase/task/subtask/etc):
+  - transition into `progress` and `done` must evaluate contract criteria.
+  - LLM-driven transitions must receive contract context and validation feedback.
 
 ## 3) Open Decisions To Lock Before Coding
 No open decisions. Locked defaults:
@@ -182,14 +187,14 @@ Rule: GitHub Actions should call `just` recipes, not duplicate shell logic per w
 
 ## Phase 5: UX + Workflow Expansion (Current)
 - Config system expansion:
-  - richer app config (states, key overrides, search defaults, dev/prod paths)
+  - richer app config (key overrides, search defaults, dev/prod paths)
   - tracked example config template and docs for installed/dev use
 - Project lifecycle UX:
   - create/edit projects from TUI
   - project metadata support (description + timeline fields)
 - Search + filtering:
   - cross-project search
-  - state-aware filtering (`todo`, `progress`, `done`, `archived`, user-defined states)
+  - state-aware filtering (`todo`, `progress`, `done`, `archived`)
 - Help + onboarding:
   - richer branded help screen (Fang-inspired presentation)
   - first-run onboarding flow
@@ -226,19 +231,20 @@ This phase is intentionally split into small execution chunks so we can ship inc
   - User can tab through every control including scope and archived.
   - `clear query` and `reset filters` have distinct behavior and help text.
 
-### Phase 6.2: State Selector Driven by Config + Project State Model
+### Phase 6.2: Canonical State Selector and Filter Model
 - Replace free-text state search entry with a multi-select state selector.
-- State options source rules:
-  - project scope: active project states only.
-  - cross-project scope: union of states across included projects.
-  - include configured defaults from TOML as initial active selection.
+- State options are canonical and fixed:
+  - `todo`
+  - `progress`
+  - `done`.
+- Include configured filter defaults from TOML as initial active selection (from canonical set only).
 - Archived behavior:
   - keep explicit archived toggle in search controls.
-  - avoid duplicate "archived" state rendering if already represented as a pseudo-state.
-- Ensure state IDs are canonical and mapped from project state config, not inferred from display labels alone.
+  - avoid duplicate "archived" state rendering if already represented in filter text.
+- Ensure lifecycle states use canonical enum semantics in storage/app/TUI.
 - Acceptance:
   - Search modal never shows duplicate states.
-  - State filtering respects active project definitions and cross-project union logic.
+  - State filtering is consistent across projects because lifecycle states are global and fixed.
 
 ### Phase 6.3: Command Palette Usability Upgrade
 - Command palette should filter commands live as user types (fuzzy/substring acceptable).
@@ -321,16 +327,18 @@ This phase is intentionally split into small execution chunks so we can ship inc
   - Users can customize due-soon thresholds without code changes.
   - Invalid durations fail validation with clear error messages.
 
-### Phase 6.9: Project State Configuration and Metadata Alignment
-- Extend project model/config to hold explicit state definitions per project:
-  - stable state `id`
-  - display `name`
-  - order/position
-  - optional visual metadata (color/icon).
-- Ensure board columns and search selectors read from the same state model source.
-- Cross-project search should merge state IDs/names safely without duplicate display confusion.
+### Phase 6.9: Lifecycle Simplification and Column Mapping Alignment
+- Remove configurable lifecycle state taxonomies for this phase.
+- Keep canonical lifecycle states:
+  - `todo`
+  - `progress`
+  - `done`
+  - `archived`.
+- Map board columns/sections to canonical lifecycle states deterministically.
+- If display labels vary by project, treat them as presentation aliases only (not data-state identities).
 - Acceptance:
-  - Project states are first-class config/metadata, not duplicated ad hoc in UI.
+  - No project-specific state definitions can diverge lifecycle logic.
+  - Search, board rendering, and transitions all operate on one canonical state model.
 
 ### Phase 6.10: Help + Command Discoverability Pass
 - Keep Fang-style help modal but update command sections to reflect new search commands and confirmations.
@@ -365,11 +373,335 @@ This phase is intentionally split into small execution chunks so we can ship inc
 - 6.12 checkpoint review:
   - confirm all search semantics
   - confirm no duplicate state rendering
+  - confirm canonical fixed lifecycle states are enforced end-to-end
   - confirm due summary output:
     - `3 overdue * 5 due soon` format
   - confirm no unresolved UX regressions before returning to remaining stretch items (multi-select, activity log, swimlanes, undo/redo).
 
-## 9) Definition of Done (MVP)
+## Phase 7: Rich Planning Data Model (MCP-Ready Local Foundation)
+Goal: evolve from a simple kanban board into a planning/coordination system that can later back an MCP HTTP service for human + agent collaboration.
+
+### Phase 7.1: Work Item Schema Evolution
+- Move toward a generic hierarchical `work_items` core (instead of task-only mental model):
+  - `id`, `project_id`, `parent_id`, `kind`, `title`, `summary`, `description`, `lifecycle_state`, `priority`, `position`.
+  - lifecycle fields: `created_at`, `updated_at`, `started_at`, `completed_at`, `archived_at`, `canceled_at`.
+  - ownership/attribution fields: `created_by_actor`, `updated_by_actor`, `updated_by_type` (`user|agent|system`).
+- `lifecycle_state` is a fixed enum:
+  - `todo`
+  - `progress`
+  - `done`
+  - `archived`.
+- `kind` should be configurable at project level (`phase`, `task`, `subtask`, `milestone`, `note`, `decision`, etc.).
+- Keep compatibility adapters so current board/task flows keep working while data model expands.
+
+### Phase 7.2: Rich Task/Work Item Fields for LLM + Dev Context
+- Add fields designed for execution context and handoff quality:
+  - `objective`
+  - `implementation_notes_user`
+  - `implementation_notes_agent`
+  - `acceptance_criteria`
+  - `definition_of_done`
+  - `validation_plan`
+  - `blocked_reason`
+  - `risk_notes`
+  - `command_snippets`
+  - `expected_outputs`
+  - `decision_log`
+  - `related_items` (cross-links)
+  - `transition_notes` (why it moved states)
+- Add typed "context blocks" with importance:
+  - `context_type`: `note|constraint|decision|reference|warning|runbook`.
+  - `importance`: `low|normal|high|critical`.
+- Goal: every work item can carry enough context to be safely resumed by an LLM agent.
+
+### Phase 7.3: Resources and File References
+- Add first-class `resource_refs` associated to project/phase/task:
+  - `resource_type`: `local_file|local_dir|url|doc|ticket|snippet`.
+  - `location`: path/URL.
+  - `path_mode`: `relative|absolute`.
+  - `base_alias`: project root alias for relative paths.
+  - `title`, `notes`, `tags`, `last_verified_at`.
+- Add file picker UX for local path references.
+- Add "attach related paths" flow:
+  - single file
+  - directory
+  - multi-select where feasible.
+- Preserve both local portability and future remote portability by normalizing path refs to project-root-relative when possible.
+
+### Phase 7.4: Project Root Path Strategy
+- Primary recommendation:
+  - keep machine-specific root paths in TOML config, keyed by stable project slug/ID.
+  - store only stable project identity and relative references in DB.
+- Proposed config shape:
+  - `project_roots.<project_slug> = "/abs/path/to/project"`
+  - optional multiple roots/aliases for monorepos.
+- Benefits:
+  - easier sharing/export of DB snapshots across machines.
+  - less path churn in persisted data.
+- Open fallback:
+  - optionally persist last-known root path in DB as hint only (never source of truth).
+
+### Phase 7.5: Configurable Label System (Project and Subscope Aware)
+- Introduce label sets with scoped inheritance:
+  - project defaults
+  - phase-level extensions/overrides
+  - optional item-level ad hoc labels.
+- Label metadata:
+  - name, color, icon, description, scope, suggested states/kinds.
+- Add configurable label picker behavior:
+  - suggested labels by scope/state/kind
+  - recent labels
+  - required labels (optional policy).
+
+### Phase 7.6: Completion Contracts and Transition Guards (All Levels)
+- Add first-class completion contract fields to every work item kind:
+  - `start_criteria` (what must be true to move `todo -> progress`)
+  - `completion_criteria` (what must be true to move `progress -> done`)
+  - `completion_checklist` (structured checklist items with status)
+  - `completion_evidence` (links, notes, command outputs, artifacts)
+  - `completion_notes` (final human/agent summary)
+  - `completion_policy` (per-kind policy knobs, including child requirements).
+- Contract inheritance and override:
+  - project-level default contracts by `kind`
+  - phase/item-level overrides
+  - explicit inheritance markers so behavior is deterministic.
+- Transition guard behavior:
+  - on `todo -> progress`, evaluate `start_criteria` and return unmet items.
+  - on `progress -> done`, evaluate `completion_criteria`, checklist, and evidence requirements.
+  - for parent items, enforce child completion policy (default: required children must be `done`).
+- LLM-specific requirement:
+  - when LLM attempts state transitions, context response must include active contract + unmet checks.
+  - reject transition with structured reason when contract fails.
+
+### Phase 7 Acceptance
+- Rich context fields and resources are storable/queryable without breaking existing flows.
+- Relative path references resolve through TOML project roots.
+- Label scopes work at least at project + phase levels.
+- Completion contracts are available for every item kind and validated on transitions.
+- LLM transition attempts receive explicit contract context and validation results.
+
+## Phase 8: Nested Work Graph and Configurable Hierarchy
+Goal: support deep planning structures beyond flat tasks, controlled by user/project configuration.
+
+### Phase 8.1: Hierarchy Model
+- Support parent/child nesting for all work item kinds.
+- Configurable naming for hierarchy levels:
+  - example: `Project -> Phase -> Task -> Subtask`
+  - example: `Project -> Milestone -> Story -> Task`.
+- Configurable maximum depth per project.
+- Preserve ordering at each sibling level.
+
+### Phase 8.2: Board and Navigation Behavior for Nested Structures
+- Define board projection modes:
+  - phase board
+  - task board within selected phase
+  - flattened "current execution queue" view.
+- Add breadcrumb context in UI for nested location.
+- Add quick jump between parent, siblings, and children.
+
+### Phase 8.3: Rollups and Dependency Basics
+- Roll up progress and urgency from children to parents.
+- Track dependency links:
+  - `depends_on`
+  - `blocked_by`.
+- Surface blocked state in board/search results.
+
+### Phase 8.4: Nested Completion Semantics
+- Enforce completion behavior at every nesting level:
+  - child-level contracts gate child transitions.
+  - parent-level contracts can require specific child kinds or counts to be complete.
+- Parent state progression defaults:
+  - `todo -> progress` allowed when parent `start_criteria` passes (and optional child-start policy passes).
+  - `progress -> done` requires parent contract + required child completion policy pass.
+- Provide rollup diagnostics:
+  - unmet parent criteria
+  - unmet child criteria
+  - blocked dependencies preventing completion.
+
+### Phase 8 Acceptance
+- Users can create and manage at least 3-level nested structures.
+- Views remain usable with keyboard/mouse navigation.
+- Parent progress reflects child state changes.
+- Parent completion status is contract-driven and deterministic across nested levels.
+
+## Phase 9: Memory Nodes and Operating Rules (Roadmap; No MCP/HTTP Yet)
+Goal: capture persistent "remember this" context for dev + agent behavior at project/phase/item scopes.
+
+### Phase 9.1: Memory Node Model
+- Add `memory_nodes` with scope:
+  - `project`
+  - `phase`
+  - `item` (task/subtask/decision/etc).
+- Memory node fields:
+  - `title`
+  - `body`
+  - `memory_type` (`rule|preference|warning|runbook|constraint|environment`)
+  - `priority`
+  - `active`
+  - `created_by_actor`, `updated_by_actor`.
+
+### Phase 9.2: Memory Resolution Rules
+- Memory composition when loading a scope should merge:
+  - project-level active memory
+  - phase-level active memory
+  - item-level active memory.
+- Add deterministic ordering (priority + recency + scope proximity).
+- Add conflict notes for contradictory memory entries.
+
+### Phase 9.3: Documentation/Policy Preparation (for later MCP use)
+- Add explicit roadmap doc requirements:
+  - MCP instructions should require agent to read active memory nodes before work.
+  - AGENTS policy should be generated/updated from active memory nodes where appropriate.
+  - agent response templates should include "memory considered" evidence.
+- Keep this as roadmap/spec only until MCP transport exists.
+
+### Phase 9 Acceptance
+- Memory nodes can be authored and retrieved by scope.
+- Clear merge semantics exist for project/phase/item contexts.
+- Roadmap docs define how memory should influence future agent execution policy.
+
+## Phase 10: Actor-Aware Change Tracking and Agent Delta Feeds (Roadmap)
+Goal: capture all edits with provenance and prepare incremental sync semantics for future MCP responses.
+
+### Phase 10.1: Change Event Log
+- Add `change_events` ledger for all mutable entities:
+  - `event_id`, `entity_type`, `entity_id`, `project_id`
+  - `actor_type` (`user|agent|system`)
+  - `actor_id` / `actor_name`
+  - `operation` (`create|update|delete|archive|restore|reorder|transition`)
+  - `transition_from`, `transition_to` (for transition operations)
+  - `contract_check_result` (`pass|fail|override`)
+  - `field_changes` (structured diff)
+  - `occurred_at`.
+- Keep events append-only for audit and replay potential.
+
+### Phase 10.2: Agent Cursor/Checkpoint Tracking
+- Add per-agent cursor:
+  - `agent_id`
+  - `project_id`
+  - `last_seen_event_id`
+  - `last_sync_at`.
+- Query contract (future MCP):
+  - "changes since cursor"
+  - "unseen new tasks/items"
+  - "unseen memory node updates"
+  - "unseen state transitions"
+  - "unseen contract updates and transition validation failures."
+
+### Phase 10.3: LLM Notification Semantics (Future MCP Response Shape)
+- When an agent requests item/project context, response should include:
+  - current snapshot
+  - summary of changes since agent cursor
+  - explicit list of new entities unseen by the agent
+  - memory node deltas since last sync
+  - active completion contract for targeted items
+  - unmet contract checks relevant to requested transition actions.
+- Include edit attribution summaries:
+  - "user changed X"
+  - "agent changed Y"
+  - "system changed Z".
+
+### Phase 10 Acceptance
+- Every meaningful write emits an actor-attributed event.
+- Per-agent cursor model is defined and testable locally.
+- Delta payload contract is documented for later MCP implementation.
+
+## Phase 11: MCP/HTTP Integration Roadmap (Not Implemented Yet)
+Goal: define the path to expose this system as an MCP-capable planning backend.
+
+### Phase 11.1: Transport and API Boundaries
+- Keep app core transport-agnostic; expose use cases through ports.
+- Add future adapter plan:
+  - HTTP server
+  - MCP tool/schema layer
+  - auth and tenancy model (future multi-user/remote mode).
+
+### Phase 11.2: Candidate MCP Tool Surface (Roadmap)
+- `list_projects`
+- `get_project_context`
+- `search_items`
+- `get_item_context`
+- `create_item` / `update_item`
+- `append_memory_node`
+- `list_changes_since`
+- `ack_changes`.
+
+### Phase 11.3: Safety and Data Hygiene Requirements
+- Path safety:
+  - enforce project root allowlist.
+  - reject path traversal outside configured roots.
+- Secret handling:
+  - redaction pipeline for known secret patterns in notes/resources.
+- Context budgets:
+  - ranked/truncated context blocks with deterministic priority.
+
+### Phase 11 Acceptance
+- Clear API/tool contracts exist before network implementation.
+- Security constraints are designed before exposing remote interfaces.
+
+## Roadmap Consensus Defaults (Locked)
+- Project root paths:
+  - TOML source of truth with optional DB hint (`project_roots.<project_slug>` authoritative).
+- Nesting model:
+  - generic `work_items` + `kind` + `parent_id` (no fixed-table hierarchy model).
+- Memory precedence:
+  - merge `project -> phase -> item`, nearest scope wins, conflicts preserved explicitly.
+- Label scope:
+  - project + phase first, item-level ad hoc later.
+- Actor attribution:
+  - always capture `actor_type`; optional `actor_id` and `session_id`.
+- History policy:
+  - append-only event envelope, optional retention for older detailed diffs.
+- Lifecycle model:
+  - fixed non-configurable lifecycle states: `todo`, `progress`, `done`, `archived`.
+- Completion contracts:
+  - mandatory contract support at every work-item level.
+  - transition guards required for `todo -> progress` and `progress -> done`.
+  - LLM transition responses must include active contract and unmet checks.
+
+## Remaining Open Questions (Next Refinement Round)
+- Transition enforcement mode:
+  - should user-initiated transitions be hard-blocked on contract failure, or allow explicit override with reason?
+- Child completion policy defaults:
+  - should all parents require all children complete, or allow configurable policies by `kind`?
+- Evidence schema:
+  - should `completion_evidence` be free-form text only, structured entries, or both?
+- Nesting depth and performance guardrails:
+  - default max depth and practical limits for very large trees.
+- Template bootstrapping:
+  - what default templates ship for software projects, phases, and subtasks?
+- Collaboration readiness:
+  - what minimum auth/identity model is required before enabling remote shared mode later?
+
+## Additional Roadmap Gaps to Track
+- Template system:
+  - reusable project/phase/task templates with default memory nodes, labels, resources, and completion contracts.
+- Dependency and scheduling aids:
+  - lightweight critical-path visibility and blocker surfacing.
+- Bulk maintenance tools:
+  - batch transitions, label apply/remove, due-date shifts, and contract assignment.
+- Context quality signals:
+  - stale resource warnings, missing acceptance criteria warnings, and missing evidence warnings.
+- Review workflows:
+  - daily/weekly digest summaries for human and agent handoff.
+- Remote collaboration foundation:
+  - conflict strategy, permission boundaries, and data ownership model.
+
+## Parallel Workstream Candidates (Can Start Now)
+- Safe to run now with low coupling to roadmap-phase schema work:
+  - Phase 6.1 (search form UX + focus model)
+  - Phase 6.2 (canonical state selector and filter model)
+  - Phase 6.4 (list marker/card visual consistency)
+  - Phase 6.5 (confirmation modals)
+  - Phase 6.6 (modal consistency + `enter`/`i` behavior checks)
+  - Phase 6.10 (help/discoverability refresh)
+  - Phase 6.11 (test/VHS expansion for the above).
+- Can run in parallel if kept interface-driven:
+  - Phase 6.7 + 6.8 (due datetime + due window config).
+- Should wait for schema implementation kickoff:
+  - deep data-model work under Phase 7+ (work_items migration, completion contracts, and event ledger extensions).
+
+## 12) Definition of Done (MVP)
 - Multi-project board is fully usable from TUI.
 - SQLite persistence is reliable and migration-backed.
 - Search/filter and import/export are present.
@@ -379,7 +711,7 @@ This phase is intentionally split into small execution chunks so we can ship inc
 - TUI behavior covered by teatest.
 - `just ci` is the single local/CI quality gate.
 
-## 10) Worklog
+## 13) Worklog
 - [x] 2026-02-21: Planning confirmed with v2 direction.
 - [x] 2026-02-21: Decision recorded to pause coding until explicit approval.
 - [x] 2026-02-21: Defaults finalized: no-CGO sqlite, archive-first delete mode, default task field visibility.
@@ -547,3 +879,50 @@ This phase is intentionally split into small execution chunks so we can ship inc
 - [x] 2026-02-21: Planning-only update (no code changes):
   - expanded Phase 6 into 12 detailed subphases covering search/state UX, command palette behavior, destructive-action confirmations, list marker rules, modal consistency, due datetime warnings, due summary row, and TOML-configurable due-soon windows
   - documented date picker decision: keep current lightweight picker + typed datetime support, no external datepicker dependency for now
+- [x] 2026-02-21: MCP-oriented roadmap expansion (planning only; no code changes):
+  - added Phase 7-11 roadmap for rich planning data model, nesting, memory nodes, actor-attributed change feed, and future MCP/HTTP integration
+  - added open questions with recommended defaults to preserve context and guide next consensus round
+  - documented parallel-safe workstreams another agent can execute while architecture details are finalized
+- [x] 2026-02-21: Consensus lock + completion-contract planning update (planning only; no code changes):
+  - locked canonical lifecycle states to `todo|progress|done|archived` and removed roadmap direction toward configurable state taxonomies
+  - added completion contract requirements for all work-item levels, including transition guard behavior for `todo -> progress` and `progress -> done`
+  - added explicit LLM transition context requirement: contract + unmet checks must be returned when state updates are attempted
+  - expanded remaining-open-questions and parallel-workstream guidance to reflect new consensus
+- [x] 2026-02-21: Repo-wide comment/docstring hardening pass (active)
+  - objective: enforce explicit comment/docstring coverage across all Go code blocks, including tests
+  - command: `ls -la` (repo inventory) -> success
+  - command: `sed -n '1,220p' Justfile` (startup recipe review) -> success
+  - command: `sed -n '1,260p' PLAN.md` + `tail -n 120 PLAN.md` (active worklog context) -> success
+  - command: `sed -n '1,260p' README.md` + `sed -n '1,260p' AGENTS.md` -> success
+  - command: `rg --files -g'*.go'` -> 35 Go files discovered
+  - command: `rg -n '^func |^type |^var |^const |^//' -g'*.go' internal cmd` (declaration density scan) -> success
+  - command: `mcp__context7-mcp__resolve-library-id` for Go doc-comment guidance -> failed (`Monthly quota exceeded`); proceeding with established idiomatic Go conventions for this pass
+  - next: update `AGENTS.md` rule text, then execute code-wide comment/docstring edits + `just` verification
+- [x] 2026-02-21: Repo-wide comment/docstring hardening pass (completed)
+  - edit: updated `AGENTS.md` rule to require idiomatic comments/docstrings for every code block, including tests
+  - command: generated declaration audit via `/tmp/missing_docs.go` -> reported 239 missing declaration comments before fixes
+  - edit: executed automated insertion tool `/tmp/add_docs.go` across all `.go` files to add missing comments on:
+    - all top-level `type`/`const`/`var` declarations
+    - all functions and methods (including `Test*` and test helpers)
+  - command: post-pass verification via `/tmp/missing_docs_allfuncs.go` -> `TOTAL 0`
+  - command: `just fmt` -> success
+  - command: `just check-llm` -> success
+  - result: repository now has declaration-level doc comments across implementation and test code; build/test/coverage gate remains green
+  - refinement: replaced low-quality templated phrasing with cleaner idiomatic sentence forms using `/tmp/refine_docs.go`
+  - command: `just fmt` (post-refinement) -> success
+  - command: `just check-llm` (post-refinement) -> success (tests, coverage floor, and build-all all green)
+  - command: `go run /tmp/missing_docs_allfuncs.go` -> `TOTAL 0` (no missing declaration/method comments)
+  - note: `cmd/kan/*.go` are currently matched by `.gitignore` pattern `kan`, so these comment updates are present in workspace but do not appear in `git status`
+- [x] 2026-02-21: Investigated nested-module import diagnostic in `third_party/teatest_v2`
+  - observed root module resolves `github.com/charmbracelet/x/exp/golden`, but nested module lacked `go.sum`
+  - added `third_party/teatest_v2/go.sum` so editor/module resolution can load `golden` and `bubbletea` imports inside the local teatest patch module
+- [x] 2026-02-21: Documented and fixed nested `third_party/teatest_v2` module metadata
+  - request context: explain purpose of `third_party/` and resolve editor `packages.Load` error for `github.com/charmbracelet/x/exp/golden`
+  - command: `go list` in root -> success; command in `third_party/teatest_v2` -> `go: updates to go.mod needed`
+  - root cause: nested module metadata drift (`third_party/teatest_v2/go.mod` required additional indirect requirements and committed `go.sum` for reproducible package loading)
+  - remediation: ran `cd third_party/teatest_v2 && go mod tidy` and kept resulting `go.mod` + `go.sum`
+  - verification: `cd third_party/teatest_v2 && GOCACHE=/Users/evanschultz/Documents/Code/personal/kan/.go-cache go list ./...` -> success
+  - verification: `cd third_party/teatest_v2 && GOCACHE=/Users/evanschultz/Documents/Code/personal/kan/.go-cache go list -deps -test ./...` -> success
+  - docs: added `third_party/teatest_v2/README.md` with purpose, wiring, maintenance, error troubleshooting, and removal criteria
+  - note: Context7 attempted again before edits and failed due monthly quota (`Monthly quota exceeded`)
+  - command: `just check-llm` -> success (all packages cached green, coverage floor preserved)

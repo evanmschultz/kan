@@ -2,6 +2,7 @@ package tui
 
 import "charm.land/bubbles/v2/key"
 
+// keyMap represents key map data used by this package.
 type keyMap struct {
 	quit           key.Binding
 	reload         key.Binding
@@ -28,6 +29,7 @@ type keyMap struct {
 	toggleArchived key.Binding
 }
 
+// newKeyMap constructs key map.
 func newKeyMap() keyMap {
 	return keyMap{
 		quit:           key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
@@ -56,12 +58,14 @@ func newKeyMap() keyMap {
 	}
 }
 
+// ShortHelp handles short help.
 func (k keyMap) ShortHelp() []key.Binding {
 	return []key.Binding{
 		k.addTask, k.taskInfo, k.editTask, k.newProject, k.commandPalette, k.quickActions, k.search, k.quit,
 	}
 }
 
+// FullHelp handles full help.
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.addTask, k.taskInfo, k.editTask, k.newProject, k.editProject, k.commandPalette, k.quickActions, k.search, k.projects, k.toggleArchived, k.toggleHelp, k.reload, k.quit},

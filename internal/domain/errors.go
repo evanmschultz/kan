@@ -2,6 +2,7 @@ package domain
 
 import "errors"
 
+// ErrInvalidID and related errors describe validation and runtime failures.
 var (
 	ErrInvalidID       = errors.New("invalid id")
 	ErrInvalidName     = errors.New("invalid name")

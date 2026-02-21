@@ -8,21 +8,25 @@ import (
 	"strings"
 )
 
+// Paths represents paths data used by this package.
 type Paths struct {
 	ConfigPath string
 	DataDir    string
 	DBPath     string
 }
 
+// Options defines optional settings for configuration.
 type Options struct {
 	AppName string
 	DevMode bool
 }
 
+// DefaultPaths returns default paths.
 func DefaultPaths() (Paths, error) {
 	return DefaultPathsWithOptions(Options{AppName: "kan"})
 }
 
+// DefaultPathsWithOptions returns default paths with options.
 func DefaultPathsWithOptions(opts Options) (Paths, error) {
 	appName := strings.TrimSpace(opts.AppName)
 	if appName == "" {
@@ -59,6 +63,7 @@ func DefaultPathsWithOptions(opts Options) (Paths, error) {
 	return PathsFor(runtime.GOOS, env, configDir, dataDir, appName)
 }
 
+// PathsFor handles paths for.
 func PathsFor(goos string, env map[string]string, userConfigDir, userDataDir, appName string) (Paths, error) {
 	if userConfigDir == "" || userDataDir == "" {
 		return Paths{}, fmt.Errorf("empty base dirs")

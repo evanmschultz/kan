@@ -10,19 +10,23 @@ import (
 	"github.com/evanschultz/kan/internal/domain"
 )
 
+// DeleteMode represents a selectable mode.
 type DeleteMode string
 
+// DeleteModeArchive and related constants define package defaults.
 const (
 	DeleteModeArchive DeleteMode = "archive"
 	DeleteModeHard    DeleteMode = "hard"
 )
 
+// ServiceConfig holds configuration for service.
 type ServiceConfig struct {
 	DefaultDeleteMode        DeleteMode
 	StateTemplates           []StateTemplate
 	AutoCreateProjectColumns bool
 }
 
+// StateTemplate represents state template data used by this package.
 type StateTemplate struct {
 	ID       string
 	Name     string
@@ -30,9 +34,13 @@ type StateTemplate struct {
 	Position int
 }
 
+// IDGenerator returns unique identifiers for new entities.
 type IDGenerator func() string
+
+// Clock returns the current time.
 type Clock func() time.Time
 
+// Service represents service data used by this package.
 type Service struct {
 	repo              Repository
 	idGen             IDGenerator
@@ -42,6 +50,7 @@ type Service struct {
 	autoProjectCols   bool
 }
 
+// NewService constructs a new value for this package.
 func NewService(repo Repository, idGen IDGenerator, clock Clock, cfg ServiceConfig) *Service {
 	if idGen == nil {
 		idGen = func() string { return "" }
@@ -67,6 +76,7 @@ func NewService(repo Repository, idGen IDGenerator, clock Clock, cfg ServiceConf
 	}
 }
 
+// EnsureDefaultProject ensures default project.
 func (s *Service) EnsureDefaultProject(ctx context.Context) (domain.Project, error) {
 	projects, err := s.repo.ListProjects(ctx, false)
 	if err != nil {
@@ -92,12 +102,14 @@ func (s *Service) EnsureDefaultProject(ctx context.Context) (domain.Project, err
 	return project, nil
 }
 
+// CreateProjectInput holds input values for create project operations.
 type CreateProjectInput struct {
 	Name        string
 	Description string
 	Metadata    domain.ProjectMetadata
 }
 
+// CreateProject creates project.
 func (s *Service) CreateProject(ctx context.Context, name, description string) (domain.Project, error) {
 	return s.CreateProjectWithMetadata(ctx, CreateProjectInput{
 		Name:        name,
@@ -105,6 +117,7 @@ func (s *Service) CreateProject(ctx context.Context, name, description string) (
 	})
 }
 
+// CreateProjectWithMetadata creates project with metadata.
 func (s *Service) CreateProjectWithMetadata(ctx context.Context, in CreateProjectInput) (domain.Project, error) {
 	now := s.clock()
 	project, err := domain.NewProject(s.idGen(), in.Name, in.Description, now)
@@ -125,6 +138,7 @@ func (s *Service) CreateProjectWithMetadata(ctx context.Context, in CreateProjec
 	return project, nil
 }
 
+// UpdateProjectInput holds input values for update project operations.
 type UpdateProjectInput struct {
 	ProjectID   string
 	Name        string
@@ -132,6 +146,7 @@ type UpdateProjectInput struct {
 	Metadata    domain.ProjectMetadata
 }
 
+// UpdateProject updates state for the requested operation.
 func (s *Service) UpdateProject(ctx context.Context, in UpdateProjectInput) (domain.Project, error) {
 	project, err := s.repo.GetProject(ctx, in.ProjectID)
 	if err != nil {
@@ -146,6 +161,7 @@ func (s *Service) UpdateProject(ctx context.Context, in UpdateProjectInput) (dom
 	return project, nil
 }
 
+// CreateColumn creates column.
 func (s *Service) CreateColumn(ctx context.Context, projectID, name string, position, wipLimit int) (domain.Column, error) {
 	column, err := domain.NewColumn(s.idGen(), projectID, name, position, wipLimit, s.clock())
 	if err != nil {
@@ -157,6 +173,7 @@ func (s *Service) CreateColumn(ctx context.Context, projectID, name string, posi
 	return column, nil
 }
 
+// CreateTaskInput holds input values for create task operations.
 type CreateTaskInput struct {
 	ProjectID   string
 	ColumnID    string
@@ -167,6 +184,7 @@ type CreateTaskInput struct {
 	Labels      []string
 }
 
+// UpdateTaskInput holds input values for update task operations.
 type UpdateTaskInput struct {
 	TaskID      string
 	Title       string
@@ -176,6 +194,7 @@ type UpdateTaskInput struct {
 	Labels      []string
 }
 
+// SearchTasksFilter defines filtering criteria for queries.
 type SearchTasksFilter struct {
 	ProjectID       string
 	Query           string
@@ -184,12 +203,14 @@ type SearchTasksFilter struct {
 	States          []string
 }
 
+// TaskMatch describes a matched result.
 type TaskMatch struct {
 	Project domain.Project
 	Task    domain.Task
 	StateID string
 }
 
+// CreateTask creates task.
 func (s *Service) CreateTask(ctx context.Context, in CreateTaskInput) (domain.Task, error) {
 	tasks, err := s.repo.ListTasks(ctx, in.ProjectID, false)
 	if err != nil {
@@ -223,6 +244,7 @@ func (s *Service) CreateTask(ctx context.Context, in CreateTaskInput) (domain.Ta
 	return task, nil
 }
 
+// MoveTask moves task.
 func (s *Service) MoveTask(ctx context.Context, taskID, toColumnID string, position int) (domain.Task, error) {
 	task, err := s.repo.GetTask(ctx, taskID)
 	if err != nil {
@@ -237,6 +259,7 @@ func (s *Service) MoveTask(ctx context.Context, taskID, toColumnID string, posit
 	return task, nil
 }
 
+// RestoreTask restores task.
 func (s *Service) RestoreTask(ctx context.Context, taskID string) (domain.Task, error) {
 	task, err := s.repo.GetTask(ctx, taskID)
 	if err != nil {
@@ -249,6 +272,7 @@ func (s *Service) RestoreTask(ctx context.Context, taskID string) (domain.Task, 
 	return task, nil
 }
 
+// RenameTask renames task.
 func (s *Service) RenameTask(ctx context.Context, taskID, title string) (domain.Task, error) {
 	task, err := s.repo.GetTask(ctx, taskID)
 	if err != nil {
@@ -263,6 +287,7 @@ func (s *Service) RenameTask(ctx context.Context, taskID, title string) (domain.
 	return task, nil
 }
 
+// UpdateTask updates state for the requested operation.
 func (s *Service) UpdateTask(ctx context.Context, in UpdateTaskInput) (domain.Task, error) {
 	task, err := s.repo.GetTask(ctx, in.TaskID)
 	if err != nil {
@@ -277,6 +302,7 @@ func (s *Service) UpdateTask(ctx context.Context, in UpdateTaskInput) (domain.Ta
 	return task, nil
 }
 
+// DeleteTask deletes task.
 func (s *Service) DeleteTask(ctx context.Context, taskID string, mode DeleteMode) error {
 	if mode == "" {
 		mode = s.defaultDeleteMode
@@ -297,10 +323,12 @@ func (s *Service) DeleteTask(ctx context.Context, taskID string, mode DeleteMode
 	}
 }
 
+// ListProjects lists projects.
 func (s *Service) ListProjects(ctx context.Context, includeArchived bool) ([]domain.Project, error) {
 	return s.repo.ListProjects(ctx, includeArchived)
 }
 
+// ListColumns lists columns.
 func (s *Service) ListColumns(ctx context.Context, projectID string, includeArchived bool) ([]domain.Column, error) {
 	columns, err := s.repo.ListColumns(ctx, projectID, includeArchived)
 	if err != nil {
@@ -312,6 +340,7 @@ func (s *Service) ListColumns(ctx context.Context, projectID string, includeArch
 	return columns, nil
 }
 
+// ListTasks lists tasks.
 func (s *Service) ListTasks(ctx context.Context, projectID string, includeArchived bool) ([]domain.Task, error) {
 	tasks, err := s.repo.ListTasks(ctx, projectID, includeArchived)
 	if err != nil {
@@ -326,6 +355,7 @@ func (s *Service) ListTasks(ctx context.Context, projectID string, includeArchiv
 	return tasks, nil
 }
 
+// SearchTasks handles search tasks.
 func (s *Service) SearchTasks(ctx context.Context, projectID, query string, includeArchived bool) ([]domain.Task, error) {
 	query = strings.TrimSpace(strings.ToLower(query))
 	if query == "" {
@@ -352,6 +382,7 @@ func (s *Service) SearchTasks(ctx context.Context, projectID, query string, incl
 	return out, nil
 }
 
+// SearchTaskMatches handles search task matches.
 func (s *Service) SearchTaskMatches(ctx context.Context, in SearchTasksFilter) ([]TaskMatch, error) {
 	stateFilter := map[string]struct{}{}
 	for _, raw := range in.States {
@@ -456,6 +487,7 @@ func (s *Service) SearchTaskMatches(ctx context.Context, in SearchTasksFilter) (
 	return out, nil
 }
 
+// labelsContainQuery handles labels contain query.
 func labelsContainQuery(labels []string, query string) bool {
 	for _, label := range labels {
 		if strings.Contains(strings.ToLower(label), query) {
@@ -465,6 +497,7 @@ func labelsContainQuery(labels []string, query string) bool {
 	return false
 }
 
+// defaultStateTemplates returns default state templates.
 func defaultStateTemplates() []StateTemplate {
 	return []StateTemplate{
 		{ID: "todo", Name: "To Do", WIPLimit: 0, Position: 0},
@@ -473,6 +506,7 @@ func defaultStateTemplates() []StateTemplate {
 	}
 }
 
+// sanitizeStateTemplates handles sanitize state templates.
 func sanitizeStateTemplates(in []StateTemplate) []StateTemplate {
 	if len(in) == 0 {
 		return nil
@@ -510,6 +544,7 @@ func sanitizeStateTemplates(in []StateTemplate) []StateTemplate {
 	return out
 }
 
+// normalizeStateID normalizes state id.
 func normalizeStateID(name string) string {
 	name = strings.TrimSpace(strings.ToLower(name))
 	if name == "" {
@@ -545,6 +580,7 @@ func normalizeStateID(name string) string {
 	}
 }
 
+// createDefaultColumns creates default columns.
 func (s *Service) createDefaultColumns(ctx context.Context, projectID string, now time.Time) error {
 	for idx, state := range s.stateTemplates {
 		position := state.Position

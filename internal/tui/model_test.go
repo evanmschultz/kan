@@ -12,6 +12,7 @@ import (
 	"github.com/evanschultz/kan/internal/domain"
 )
 
+// fakeService represents fake service data used by this package.
 type fakeService struct {
 	projects []domain.Project
 	columns  map[string][]domain.Column
@@ -19,6 +20,7 @@ type fakeService struct {
 	err      error
 }
 
+// newFakeService constructs fake service.
 func newFakeService(projects []domain.Project, columns []domain.Column, tasks []domain.Task) *fakeService {
 	colByProject := map[string][]domain.Column{}
 	for _, c := range columns {
@@ -35,6 +37,7 @@ func newFakeService(projects []domain.Project, columns []domain.Column, tasks []
 	}
 }
 
+// ListProjects lists projects.
 func (f *fakeService) ListProjects(context.Context, bool) ([]domain.Project, error) {
 	if f.err != nil {
 		return nil, f.err
@@ -44,6 +47,7 @@ func (f *fakeService) ListProjects(context.Context, bool) ([]domain.Project, err
 	return out, nil
 }
 
+// ListColumns lists columns.
 func (f *fakeService) ListColumns(_ context.Context, projectID string, includeArchived bool) ([]domain.Column, error) {
 	if f.err != nil {
 		return nil, f.err
@@ -59,6 +63,7 @@ func (f *fakeService) ListColumns(_ context.Context, projectID string, includeAr
 	return out, nil
 }
 
+// ListTasks lists tasks.
 func (f *fakeService) ListTasks(_ context.Context, projectID string, includeArchived bool) ([]domain.Task, error) {
 	if f.err != nil {
 		return nil, f.err
@@ -74,6 +79,7 @@ func (f *fakeService) ListTasks(_ context.Context, projectID string, includeArch
 	return out, nil
 }
 
+// SearchTasks handles search tasks.
 func (f *fakeService) SearchTasks(ctx context.Context, projectID, query string, includeArchived bool) ([]domain.Task, error) {
 	tasks, err := f.ListTasks(ctx, projectID, includeArchived)
 	if err != nil {
@@ -99,6 +105,7 @@ func (f *fakeService) SearchTasks(ctx context.Context, projectID, query string, 
 	return out, nil
 }
 
+// SearchTaskMatches handles search task matches.
 func (f *fakeService) SearchTaskMatches(ctx context.Context, in app.SearchTasksFilter) ([]app.TaskMatch, error) {
 	query := strings.ToLower(strings.TrimSpace(in.Query))
 	stateSet := map[string]struct{}{}
@@ -183,6 +190,7 @@ func (f *fakeService) SearchTaskMatches(ctx context.Context, in app.SearchTasksF
 	return out, nil
 }
 
+// CreateProjectWithMetadata creates project with metadata.
 func (f *fakeService) CreateProjectWithMetadata(_ context.Context, in app.CreateProjectInput) (domain.Project, error) {
 	project, err := domain.NewProject("p-new", in.Name, in.Description, time.Now().UTC())
 	if err != nil {
@@ -205,6 +213,7 @@ func (f *fakeService) CreateProjectWithMetadata(_ context.Context, in app.Create
 	return project, nil
 }
 
+// UpdateProject updates state for the requested operation.
 func (f *fakeService) UpdateProject(_ context.Context, in app.UpdateProjectInput) (domain.Project, error) {
 	for idx := range f.projects {
 		if f.projects[idx].ID != in.ProjectID {
@@ -218,6 +227,7 @@ func (f *fakeService) UpdateProject(_ context.Context, in app.UpdateProjectInput
 	return domain.Project{}, app.ErrNotFound
 }
 
+// CreateTask creates task.
 func (f *fakeService) CreateTask(_ context.Context, in app.CreateTaskInput) (domain.Task, error) {
 	pos := 0
 	for _, t := range f.tasks[in.ProjectID] {
@@ -243,6 +253,7 @@ func (f *fakeService) CreateTask(_ context.Context, in app.CreateTaskInput) (dom
 	return task, nil
 }
 
+// UpdateTask updates state for the requested operation.
 func (f *fakeService) UpdateTask(_ context.Context, in app.UpdateTaskInput) (domain.Task, error) {
 	for projectID := range f.tasks {
 		for idx := range f.tasks[projectID] {
@@ -260,6 +271,7 @@ func (f *fakeService) UpdateTask(_ context.Context, in app.UpdateTaskInput) (dom
 	return domain.Task{}, app.ErrNotFound
 }
 
+// MoveTask moves task.
 func (f *fakeService) MoveTask(_ context.Context, taskID, toColumnID string, position int) (domain.Task, error) {
 	for projectID := range f.tasks {
 		for idx := range f.tasks[projectID] {
@@ -273,6 +285,7 @@ func (f *fakeService) MoveTask(_ context.Context, taskID, toColumnID string, pos
 	return domain.Task{}, app.ErrNotFound
 }
 
+// DeleteTask deletes task.
 func (f *fakeService) DeleteTask(_ context.Context, taskID string, mode app.DeleteMode) error {
 	for projectID := range f.tasks {
 		for idx := range f.tasks[projectID] {
@@ -296,6 +309,7 @@ func (f *fakeService) DeleteTask(_ context.Context, taskID string, mode app.Dele
 	return app.ErrNotFound
 }
 
+// RestoreTask restores task.
 func (f *fakeService) RestoreTask(_ context.Context, taskID string) (domain.Task, error) {
 	for projectID := range f.tasks {
 		for idx := range f.tasks[projectID] {
@@ -308,6 +322,7 @@ func (f *fakeService) RestoreTask(_ context.Context, taskID string) (domain.Task
 	return domain.Task{}, app.ErrNotFound
 }
 
+// RenameTask renames task.
 func (f *fakeService) RenameTask(_ context.Context, taskID, title string) (domain.Task, error) {
 	for projectID := range f.tasks {
 		for idx := range f.tasks[projectID] {
@@ -320,6 +335,7 @@ func (f *fakeService) RenameTask(_ context.Context, taskID, title string) (domai
 	return domain.Task{}, app.ErrNotFound
 }
 
+// projectByID returns project by id.
 func (f *fakeService) projectByID(projectID string) (domain.Project, bool) {
 	for _, project := range f.projects {
 		if project.ID == projectID {
@@ -329,6 +345,7 @@ func (f *fakeService) projectByID(projectID string) (domain.Project, bool) {
 	return domain.Project{}, false
 }
 
+// TestModelLoadAndNavigation verifies behavior for the covered scenario.
 func TestModelLoadAndNavigation(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -359,6 +376,7 @@ func TestModelLoadAndNavigation(t *testing.T) {
 	}
 }
 
+// TestModelQuickAddMoveArchiveRestoreDelete verifies behavior for the covered scenario.
 func TestModelQuickAddMoveArchiveRestoreDelete(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -406,6 +424,7 @@ func TestModelQuickAddMoveArchiveRestoreDelete(t *testing.T) {
 	}
 }
 
+// TestModelProjectSwitchAndSearch verifies behavior for the covered scenario.
 func TestModelProjectSwitchAndSearch(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p1, _ := domain.NewProject("p1", "A", "", now)
@@ -453,6 +472,7 @@ func TestModelProjectSwitchAndSearch(t *testing.T) {
 	}
 }
 
+// TestModelCrossProjectSearchResultsAndJump verifies behavior for the covered scenario.
 func TestModelCrossProjectSearchResultsAndJump(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p1, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -503,6 +523,7 @@ func TestModelCrossProjectSearchResultsAndJump(t *testing.T) {
 	}
 }
 
+// TestModelAddAndEditProject verifies behavior for the covered scenario.
 func TestModelAddAndEditProject(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -537,6 +558,7 @@ func TestModelAddAndEditProject(t *testing.T) {
 	}
 }
 
+// TestModelCommandPaletteAndQuickActions verifies behavior for the covered scenario.
 func TestModelCommandPaletteAndQuickActions(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -589,6 +611,7 @@ func TestModelCommandPaletteAndQuickActions(t *testing.T) {
 	}
 }
 
+// TestModelMouseWheelAndClick verifies behavior for the covered scenario.
 func TestModelMouseWheelAndClick(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -626,6 +649,7 @@ func TestModelMouseWheelAndClick(t *testing.T) {
 	}
 }
 
+// TestModelQuitKey verifies behavior for the covered scenario.
 func TestModelQuitKey(t *testing.T) {
 	m := NewModel(newFakeService(nil, nil, nil))
 	updated, cmd := m.Update(tea.KeyPressMsg{Code: 'q', Text: "q"})
@@ -637,6 +661,7 @@ func TestModelQuitKey(t *testing.T) {
 	}
 }
 
+// TestModelViewStatesAndPrompts verifies behavior for the covered scenario.
 func TestModelViewStatesAndPrompts(t *testing.T) {
 	m := NewModel(newFakeService(nil, nil, nil))
 	v := m.View()
@@ -662,6 +687,7 @@ func TestModelViewStatesAndPrompts(t *testing.T) {
 	}
 }
 
+// TestModelInputModePaths verifies behavior for the covered scenario.
 func TestModelInputModePaths(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -711,6 +737,7 @@ func TestModelInputModePaths(t *testing.T) {
 	}
 }
 
+// TestModelNormalModeExtraBranches verifies behavior for the covered scenario.
 func TestModelNormalModeExtraBranches(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p1, _ := domain.NewProject("p1", "A", "", now)
@@ -765,6 +792,7 @@ func TestModelNormalModeExtraBranches(t *testing.T) {
 	}
 }
 
+// TestHelpersCoverage verifies behavior for the covered scenario.
 func TestHelpersCoverage(t *testing.T) {
 	if clamp(5, 0, 1) != 1 {
 		t.Fatal("clamp upper bound failed")
@@ -848,6 +876,7 @@ func TestHelpersCoverage(t *testing.T) {
 	}
 }
 
+// TestTaskEditParsing verifies behavior for the covered scenario.
 func TestTaskEditParsing(t *testing.T) {
 	now := time.Date(2026, 2, 21, 0, 0, 0, 0, time.UTC)
 	current, _ := domain.NewTask(domain.TaskInput{
@@ -887,6 +916,7 @@ func TestTaskEditParsing(t *testing.T) {
 	}
 }
 
+// TestProjectPickerMouseAndWheel verifies behavior for the covered scenario.
 func TestProjectPickerMouseAndWheel(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p1, _ := domain.NewProject("p1", "A", "", now)
@@ -907,6 +937,7 @@ func TestProjectPickerMouseAndWheel(t *testing.T) {
 	}
 }
 
+// TestTaskFieldConfigAffectsRendering verifies behavior for the covered scenario.
 func TestTaskFieldConfigAffectsRendering(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -949,6 +980,7 @@ func TestTaskFieldConfigAffectsRendering(t *testing.T) {
 	}
 }
 
+// TestDeleteUsesConfiguredDefaultMode verifies behavior for the covered scenario.
 func TestDeleteUsesConfiguredDefaultMode(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -978,6 +1010,7 @@ func TestDeleteUsesConfiguredDefaultMode(t *testing.T) {
 	}
 }
 
+// TestParseDueAndLabelsInput verifies behavior for the covered scenario.
 func TestParseDueAndLabelsInput(t *testing.T) {
 	now := time.Date(2026, 2, 21, 0, 0, 0, 0, time.UTC)
 
@@ -1028,6 +1061,7 @@ func TestParseDueAndLabelsInput(t *testing.T) {
 	}
 }
 
+// TestRenderModeOverlayAndIndexHelpers verifies behavior for the covered scenario.
 func TestRenderModeOverlayAndIndexHelpers(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -1148,6 +1182,7 @@ func TestRenderModeOverlayAndIndexHelpers(t *testing.T) {
 	}
 }
 
+// TestModelFormValidationPaths verifies behavior for the covered scenario.
 func TestModelFormValidationPaths(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -1198,6 +1233,7 @@ func TestModelFormValidationPaths(t *testing.T) {
 	}
 }
 
+// TestTaskInfoModeAndPriorityPicker verifies behavior for the covered scenario.
 func TestTaskInfoModeAndPriorityPicker(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -1245,6 +1281,7 @@ func TestTaskInfoModeAndPriorityPicker(t *testing.T) {
 	}
 }
 
+// TestTaskFormDuePickerFlow verifies behavior for the covered scenario.
 func TestTaskFormDuePickerFlow(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -1285,6 +1322,7 @@ func TestTaskFormDuePickerFlow(t *testing.T) {
 	}
 }
 
+// TestTaskFormLabelSuggestions verifies behavior for the covered scenario.
 func TestTaskFormLabelSuggestions(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -1324,11 +1362,13 @@ func TestTaskFormLabelSuggestions(t *testing.T) {
 	}
 }
 
+// loadReadyModel loads required data for the current operation.
 func loadReadyModel(t *testing.T, m Model) Model {
 	t.Helper()
 	return applyMsg(t, applyCmd(t, m, m.Init()), tea.WindowSizeMsg{Width: 120, Height: 40})
 }
 
+// applyMsg applies msg.
 func applyMsg(t *testing.T, m Model, msg tea.Msg) Model {
 	t.Helper()
 	updated, cmd := m.Update(msg)
@@ -1339,6 +1379,7 @@ func applyMsg(t *testing.T, m Model, msg tea.Msg) Model {
 	return applyCmd(t, out, cmd)
 }
 
+// applyCmd applies cmd.
 func applyCmd(t *testing.T, m Model, cmd tea.Cmd) Model {
 	t.Helper()
 	out := m
@@ -1356,6 +1397,7 @@ func applyCmd(t *testing.T, m Model, cmd tea.Cmd) Model {
 	return out
 }
 
+// keyRune handles key rune.
 func keyRune(r rune) tea.KeyPressMsg {
 	return tea.KeyPressMsg{Code: r, Text: string(r)}
 }

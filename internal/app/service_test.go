@@ -9,12 +9,14 @@ import (
 	"github.com/evanschultz/kan/internal/domain"
 )
 
+// fakeRepo represents fake repo data used by this package.
 type fakeRepo struct {
 	projects map[string]domain.Project
 	columns  map[string]domain.Column
 	tasks    map[string]domain.Task
 }
 
+// newFakeRepo constructs fake repo.
 func newFakeRepo() *fakeRepo {
 	return &fakeRepo{
 		projects: map[string]domain.Project{},
@@ -23,16 +25,19 @@ func newFakeRepo() *fakeRepo {
 	}
 }
 
+// CreateProject creates project.
 func (f *fakeRepo) CreateProject(_ context.Context, p domain.Project) error {
 	f.projects[p.ID] = p
 	return nil
 }
 
+// UpdateProject updates state for the requested operation.
 func (f *fakeRepo) UpdateProject(_ context.Context, p domain.Project) error {
 	f.projects[p.ID] = p
 	return nil
 }
 
+// GetProject returns project.
 func (f *fakeRepo) GetProject(_ context.Context, id string) (domain.Project, error) {
 	p, ok := f.projects[id]
 	if !ok {
@@ -41,6 +46,7 @@ func (f *fakeRepo) GetProject(_ context.Context, id string) (domain.Project, err
 	return p, nil
 }
 
+// ListProjects lists projects.
 func (f *fakeRepo) ListProjects(_ context.Context, includeArchived bool) ([]domain.Project, error) {
 	out := make([]domain.Project, 0, len(f.projects))
 	for _, p := range f.projects {
@@ -52,16 +58,19 @@ func (f *fakeRepo) ListProjects(_ context.Context, includeArchived bool) ([]doma
 	return out, nil
 }
 
+// CreateColumn creates column.
 func (f *fakeRepo) CreateColumn(_ context.Context, c domain.Column) error {
 	f.columns[c.ID] = c
 	return nil
 }
 
+// UpdateColumn updates state for the requested operation.
 func (f *fakeRepo) UpdateColumn(_ context.Context, c domain.Column) error {
 	f.columns[c.ID] = c
 	return nil
 }
 
+// ListColumns lists columns.
 func (f *fakeRepo) ListColumns(_ context.Context, projectID string, includeArchived bool) ([]domain.Column, error) {
 	out := make([]domain.Column, 0, len(f.columns))
 	for _, c := range f.columns {
@@ -76,11 +85,13 @@ func (f *fakeRepo) ListColumns(_ context.Context, projectID string, includeArchi
 	return out, nil
 }
 
+// CreateTask creates task.
 func (f *fakeRepo) CreateTask(_ context.Context, t domain.Task) error {
 	f.tasks[t.ID] = t
 	return nil
 }
 
+// UpdateTask updates state for the requested operation.
 func (f *fakeRepo) UpdateTask(_ context.Context, t domain.Task) error {
 	if _, ok := f.tasks[t.ID]; !ok {
 		return ErrNotFound
@@ -89,6 +100,7 @@ func (f *fakeRepo) UpdateTask(_ context.Context, t domain.Task) error {
 	return nil
 }
 
+// GetTask returns task.
 func (f *fakeRepo) GetTask(_ context.Context, id string) (domain.Task, error) {
 	t, ok := f.tasks[id]
 	if !ok {
@@ -97,6 +109,7 @@ func (f *fakeRepo) GetTask(_ context.Context, id string) (domain.Task, error) {
 	return t, nil
 }
 
+// ListTasks lists tasks.
 func (f *fakeRepo) ListTasks(_ context.Context, projectID string, includeArchived bool) ([]domain.Task, error) {
 	out := make([]domain.Task, 0, len(f.tasks))
 	for _, t := range f.tasks {
@@ -111,6 +124,7 @@ func (f *fakeRepo) ListTasks(_ context.Context, projectID string, includeArchive
 	return out, nil
 }
 
+// DeleteTask deletes task.
 func (f *fakeRepo) DeleteTask(_ context.Context, id string) error {
 	if _, ok := f.tasks[id]; !ok {
 		return ErrNotFound
@@ -119,6 +133,7 @@ func (f *fakeRepo) DeleteTask(_ context.Context, id string) error {
 	return nil
 }
 
+// TestEnsureDefaultProject verifies behavior for the covered scenario.
 func TestEnsureDefaultProject(t *testing.T) {
 	repo := newFakeRepo()
 	idCounter := 0
@@ -145,6 +160,7 @@ func TestEnsureDefaultProject(t *testing.T) {
 	}
 }
 
+// TestCreateTaskMoveSearchAndDeleteModes verifies behavior for the covered scenario.
 func TestCreateTaskMoveSearchAndDeleteModes(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
@@ -229,6 +245,7 @@ func TestCreateTaskMoveSearchAndDeleteModes(t *testing.T) {
 	}
 }
 
+// TestDeleteTaskModeValidation verifies behavior for the covered scenario.
 func TestDeleteTaskModeValidation(t *testing.T) {
 	repo := newFakeRepo()
 	svc := NewService(repo, func() string { return "x" }, time.Now, ServiceConfig{})
@@ -238,6 +255,7 @@ func TestDeleteTaskModeValidation(t *testing.T) {
 	}
 }
 
+// TestRenameTask verifies behavior for the covered scenario.
 func TestRenameTask(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
@@ -261,6 +279,7 @@ func TestRenameTask(t *testing.T) {
 	}
 }
 
+// TestUpdateTask verifies behavior for the covered scenario.
 func TestUpdateTask(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
@@ -295,6 +314,7 @@ func TestUpdateTask(t *testing.T) {
 	}
 }
 
+// TestListAndSortHelpers verifies behavior for the covered scenario.
 func TestListAndSortHelpers(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
@@ -370,6 +390,7 @@ func TestListAndSortHelpers(t *testing.T) {
 	}
 }
 
+// TestSearchTaskMatchesAcrossProjectsAndStates verifies behavior for the covered scenario.
 func TestSearchTaskMatchesAcrossProjectsAndStates(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
@@ -446,6 +467,7 @@ func TestSearchTaskMatchesAcrossProjectsAndStates(t *testing.T) {
 	}
 }
 
+// TestEnsureDefaultProjectAlreadyExists verifies behavior for the covered scenario.
 func TestEnsureDefaultProjectAlreadyExists(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Now()
@@ -465,6 +487,7 @@ func TestEnsureDefaultProjectAlreadyExists(t *testing.T) {
 	}
 }
 
+// TestCreateProjectWithMetadataAndAutoColumns verifies behavior for the covered scenario.
 func TestCreateProjectWithMetadataAndAutoColumns(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
@@ -508,6 +531,7 @@ func TestCreateProjectWithMetadataAndAutoColumns(t *testing.T) {
 	}
 }
 
+// TestUpdateProject verifies behavior for the covered scenario.
 func TestUpdateProject(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
@@ -535,6 +559,7 @@ func TestUpdateProject(t *testing.T) {
 	}
 }
 
+// TestStateTemplateSanitization verifies behavior for the covered scenario.
 func TestStateTemplateSanitization(t *testing.T) {
 	got := sanitizeStateTemplates([]StateTemplate{
 		{ID: "", Name: " To Do ", Position: 3},
@@ -553,15 +578,18 @@ func TestStateTemplateSanitization(t *testing.T) {
 	}
 }
 
+// failingRepo represents failing repo data used by this package.
 type failingRepo struct {
 	*fakeRepo
 	err error
 }
 
+// ListProjects lists projects.
 func (f failingRepo) ListProjects(context.Context, bool) ([]domain.Project, error) {
 	return nil, f.err
 }
 
+// TestEnsureDefaultProjectErrorPropagation verifies behavior for the covered scenario.
 func TestEnsureDefaultProjectErrorPropagation(t *testing.T) {
 	expected := errors.New("boom")
 	svc := NewService(failingRepo{fakeRepo: newFakeRepo(), err: expected}, nil, time.Now, ServiceConfig{})

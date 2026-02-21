@@ -5,6 +5,7 @@ import (
 	"testing"
 )
 
+// TestPathsForLinuxWithXDG verifies behavior for the covered scenario.
 func TestPathsForLinuxWithXDG(t *testing.T) {
 	p, err := PathsFor("linux", map[string]string{
 		"XDG_CONFIG_HOME": "/xdg/config",
@@ -21,6 +22,7 @@ func TestPathsForLinuxWithXDG(t *testing.T) {
 	}
 }
 
+// TestPathsForWindowsUsesAppData verifies behavior for the covered scenario.
 func TestPathsForWindowsUsesAppData(t *testing.T) {
 	p, err := PathsFor("windows", map[string]string{
 		"APPDATA":      `C:\Users\me\AppData\Roaming`,
@@ -40,6 +42,7 @@ func TestPathsForWindowsUsesAppData(t *testing.T) {
 	}
 }
 
+// TestPathsForEmptyDirsFails verifies behavior for the covered scenario.
 func TestPathsForEmptyDirsFails(t *testing.T) {
 	_, err := PathsFor("darwin", nil, "", "/tmp/data", "kan")
 	if err == nil {
@@ -47,6 +50,7 @@ func TestPathsForEmptyDirsFails(t *testing.T) {
 	}
 }
 
+// TestPathsForDarwinFallback verifies behavior for the covered scenario.
 func TestPathsForDarwinFallback(t *testing.T) {
 	p, err := PathsFor("darwin", map[string]string{
 		"XDG_CONFIG_HOME": "/ignored",
@@ -63,6 +67,7 @@ func TestPathsForDarwinFallback(t *testing.T) {
 	}
 }
 
+// TestPathsForUnknownFallback verifies behavior for the covered scenario.
 func TestPathsForUnknownFallback(t *testing.T) {
 	p, err := PathsFor("freebsd", map[string]string{}, "/cfg", "/data", "kan")
 	if err != nil {
@@ -76,6 +81,7 @@ func TestPathsForUnknownFallback(t *testing.T) {
 	}
 }
 
+// TestPathsForLinuxFallbackWithoutXDG verifies behavior for the covered scenario.
 func TestPathsForLinuxFallbackWithoutXDG(t *testing.T) {
 	p, err := PathsFor("linux", map[string]string{}, "/home/me/.config", "/home/me/.local/share", "kan")
 	if err != nil {
@@ -89,6 +95,7 @@ func TestPathsForLinuxFallbackWithoutXDG(t *testing.T) {
 	}
 }
 
+// TestDefaultPathsSmoke verifies behavior for the covered scenario.
 func TestDefaultPathsSmoke(t *testing.T) {
 	p, err := DefaultPaths()
 	if err != nil {
@@ -99,6 +106,7 @@ func TestDefaultPathsSmoke(t *testing.T) {
 	}
 }
 
+// TestDefaultPathsWithOptionsDevMode verifies behavior for the covered scenario.
 func TestDefaultPathsWithOptionsDevMode(t *testing.T) {
 	p, err := DefaultPathsWithOptions(Options{AppName: "kan", DevMode: true})
 	if err != nil {

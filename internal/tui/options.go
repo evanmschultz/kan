@@ -2,6 +2,7 @@ package tui
 
 import "github.com/evanschultz/kan/internal/app"
 
+// TaskFieldConfig holds configuration for task field.
 type TaskFieldConfig struct {
 	ShowPriority    bool
 	ShowDueDate     bool
@@ -9,14 +10,17 @@ type TaskFieldConfig struct {
 	ShowDescription bool
 }
 
+// SearchConfig holds configuration for search.
 type SearchConfig struct {
 	CrossProject    bool
 	IncludeArchived bool
 	States          []string
 }
 
+// Option defines a functional option for model configuration.
 type Option func(*Model)
 
+// DefaultTaskFieldConfig returns default task field config.
 func DefaultTaskFieldConfig() TaskFieldConfig {
 	return TaskFieldConfig{
 		ShowPriority:    true,
@@ -26,12 +30,14 @@ func DefaultTaskFieldConfig() TaskFieldConfig {
 	}
 }
 
+// WithTaskFieldConfig returns an option that sets task field config.
 func WithTaskFieldConfig(cfg TaskFieldConfig) Option {
 	return func(m *Model) {
 		m.taskFields = cfg
 	}
 }
 
+// WithDefaultDeleteMode returns an option that sets default delete mode.
 func WithDefaultDeleteMode(mode app.DeleteMode) Option {
 	return func(m *Model) {
 		switch mode {
@@ -41,6 +47,7 @@ func WithDefaultDeleteMode(mode app.DeleteMode) Option {
 	}
 }
 
+// WithSearchConfig returns an option that sets search config.
 func WithSearchConfig(cfg SearchConfig) Option {
 	return func(m *Model) {
 		m.searchCrossProject = cfg.CrossProject

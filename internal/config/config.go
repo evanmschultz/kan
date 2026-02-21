@@ -11,13 +11,16 @@ import (
 	toml "github.com/pelletier/go-toml/v2"
 )
 
+// DeleteMode represents a selectable mode.
 type DeleteMode string
 
+// DeleteModeArchive and related constants define package defaults.
 const (
 	DeleteModeArchive DeleteMode = "archive"
 	DeleteModeHard    DeleteMode = "hard"
 )
 
+// Config holds package configuration.
 type Config struct {
 	Database   DatabaseConfig   `toml:"database"`
 	Delete     DeleteConfig     `toml:"delete"`
@@ -27,14 +30,17 @@ type Config struct {
 	Keys       KeyConfig        `toml:"keys"`
 }
 
+// DatabaseConfig holds configuration for database.
 type DatabaseConfig struct {
 	Path string `toml:"path"`
 }
 
+// DeleteConfig holds configuration for delete.
 type DeleteConfig struct {
 	DefaultMode DeleteMode `toml:"default_mode"`
 }
 
+// TaskFieldsConfig holds configuration for task fields.
 type TaskFieldsConfig struct {
 	ShowPriority    bool `toml:"show_priority"`
 	ShowDueDate     bool `toml:"show_due_date"`
@@ -42,12 +48,14 @@ type TaskFieldsConfig struct {
 	ShowDescription bool `toml:"show_description"`
 }
 
+// BoardConfig holds configuration for board.
 type BoardConfig struct {
 	States          []StateConfig `toml:"states"`
 	ShowWIPWarnings bool          `toml:"show_wip_warnings"`
 	GroupBy         string        `toml:"group_by"` // none | priority | state
 }
 
+// StateConfig holds configuration for state.
 type StateConfig struct {
 	ID       string `toml:"id"`
 	Name     string `toml:"name"`
@@ -55,12 +63,14 @@ type StateConfig struct {
 	Position int    `toml:"position"`
 }
 
+// SearchConfig holds configuration for search.
 type SearchConfig struct {
 	CrossProject    bool     `toml:"cross_project"`
 	IncludeArchived bool     `toml:"include_archived"`
 	States          []string `toml:"states"`
 }
 
+// KeyConfig holds configuration for key.
 type KeyConfig struct {
 	CommandPalette string `toml:"command_palette"`
 	QuickActions   string `toml:"quick_actions"`
@@ -70,6 +80,7 @@ type KeyConfig struct {
 	Redo           string `toml:"redo"`
 }
 
+// defaultStates returns default states.
 func defaultStates() []StateConfig {
 	return []StateConfig{
 		{ID: "todo", Name: "To Do", WIPLimit: 0, Position: 0},
@@ -78,6 +89,7 @@ func defaultStates() []StateConfig {
 	}
 }
 
+// Default returns default the requested value.
 func Default(dbPath string) Config {
 	return Config{
 		Database: DatabaseConfig{
@@ -113,6 +125,7 @@ func Default(dbPath string) Config {
 	}
 }
 
+// Load loads required data for the current operation.
 func Load(path string, defaults Config) (Config, error) {
 	cfg := defaults
 	if strings.TrimSpace(path) == "" {
@@ -141,6 +154,7 @@ func Load(path string, defaults Config) (Config, error) {
 	return cfg, nil
 }
 
+// Validate validates the requested operation.
 func (c Config) Validate() error {
 	c.Database.Path = strings.TrimSpace(c.Database.Path)
 	if c.Database.Path == "" {
@@ -203,6 +217,7 @@ func (c Config) Validate() error {
 	return nil
 }
 
+// EnsureConfigDir ensures config dir.
 func EnsureConfigDir(path string) error {
 	dir := filepath.Dir(path)
 	if dir == "." || dir == "" {

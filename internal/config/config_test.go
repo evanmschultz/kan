@@ -6,6 +6,7 @@ import (
 	"testing"
 )
 
+// TestDefaultConfig verifies behavior for the covered scenario.
 func TestDefaultConfig(t *testing.T) {
 	cfg := Default("/tmp/kan.db")
 	if cfg.Database.Path != "/tmp/kan.db" {
@@ -22,6 +23,7 @@ func TestDefaultConfig(t *testing.T) {
 	}
 }
 
+// TestLoadMissingFileUsesDefaults verifies behavior for the covered scenario.
 func TestLoadMissingFileUsesDefaults(t *testing.T) {
 	defaults := Default("/tmp/kan.db")
 	cfg, err := Load(filepath.Join(t.TempDir(), "missing.toml"), defaults)
@@ -33,6 +35,7 @@ func TestLoadMissingFileUsesDefaults(t *testing.T) {
 	}
 }
 
+// TestLoadFileOverridesDefaults verifies behavior for the covered scenario.
 func TestLoadFileOverridesDefaults(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
@@ -71,6 +74,7 @@ show_description = true
 	}
 }
 
+// TestLoadRejectsInvalidDeleteMode verifies behavior for the covered scenario.
 func TestLoadRejectsInvalidDeleteMode(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
@@ -90,6 +94,7 @@ default_mode = "weird"
 	}
 }
 
+// TestEnsureConfigDir verifies behavior for the covered scenario.
 func TestEnsureConfigDir(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "a", "b", "config.toml")
 	if err := EnsureConfigDir(target); err != nil {
@@ -100,6 +105,7 @@ func TestEnsureConfigDir(t *testing.T) {
 	}
 }
 
+// TestLoadBoardSearchAndKeysOverrides verifies behavior for the covered scenario.
 func TestLoadBoardSearchAndKeysOverrides(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
@@ -158,6 +164,7 @@ redo = "U"
 	}
 }
 
+// TestValidateRejectsUnknownSearchState verifies behavior for the covered scenario.
 func TestValidateRejectsUnknownSearchState(t *testing.T) {
 	cfg := Default("/tmp/kan.db")
 	cfg.Search.States = []string{"todo", "unknown"}

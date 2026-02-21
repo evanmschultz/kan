@@ -12,6 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// TestRepository_ProjectColumnTaskLifecycle verifies behavior for the covered scenario.
 func TestRepository_ProjectColumnTaskLifecycle(t *testing.T) {
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "kan.db")
@@ -106,6 +107,7 @@ func TestRepository_ProjectColumnTaskLifecycle(t *testing.T) {
 	}
 }
 
+// TestRepository_NotFoundCases verifies behavior for the covered scenario.
 func TestRepository_NotFoundCases(t *testing.T) {
 	repo, err := OpenInMemory()
 	if err != nil {
@@ -127,6 +129,7 @@ func TestRepository_NotFoundCases(t *testing.T) {
 	}
 }
 
+// TestRepository_ProjectAndColumnUpdates verifies behavior for the covered scenario.
 func TestRepository_ProjectAndColumnUpdates(t *testing.T) {
 	ctx := context.Background()
 	repo, err := Open(filepath.Join(t.TempDir(), "kan.db"))
@@ -228,6 +231,7 @@ func TestRepository_ProjectAndColumnUpdates(t *testing.T) {
 	}
 }
 
+// TestRepository_MigratesLegacyProjectsTable verifies behavior for the covered scenario.
 func TestRepository_MigratesLegacyProjectsTable(t *testing.T) {
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "legacy.db")
@@ -275,12 +279,14 @@ func TestRepository_MigratesLegacyProjectsTable(t *testing.T) {
 	}
 }
 
+// TestRepositoryOpenValidation verifies behavior for the covered scenario.
 func TestRepositoryOpenValidation(t *testing.T) {
 	if _, err := Open("   "); err == nil {
 		t.Fatal("expected error for empty sqlite path")
 	}
 }
 
+// TestRepositoryUpdateNotFound verifies behavior for the covered scenario.
 func TestRepositoryUpdateNotFound(t *testing.T) {
 	repo, err := OpenInMemory()
 	if err != nil {

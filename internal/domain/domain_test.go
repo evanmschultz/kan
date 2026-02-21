@@ -5,6 +5,7 @@ import (
 	"time"
 )
 
+// TestNewProjectAndSlug verifies behavior for the covered scenario.
 func TestNewProjectAndSlug(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, err := NewProject("p1", "  My Big Project!  ", " desc ", now)
@@ -22,6 +23,7 @@ func TestNewProjectAndSlug(t *testing.T) {
 	}
 }
 
+// TestNewProjectValidation verifies behavior for the covered scenario.
 func TestNewProjectValidation(t *testing.T) {
 	now := time.Now()
 	if _, err := NewProject("", "ok", "", now); err != ErrInvalidID {
@@ -32,6 +34,7 @@ func TestNewProjectValidation(t *testing.T) {
 	}
 }
 
+// TestProjectArchiveRestore verifies behavior for the covered scenario.
 func TestProjectArchiveRestore(t *testing.T) {
 	now := time.Now()
 	p, err := NewProject("p1", "test", "", now)
@@ -49,6 +52,7 @@ func TestProjectArchiveRestore(t *testing.T) {
 	}
 }
 
+// TestProjectUpdateDetailsWithMetadata verifies behavior for the covered scenario.
 func TestProjectUpdateDetailsWithMetadata(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, err := NewProject("p1", "Original", "desc", now)
@@ -83,6 +87,7 @@ func TestProjectUpdateDetailsWithMetadata(t *testing.T) {
 	}
 }
 
+// TestNewColumnValidation verifies behavior for the covered scenario.
 func TestNewColumnValidation(t *testing.T) {
 	now := time.Now()
 	_, err := NewColumn("c1", "p1", "todo", -1, 0, now)
@@ -95,6 +100,7 @@ func TestNewColumnValidation(t *testing.T) {
 	}
 }
 
+// TestColumnMutations verifies behavior for the covered scenario.
 func TestColumnMutations(t *testing.T) {
 	now := time.Now()
 	c, err := NewColumn("c1", "p1", "todo", 0, 5, now)
@@ -115,6 +121,7 @@ func TestColumnMutations(t *testing.T) {
 	}
 }
 
+// TestNewTaskDefaultsAndLabels verifies behavior for the covered scenario.
 func TestNewTaskDefaultsAndLabels(t *testing.T) {
 	now := time.Now()
 	due := now.Add(24 * time.Hour)
@@ -141,6 +148,7 @@ func TestNewTaskDefaultsAndLabels(t *testing.T) {
 	}
 }
 
+// TestNewTaskValidation verifies behavior for the covered scenario.
 func TestNewTaskValidation(t *testing.T) {
 	now := time.Now()
 	_, err := NewTask(TaskInput{
@@ -156,6 +164,7 @@ func TestNewTaskValidation(t *testing.T) {
 	}
 }
 
+// TestTaskMoveUpdateArchiveRestore verifies behavior for the covered scenario.
 func TestTaskMoveUpdateArchiveRestore(t *testing.T) {
 	now := time.Now()
 	task, err := NewTask(TaskInput{

@@ -9,6 +9,7 @@ import (
 	"github.com/evanschultz/kan/internal/domain"
 )
 
+// TestExportSnapshotIncludesExpectedData verifies behavior for the covered scenario.
 func TestExportSnapshotIncludesExpectedData(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 22, 10, 0, 0, 0, time.UTC)
@@ -69,6 +70,7 @@ func TestExportSnapshotIncludesExpectedData(t *testing.T) {
 	}
 }
 
+// TestImportSnapshotCreatesAndUpdates verifies behavior for the covered scenario.
 func TestImportSnapshotCreatesAndUpdates(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 22, 10, 0, 0, 0, time.UTC)
@@ -126,6 +128,7 @@ func TestImportSnapshotCreatesAndUpdates(t *testing.T) {
 	}
 }
 
+// TestImportSnapshotValidateErrors verifies behavior for the covered scenario.
 func TestImportSnapshotValidateErrors(t *testing.T) {
 	repo := newFakeRepo()
 	svc := NewService(repo, nil, time.Now, ServiceConfig{})
@@ -146,15 +149,18 @@ func TestImportSnapshotValidateErrors(t *testing.T) {
 	}
 }
 
+// failingSnapshotRepo represents failing snapshot repo data used by this package.
 type failingSnapshotRepo struct {
 	*fakeRepo
 	err error
 }
 
+// ListProjects lists projects.
 func (f failingSnapshotRepo) ListProjects(context.Context, bool) ([]domain.Project, error) {
 	return nil, f.err
 }
 
+// TestExportSnapshotPropagatesError verifies behavior for the covered scenario.
 func TestExportSnapshotPropagatesError(t *testing.T) {
 	expected := errors.New("boom")
 	svc := NewService(failingSnapshotRepo{fakeRepo: newFakeRepo(), err: expected}, nil, time.Now, ServiceConfig{})

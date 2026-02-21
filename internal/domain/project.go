@@ -5,6 +5,7 @@ import (
 	"time"
 )
 
+// Project represents project data used by this package.
 type Project struct {
 	ID          string
 	Slug        string
@@ -16,6 +17,7 @@ type Project struct {
 	ArchivedAt  *time.Time
 }
 
+// ProjectMetadata represents project metadata data used by this package.
 type ProjectMetadata struct {
 	Owner    string
 	Icon     string
@@ -24,6 +26,7 @@ type ProjectMetadata struct {
 	Tags     []string
 }
 
+// NewProject constructs a new value for this package.
 func NewProject(id, name, description string, now time.Time) (Project, error) {
 	id = strings.TrimSpace(id)
 	name = strings.TrimSpace(name)
@@ -47,6 +50,7 @@ func NewProject(id, name, description string, now time.Time) (Project, error) {
 	}, nil
 }
 
+// Rename renames the requested operation.
 func (p *Project) Rename(name string, now time.Time) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -58,6 +62,7 @@ func (p *Project) Rename(name string, now time.Time) error {
 	return nil
 }
 
+// UpdateDetails updates state for the requested operation.
 func (p *Project) UpdateDetails(name, description string, metadata ProjectMetadata, now time.Time) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -71,17 +76,20 @@ func (p *Project) UpdateDetails(name, description string, metadata ProjectMetada
 	return nil
 }
 
+// Archive archives the requested operation.
 func (p *Project) Archive(now time.Time) {
 	ts := now.UTC()
 	p.ArchivedAt = &ts
 	p.UpdatedAt = ts
 }
 
+// Restore restores the requested operation.
 func (p *Project) Restore(now time.Time) {
 	p.ArchivedAt = nil
 	p.UpdatedAt = now.UTC()
 }
 
+// normalizeSlug normalizes slug.
 func normalizeSlug(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
 	if s == "" {
@@ -109,6 +117,7 @@ func normalizeSlug(s string) string {
 	return out
 }
 
+// normalizeProjectMetadata normalizes project metadata.
 func normalizeProjectMetadata(meta ProjectMetadata) ProjectMetadata {
 	meta.Owner = strings.TrimSpace(meta.Owner)
 	meta.Icon = strings.TrimSpace(meta.Icon)

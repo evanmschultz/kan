@@ -6,6 +6,7 @@ import (
 	"github.com/evanschultz/kan/internal/domain"
 )
 
+// Repository represents repository data used by this package.
 type Repository interface {
 	CreateProject(context.Context, domain.Project) error
 	UpdateProject(context.Context, domain.Project) error

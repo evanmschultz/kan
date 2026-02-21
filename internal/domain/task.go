@@ -6,16 +6,20 @@ import (
 	"time"
 )
 
+// Priority represents priority data used by this package.
 type Priority string
 
+// PriorityLow and related constants define package defaults.
 const (
 	PriorityLow    Priority = "low"
 	PriorityMedium Priority = "medium"
 	PriorityHigh   Priority = "high"
 )
 
+// validPriorities stores a package-level helper value.
 var validPriorities = []Priority{PriorityLow, PriorityMedium, PriorityHigh}
 
+// Task represents task data used by this package.
 type Task struct {
 	ID          string
 	ProjectID   string
@@ -31,6 +35,7 @@ type Task struct {
 	ArchivedAt  *time.Time
 }
 
+// TaskInput holds input values for task operations.
 type TaskInput struct {
 	ID          string
 	ProjectID   string
@@ -43,6 +48,7 @@ type TaskInput struct {
 	Labels      []string
 }
 
+// NewTask constructs a new value for this package.
 func NewTask(in TaskInput, now time.Time) (Task, error) {
 	in.ID = strings.TrimSpace(in.ID)
 	in.ProjectID = strings.TrimSpace(in.ProjectID)
@@ -90,6 +96,7 @@ func NewTask(in TaskInput, now time.Time) (Task, error) {
 	}, nil
 }
 
+// Move moves the requested operation.
 func (t *Task) Move(columnID string, position int, now time.Time) error {
 	columnID = strings.TrimSpace(columnID)
 	if columnID == "" {
@@ -104,6 +111,7 @@ func (t *Task) Move(columnID string, position int, now time.Time) error {
 	return nil
 }
 
+// UpdateDetails updates state for the requested operation.
 func (t *Task) UpdateDetails(title, description string, priority Priority, dueAt *time.Time, labels []string, now time.Time) error {
 	title = strings.TrimSpace(title)
 	description = strings.TrimSpace(description)
@@ -122,17 +130,20 @@ func (t *Task) UpdateDetails(title, description string, priority Priority, dueAt
 	return nil
 }
 
+// Archive archives the requested operation.
 func (t *Task) Archive(now time.Time) {
 	ts := now.UTC()
 	t.ArchivedAt = &ts
 	t.UpdatedAt = ts
 }
 
+// Restore restores the requested operation.
 func (t *Task) Restore(now time.Time) {
 	t.ArchivedAt = nil
 	t.UpdatedAt = now.UTC()
 }
 
+// normalizeDueAt normalizes due at.
 func normalizeDueAt(dueAt *time.Time) *time.Time {
 	if dueAt == nil {
 		return nil
@@ -141,6 +152,7 @@ func normalizeDueAt(dueAt *time.Time) *time.Time {
 	return &ts
 }
 
+// normalizeLabels normalizes labels.
 func normalizeLabels(labels []string) []string {
 	out := make([]string, 0, len(labels))
 	seen := map[string]struct{}{}

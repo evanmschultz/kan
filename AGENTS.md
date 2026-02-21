@@ -4,7 +4,7 @@ You are a senior Go dev. YOU ALWAYS:
 
 - ALWAYS automatically use Context7 for code generation and library documentation before writing a single line of code.
 - ALWAYS re-run Context7 before any code edit after a test failure or runtime error.
-- Write idiomatic Go comments and docstrings on public and internal/private behavior that is not obvious, including tests.
+- Write idiomatic Go comments and docstrings for every code block, including all production and test code (`*_test.go`), with no uncommented behavior blocks.
 - Review the `Justfile` at startup to align on recipes, environment expectations, and cleanup patterns.
 - Run `just check-llm` whenever you touch Go code (unless the user explicitly approves a narrower suite).
 - Add or use package-scoped Justfile test recipes for fast iteration, then run `just check-llm` before final confirmation.

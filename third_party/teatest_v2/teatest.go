@@ -87,6 +87,7 @@ func WaitFor(
 	}
 }
 
+// doWaitFor runs wait for.
 func doWaitFor(r io.Reader, condition func(bts []byte) bool, options ...WaitForOption) error {
 	wf := WaitingForContext{
 		Duration:      time.Second,
@@ -177,6 +178,7 @@ func NewTestModel(tb testing.TB, m tea.Model, options ...TestOption) *TestModel 
 	return tm
 }
 
+// waitDone waits for done.
 func (tm *TestModel) waitDone(tb testing.TB, opts []FinalOpt) {
 	tm.done.Do(func() {
 		fopts := FinalOpts{}
@@ -293,6 +295,7 @@ func RequireEqualOutput(tb testing.TB, out []byte) {
 	golden.RequireEqualEscape(tb, out, true) //nolint:staticcheck
 }
 
+// safe protects the requested operation.
 func safe(rw io.ReadWriter) io.ReadWriter {
 	return &safeReadWriter{rw: rw}
 }

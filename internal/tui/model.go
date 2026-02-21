@@ -18,6 +18,7 @@ import (
 	"github.com/evanschultz/kan/internal/domain"
 )
 
+// Service represents service data used by this package.
 type Service interface {
 	ListProjects(context.Context, bool) ([]domain.Project, error)
 	ListColumns(context.Context, string, bool) ([]domain.Column, error)
@@ -34,8 +35,10 @@ type Service interface {
 	RenameTask(context.Context, string, string) (domain.Task, error)
 }
 
+// inputMode represents a selectable mode.
 type inputMode int
 
+// modeNone and related constants define package defaults.
 const (
 	modeNone inputMode = iota
 	modeAddTask
@@ -52,19 +55,23 @@ const (
 	modeQuickActions
 )
 
+// taskFormFields stores a package-level helper value.
 var taskFormFields = []string{"title", "description", "priority", "due", "labels"}
 
+// priorityOptions stores a package-level helper value.
 var priorityOptions = []domain.Priority{
 	domain.PriorityLow,
 	domain.PriorityMedium,
 	domain.PriorityHigh,
 }
 
+// duePickerOption defines a functional option for model configuration.
 type duePickerOption struct {
 	Label string
 	Value string
 }
 
+// quickActionOptions stores a package-level helper value.
 var quickActionOptions = []string{
 	"Task Info",
 	"Edit Task",
@@ -74,6 +81,7 @@ var quickActionOptions = []string{
 	"Hard Delete",
 }
 
+// Model represents model data used by this package.
 type Model struct {
 	svc Service
 
@@ -130,6 +138,7 @@ type Model struct {
 	lastArchivedTaskID string
 }
 
+// loadedMsg carries message data through update handling.
 type loadedMsg struct {
 	projects        []domain.Project
 	selectedProject int
@@ -138,6 +147,7 @@ type loadedMsg struct {
 	err             error
 }
 
+// actionMsg carries message data through update handling.
 type actionMsg struct {
 	err       error
 	status    string
@@ -145,11 +155,13 @@ type actionMsg struct {
 	projectID string
 }
 
+// searchResultsMsg carries message data through update handling.
 type searchResultsMsg struct {
 	matches []app.TaskMatch
 	err     error
 }
 
+// NewModel constructs a new value for this package.
 func NewModel(svc Service, opts ...Option) Model {
 	h := help.New()
 	h.ShowAll = false
@@ -185,10 +197,12 @@ func NewModel(svc Service, opts ...Option) Model {
 	return m
 }
 
+// Init handles init.
 func (m Model) Init() tea.Cmd {
 	return m.loadData
 }
 
+// Update updates state for the requested operation.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -276,6 +290,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 }
 
+// View handles view.
 func (m Model) View() tea.View {
 	if m.err != nil {
 		v := tea.NewView("error: " + m.err.Error() + "\n\npress r to retry • q quit\n")
@@ -433,6 +448,7 @@ func (m Model) View() tea.View {
 	return view
 }
 
+// loadData loads required data for the current operation.
 func (m Model) loadData() tea.Msg {
 	projects, err := m.svc.ListProjects(context.Background(), false)
 	if err != nil {
@@ -483,6 +499,7 @@ func (m Model) loadData() tea.Msg {
 	}
 }
 
+// loadSearchMatches loads required data for the current operation.
 func (m Model) loadSearchMatches() tea.Msg {
 	projectID, _ := m.currentProjectID()
 	matches, err := m.svc.SearchTaskMatches(context.Background(), app.SearchTasksFilter{
@@ -498,6 +515,7 @@ func (m Model) loadSearchMatches() tea.Msg {
 	return searchResultsMsg{matches: matches}
 }
 
+// newModalInput constructs modal input.
 func newModalInput(prompt, placeholder, value string, limit int) textinput.Model {
 	in := textinput.New()
 	in.Prompt = prompt
@@ -509,6 +527,7 @@ func newModalInput(prompt, placeholder, value string, limit int) textinput.Model
 	return in
 }
 
+// startSearchMode starts search mode.
 func (m *Model) startSearchMode() tea.Cmd {
 	m.mode = modeSearch
 	m.input = ""
@@ -521,6 +540,7 @@ func (m *Model) startSearchMode() tea.Cmd {
 	return m.searchInput.Focus()
 }
 
+// startCommandPalette starts command palette.
 func (m *Model) startCommandPalette() tea.Cmd {
 	m.mode = modeCommandPalette
 	m.commandInput.SetValue("")
@@ -529,6 +549,7 @@ func (m *Model) startCommandPalette() tea.Cmd {
 	return m.commandInput.Focus()
 }
 
+// startQuickActions starts quick actions.
 func (m *Model) startQuickActions() tea.Cmd {
 	if _, ok := m.selectedTaskInCurrentColumn(); !ok {
 		m.status = "no task selected"
@@ -540,6 +561,7 @@ func (m *Model) startQuickActions() tea.Cmd {
 	return nil
 }
 
+// startProjectForm starts project form.
 func (m *Model) startProjectForm(project *domain.Project) tea.Cmd {
 	m.projectFormFocus = 0
 	m.projectFormInputs = []textinput.Model{
@@ -572,6 +594,7 @@ func (m *Model) startProjectForm(project *domain.Project) tea.Cmd {
 	return m.focusProjectFormField(0)
 }
 
+// startTaskForm starts task form.
 func (m *Model) startTaskForm(task *domain.Task) tea.Cmd {
 	m.formFocus = 0
 	m.priorityIdx = 1
@@ -611,6 +634,7 @@ func (m *Model) startTaskForm(task *domain.Task) tea.Cmd {
 	return m.focusTaskFormField(0)
 }
 
+// focusTaskFormField focuses task form field.
 func (m *Model) focusTaskFormField(idx int) tea.Cmd {
 	if len(m.formInputs) == 0 {
 		return nil
@@ -626,6 +650,7 @@ func (m *Model) focusTaskFormField(idx int) tea.Cmd {
 	return m.formInputs[idx].Focus()
 }
 
+// focusProjectFormField focuses project form field.
 func (m *Model) focusProjectFormField(idx int) tea.Cmd {
 	if len(m.projectFormInputs) == 0 {
 		return nil
@@ -638,6 +663,7 @@ func (m *Model) focusProjectFormField(idx int) tea.Cmd {
 	return m.projectFormInputs[idx].Focus()
 }
 
+// taskFormValues returns task form values.
 func (m Model) taskFormValues() map[string]string {
 	out := map[string]string{}
 	for i, key := range taskFormFields {
@@ -649,8 +675,10 @@ func (m Model) taskFormValues() map[string]string {
 	return out
 }
 
+// projectFormFields stores a package-level helper value.
 var projectFormFields = []string{"name", "description", "owner", "icon", "color", "homepage", "tags"}
 
+// projectFormValues returns project form values.
 func (m Model) projectFormValues() map[string]string {
 	out := map[string]string{}
 	for idx, key := range projectFormFields {
@@ -662,6 +690,7 @@ func (m Model) projectFormValues() map[string]string {
 	return out
 }
 
+// parseDueInput parses input into a normalized form.
 func parseDueInput(raw string, current *time.Time) (*time.Time, error) {
 	text := strings.TrimSpace(raw)
 	if text == "" {
@@ -678,6 +707,7 @@ func parseDueInput(raw string, current *time.Time) (*time.Time, error) {
 	return &ts, nil
 }
 
+// parseLabelsInput parses input into a normalized form.
 func parseLabelsInput(raw string, current []string) []string {
 	text := strings.TrimSpace(raw)
 	if text == "" {
@@ -698,6 +728,7 @@ func parseLabelsInput(raw string, current []string) []string {
 	return out
 }
 
+// parseStateFilters parses input into a normalized form.
 func parseStateFilters(raw string, fallback []string) []string {
 	text := strings.TrimSpace(raw)
 	if text == "" {
@@ -720,6 +751,7 @@ func parseStateFilters(raw string, fallback []string) []string {
 	return out
 }
 
+// priorityIndex handles priority index.
 func priorityIndex(priority domain.Priority) int {
 	for i, p := range priorityOptions {
 		if p == priority {
@@ -729,6 +761,7 @@ func priorityIndex(priority domain.Priority) int {
 	return 1
 }
 
+// cyclePriority handles cycle priority.
 func (m *Model) cyclePriority(delta int) {
 	if len(priorityOptions) == 0 {
 		return
@@ -745,12 +778,14 @@ func (m *Model) cyclePriority(delta int) {
 	}
 }
 
+// startDuePicker starts due picker.
 func (m *Model) startDuePicker() {
 	m.pickerBack = m.mode
 	m.mode = modeDuePicker
 	m.duePicker = 0
 }
 
+// duePickerOptions handles due picker options.
 func (m *Model) duePickerOptions() []duePickerOption {
 	now := time.Now().UTC()
 	today := now.Format("2006-01-02")
@@ -766,6 +801,7 @@ func (m *Model) duePickerOptions() []duePickerOption {
 	}
 }
 
+// labelSuggestions handles label suggestions.
 func (m Model) labelSuggestions(maxLabels int) []string {
 	if maxLabels <= 0 {
 		maxLabels = 5
@@ -814,6 +850,7 @@ func (m Model) labelSuggestions(maxLabels int) []string {
 	return out
 }
 
+// handleNormalModeKey handles normal mode key.
 func (m Model) handleNormalModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.quit):
@@ -940,6 +977,7 @@ func (m Model) handleNormalModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
+// handleInputModeKey handles input mode key.
 func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.mode == modeTaskInfo {
 		switch msg.String() {
@@ -1245,6 +1283,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
+// submitInputMode submits input mode.
 func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 	switch m.mode {
 	case modeAddTask:
@@ -1458,6 +1497,7 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 	}
 }
 
+// executeCommandPalette executes command palette.
 func (m Model) executeCommandPalette(command string) (tea.Model, tea.Cmd) {
 	switch command {
 	case "":
@@ -1508,6 +1548,7 @@ func (m Model) executeCommandPalette(command string) (tea.Model, tea.Cmd) {
 	}
 }
 
+// applyQuickAction applies quick action.
 func (m Model) applyQuickAction() (tea.Model, tea.Cmd) {
 	switch clamp(m.quickActionIndex, 0, len(quickActionOptions)-1) {
 	case 0:
@@ -1538,6 +1579,7 @@ func (m Model) applyQuickAction() (tea.Model, tea.Cmd) {
 	}
 }
 
+// createTask creates task.
 func (m Model) createTask(in app.CreateTaskInput) (tea.Model, tea.Cmd) {
 	projectID, ok := m.currentProjectID()
 	if !ok {
@@ -1560,6 +1602,7 @@ func (m Model) createTask(in app.CreateTaskInput) (tea.Model, tea.Cmd) {
 	}
 }
 
+// moveSelectedTask moves selected task.
 func (m Model) moveSelectedTask(delta int) (tea.Model, tea.Cmd) {
 	task, ok := m.selectedTaskInCurrentColumn()
 	if !ok {
@@ -1584,6 +1627,7 @@ func (m Model) moveSelectedTask(delta int) (tea.Model, tea.Cmd) {
 	}
 }
 
+// deleteSelectedTask deletes selected task.
 func (m Model) deleteSelectedTask(mode app.DeleteMode) (tea.Model, tea.Cmd) {
 	task, ok := m.selectedTaskInCurrentColumn()
 	if !ok {
@@ -1605,6 +1649,7 @@ func (m Model) deleteSelectedTask(mode app.DeleteMode) (tea.Model, tea.Cmd) {
 	}
 }
 
+// restoreTask restores task.
 func (m Model) restoreTask() (tea.Model, tea.Cmd) {
 	taskID := m.lastArchivedTaskID
 	if taskID == "" {
@@ -1627,6 +1672,7 @@ func (m Model) restoreTask() (tea.Model, tea.Cmd) {
 	}
 }
 
+// handleMouseWheel handles mouse wheel.
 func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 	if m.help.ShowAll {
 		return m, nil
@@ -1666,6 +1712,7 @@ func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// handleMouseClick handles mouse click.
 func (m Model) handleMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	if m.help.ShowAll {
 		return m, nil
@@ -1711,6 +1758,7 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// clampSelections clamps selections.
 func (m *Model) clampSelections() {
 	if len(m.projects) == 0 {
 		m.selectedProject = 0
@@ -1734,6 +1782,7 @@ func (m *Model) clampSelections() {
 	m.selectedTask = clamp(m.selectedTask, 0, len(colTasks)-1)
 }
 
+// currentProjectID returns current project id.
 func (m Model) currentProjectID() (string, bool) {
 	if len(m.projects) == 0 {
 		return "", false
@@ -1742,6 +1791,7 @@ func (m Model) currentProjectID() (string, bool) {
 	return m.projects[idx].ID, true
 }
 
+// currentColumnID returns current column id.
 func (m Model) currentColumnID() (string, bool) {
 	if len(m.columns) == 0 {
 		return "", false
@@ -1750,6 +1800,7 @@ func (m Model) currentColumnID() (string, bool) {
 	return m.columns[idx].ID, true
 }
 
+// currentColumnTasks returns current column tasks.
 func (m Model) currentColumnTasks() []domain.Task {
 	columnID, ok := m.currentColumnID()
 	if !ok {
@@ -1758,6 +1809,7 @@ func (m Model) currentColumnTasks() []domain.Task {
 	return m.tasksForColumn(columnID)
 }
 
+// tasksForColumn handles tasks for column.
 func (m Model) tasksForColumn(columnID string) []domain.Task {
 	out := make([]domain.Task, 0)
 	for _, task := range m.tasks {
@@ -1769,6 +1821,7 @@ func (m Model) tasksForColumn(columnID string) []domain.Task {
 	return out
 }
 
+// selectedTaskInCurrentColumn returns selected task in current column.
 func (m Model) selectedTaskInCurrentColumn() (domain.Task, bool) {
 	tasks := m.currentColumnTasks()
 	if len(tasks) == 0 {
@@ -1778,6 +1831,7 @@ func (m Model) selectedTaskInCurrentColumn() (domain.Task, bool) {
 	return tasks[idx], true
 }
 
+// focusTaskByID focuses task by id.
 func (m *Model) focusTaskByID(taskID string) {
 	if strings.TrimSpace(taskID) == "" {
 		return
@@ -1802,6 +1856,7 @@ func (m *Model) focusTaskByID(taskID string) {
 	}
 }
 
+// taskByID returns task by id.
 func (m Model) taskByID(taskID string) (domain.Task, bool) {
 	for _, task := range m.tasks {
 		if task.ID == taskID {
@@ -1811,6 +1866,7 @@ func (m Model) taskByID(taskID string) (domain.Task, bool) {
 	return domain.Task{}, false
 }
 
+// renderProjectTabs renders output for the current model state.
 func (m Model) renderProjectTabs(accent, dim color.Color) string {
 	if len(m.projects) <= 1 {
 		return ""
@@ -1830,6 +1886,7 @@ func (m Model) renderProjectTabs(accent, dim color.Color) string {
 	return strings.Join(parts, "  ")
 }
 
+// renderOverviewPanel renders output for the current model state.
 func (m Model) renderOverviewPanel(project domain.Project, accent, muted, dim color.Color) string {
 	lines := []string{
 		lipgloss.NewStyle().Bold(true).Foreground(accent).Render("Overview"),
@@ -1865,6 +1922,7 @@ func (m Model) renderOverviewPanel(project domain.Project, accent, muted, dim co
 	return style.Render(strings.Join(lines, "\n"))
 }
 
+// renderInfoLine renders output for the current model state.
 func (m Model) renderInfoLine(project domain.Project, muted color.Color) string {
 	task, ok := m.selectedTaskInCurrentColumn()
 	selected := "none"
@@ -1876,6 +1934,7 @@ func (m Model) renderInfoLine(project domain.Project, muted color.Color) string 
 	)
 }
 
+// renderHelpOverlay renders output for the current model state.
 func (m Model) renderHelpOverlay(accent, muted, dim color.Color, _ lipgloss.Style, maxWidth int) string {
 	width := clamp(maxWidth, 56, 100)
 	if width <= 0 {
@@ -1915,6 +1974,7 @@ func (m Model) renderHelpOverlay(accent, muted, dim color.Color, _ lipgloss.Styl
 	return style.Render(strings.Join(lines, "\n"))
 }
 
+// taskListSecondary returns task list secondary.
 func (m Model) taskListSecondary(task domain.Task) string {
 	if m.taskFields.ShowDescription {
 		if desc := strings.TrimSpace(task.Description); desc != "" {
@@ -1927,6 +1987,7 @@ func (m Model) taskListSecondary(task domain.Task) string {
 	return ""
 }
 
+// taskIndexAtRow returns task index at row.
 func (m Model) taskIndexAtRow(tasks []domain.Task, row int) int {
 	if len(tasks) == 0 {
 		return 0
@@ -1953,6 +2014,7 @@ func (m Model) taskIndexAtRow(tasks []domain.Task, row int) int {
 	return len(tasks) - 1
 }
 
+// cardMeta handles card meta.
 func (m Model) cardMeta(task domain.Task) string {
 	parts := make([]string, 0, 3)
 	if m.taskFields.ShowPriority {
@@ -1970,6 +2032,7 @@ func (m Model) cardMeta(task domain.Task) string {
 	return "[" + strings.Join(parts, "|") + "]"
 }
 
+// renderTaskDetails renders output for the current model state.
 func (m Model) renderTaskDetails(accent, muted, dim color.Color) string {
 	task, ok := m.selectedTaskInCurrentColumn()
 	if !ok {
@@ -2021,6 +2084,7 @@ func (m Model) renderTaskDetails(accent, muted, dim color.Color) string {
 	return style.Render(strings.Join(lines, "\n"))
 }
 
+// renderModeOverlay renders output for the current model state.
 func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgloss.Style, maxWidth int) string {
 	switch m.mode {
 	case modeTaskInfo:
@@ -2281,6 +2345,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 	}
 }
 
+// renderPriorityPicker renders output for the current model state.
 func (m Model) renderPriorityPicker(accent, muted color.Color) string {
 	parts := make([]string, 0, len(priorityOptions))
 	activeStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
@@ -2297,6 +2362,7 @@ func (m Model) renderPriorityPicker(accent, muted color.Color) string {
 	return strings.Join(parts, "  ")
 }
 
+// formatTaskEditInput formats values for display or serialization.
 func formatTaskEditInput(task domain.Task) string {
 	due := "-"
 	if task.DueAt != nil {
@@ -2315,6 +2381,7 @@ func formatTaskEditInput(task domain.Task) string {
 	}, " | ")
 }
 
+// parseTaskEditInput parses input into a normalized form.
 func parseTaskEditInput(raw string, current domain.Task) (app.UpdateTaskInput, error) {
 	parts := strings.Split(raw, "|")
 	for len(parts) < 5 {
@@ -2384,6 +2451,7 @@ func parseTaskEditInput(raw string, current domain.Task) (app.UpdateTaskInput, e
 	}, nil
 }
 
+// modeLabel handles mode label.
 func (m Model) modeLabel() string {
 	switch m.mode {
 	case modeAddTask:
@@ -2415,6 +2483,7 @@ func (m Model) modeLabel() string {
 	}
 }
 
+// modePrompt handles mode prompt.
 func (m Model) modePrompt() string {
 	switch m.mode {
 	case modeAddTask:
@@ -2446,10 +2515,12 @@ func (m Model) modePrompt() string {
 	}
 }
 
+// columnWidth returns column width.
 func (m Model) columnWidth() int {
 	return m.columnWidthFor(m.width)
 }
 
+// columnWidthFor returns column width for.
 func (m Model) columnWidthFor(boardWidth int) int {
 	if len(m.columns) == 0 {
 		return 24
@@ -2473,6 +2544,7 @@ func (m Model) columnWidthFor(boardWidth int) int {
 	return w
 }
 
+// columnHeight returns column height.
 func (m Model) columnHeight() int {
 	headerLines := 3
 	if len(m.projects) > 1 {
@@ -2486,6 +2558,7 @@ func (m Model) columnHeight() int {
 	return h
 }
 
+// boardTop handles board top.
 func (m Model) boardTop() int {
 	// mouse coordinates from tea are 1-based
 	// header + optional tabs + spacer
@@ -2496,6 +2569,7 @@ func (m Model) boardTop() int {
 	return top
 }
 
+// clamp clamps the requested operation.
 func clamp(v, minV, maxV int) int {
 	if maxV < minV {
 		return minV
@@ -2509,6 +2583,7 @@ func clamp(v, minV, maxV int) int {
 	return v
 }
 
+// max returns the larger of the provided values.
 func max(a, b int) int {
 	if a > b {
 		return a
@@ -2516,6 +2591,7 @@ func max(a, b int) int {
 	return b
 }
 
+// min returns the smaller of the provided values.
 func min(a, b int) int {
 	if a < b {
 		return a
@@ -2523,6 +2599,7 @@ func min(a, b int) int {
 	return b
 }
 
+// fitLines fits lines.
 func fitLines(content string, maxLines int) string {
 	if maxLines <= 0 {
 		return ""
@@ -2542,6 +2619,7 @@ func fitLines(content string, maxLines int) string {
 	return strings.Join(lines, "\n")
 }
 
+// overlayOnContent overlays on content.
 func overlayOnContent(base, overlay string, width, height int) string {
 	if width <= 0 || height <= 0 {
 		if strings.TrimSpace(overlay) == "" {
@@ -2567,6 +2645,7 @@ func overlayOnContent(base, overlay string, width, height int) string {
 	return canvas.Render()
 }
 
+// truncate truncates the requested operation.
 func truncate(s string, max int) string {
 	if max <= 0 {
 		return ""
@@ -2581,6 +2660,7 @@ func truncate(s string, max int) string {
 	return string(rs[:max-1]) + "…"
 }
 
+// summarizeLabels summarizes labels.
 func summarizeLabels(labels []string, maxLabels int) string {
 	if len(labels) == 0 {
 		return ""

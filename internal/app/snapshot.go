@@ -11,8 +11,10 @@ import (
 	"github.com/evanschultz/kan/internal/domain"
 )
 
+// SnapshotVersion defines a package constant value.
 const SnapshotVersion = "kan.snapshot.v1"
 
+// Snapshot represents snapshot data used by this package.
 type Snapshot struct {
 	Version    string            `json:"version"`
 	ExportedAt time.Time         `json:"exported_at"`
@@ -21,6 +23,7 @@ type Snapshot struct {
 	Tasks      []SnapshotTask    `json:"tasks"`
 }
 
+// SnapshotProject represents snapshot project data used by this package.
 type SnapshotProject struct {
 	ID          string                 `json:"id"`
 	Slug        string                 `json:"slug"`
@@ -32,6 +35,7 @@ type SnapshotProject struct {
 	ArchivedAt  *time.Time             `json:"archived_at,omitempty"`
 }
 
+// SnapshotColumn represents snapshot column data used by this package.
 type SnapshotColumn struct {
 	ID         string     `json:"id"`
 	ProjectID  string     `json:"project_id"`
@@ -43,6 +47,7 @@ type SnapshotColumn struct {
 	ArchivedAt *time.Time `json:"archived_at,omitempty"`
 }
 
+// SnapshotTask represents snapshot task data used by this package.
 type SnapshotTask struct {
 	ID          string          `json:"id"`
 	ProjectID   string          `json:"project_id"`
@@ -58,6 +63,7 @@ type SnapshotTask struct {
 	ArchivedAt  *time.Time      `json:"archived_at,omitempty"`
 }
 
+// ExportSnapshot handles export snapshot.
 func (s *Service) ExportSnapshot(ctx context.Context, includeArchived bool) (Snapshot, error) {
 	projects, err := s.repo.ListProjects(ctx, includeArchived)
 	if err != nil {
@@ -95,6 +101,7 @@ func (s *Service) ExportSnapshot(ctx context.Context, includeArchived bool) (Sna
 	return snap, nil
 }
 
+// ImportSnapshot handles import snapshot.
 func (s *Service) ImportSnapshot(ctx context.Context, snap Snapshot) error {
 	if err := snap.Validate(); err != nil {
 		return err
@@ -152,6 +159,7 @@ func (s *Service) ImportSnapshot(ctx context.Context, snap Snapshot) error {
 	return nil
 }
 
+// Validate validates the requested operation.
 func (s *Snapshot) Validate() error {
 	if s.Version != "" && s.Version != SnapshotVersion {
 		return fmt.Errorf("unsupported snapshot version: %q", s.Version)
@@ -243,6 +251,7 @@ func (s *Snapshot) Validate() error {
 	return nil
 }
 
+// upsertProject handles upsert project.
 func (s *Service) upsertProject(ctx context.Context, p domain.Project) error {
 	if _, err := s.repo.GetProject(ctx, p.ID); err == nil {
 		return s.repo.UpdateProject(ctx, p)
@@ -252,6 +261,7 @@ func (s *Service) upsertProject(ctx context.Context, p domain.Project) error {
 	return s.repo.CreateProject(ctx, p)
 }
 
+// sort handles sort.
 func (s *Snapshot) sort() {
 	sort.Slice(s.Projects, func(i, j int) bool {
 		return s.Projects[i].ID < s.Projects[j].ID
@@ -283,6 +293,7 @@ func (s *Snapshot) sort() {
 	})
 }
 
+// snapshotProjectFromDomain handles snapshot project from domain.
 func snapshotProjectFromDomain(p domain.Project) SnapshotProject {
 	return SnapshotProject{
 		ID:          p.ID,
@@ -296,6 +307,7 @@ func snapshotProjectFromDomain(p domain.Project) SnapshotProject {
 	}
 }
 
+// snapshotColumnFromDomain handles snapshot column from domain.
 func snapshotColumnFromDomain(c domain.Column) SnapshotColumn {
 	return SnapshotColumn{
 		ID:         c.ID,
@@ -309,6 +321,7 @@ func snapshotColumnFromDomain(c domain.Column) SnapshotColumn {
 	}
 }
 
+// snapshotTaskFromDomain handles snapshot task from domain.
 func snapshotTaskFromDomain(t domain.Task) SnapshotTask {
 	return SnapshotTask{
 		ID:          t.ID,
@@ -326,6 +339,7 @@ func snapshotTaskFromDomain(t domain.Task) SnapshotTask {
 	}
 }
 
+// toDomain converts domain.
 func (p SnapshotProject) toDomain() domain.Project {
 	slug := strings.TrimSpace(p.Slug)
 	if slug == "" {
@@ -343,6 +357,7 @@ func (p SnapshotProject) toDomain() domain.Project {
 	}
 }
 
+// toDomain converts domain.
 func (c SnapshotColumn) toDomain() domain.Column {
 	return domain.Column{
 		ID:         strings.TrimSpace(c.ID),
@@ -356,6 +371,7 @@ func (c SnapshotColumn) toDomain() domain.Column {
 	}
 }
 
+// toDomain converts domain.
 func (t SnapshotTask) toDomain() domain.Task {
 	labels := append([]string(nil), t.Labels...)
 	return domain.Task{
@@ -374,6 +390,7 @@ func (t SnapshotTask) toDomain() domain.Task {
 	}
 }
 
+// fallbackSlug provides fallback slug.
 func fallbackSlug(name string) string {
 	name = strings.ToLower(strings.TrimSpace(name))
 	name = strings.ReplaceAll(name, " ", "-")
@@ -383,6 +400,7 @@ func fallbackSlug(name string) string {
 	return strings.Trim(name, "-")
 }
 
+// copyTimePtr copies time ptr.
 func copyTimePtr(in *time.Time) *time.Time {
 	if in == nil {
 		return nil

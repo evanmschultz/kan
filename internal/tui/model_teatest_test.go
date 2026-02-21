@@ -12,6 +12,7 @@ import (
 	"github.com/evanschultz/kan/internal/domain"
 )
 
+// TestModelWithTeatest verifies behavior for the covered scenario.
 func TestModelWithTeatest(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -43,6 +44,7 @@ func TestModelWithTeatest(t *testing.T) {
 	tm.WaitFinished(t, teatest.WithFinalTimeout(2*time.Second))
 }
 
+// TestModelWithTeatestHelpAndProjectPicker verifies behavior for the covered scenario.
 func TestModelWithTeatestHelpAndProjectPicker(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p1, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -84,6 +86,7 @@ func TestModelWithTeatestHelpAndProjectPicker(t *testing.T) {
 	tm.WaitFinished(t, teatest.WithFinalTimeout(2*time.Second))
 }
 
+// TestModelGoldenBoardOutput verifies behavior for the covered scenario.
 func TestModelGoldenBoardOutput(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -122,6 +125,7 @@ func TestModelGoldenBoardOutput(t *testing.T) {
 	teatest.RequireEqualOutput(t, captured.Bytes())
 }
 
+// TestModelGoldenHelpExpandedOutput verifies behavior for the covered scenario.
 func TestModelGoldenHelpExpandedOutput(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)

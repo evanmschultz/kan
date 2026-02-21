@@ -16,12 +16,15 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// driverName defines a package constant value.
 const driverName = "sqlite"
 
+// Repository represents repository data used by this package.
 type Repository struct {
 	db *sql.DB
 }
 
+// Open opens the requested operation.
 func Open(path string) (*Repository, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, errors.New("sqlite path is required")
@@ -41,6 +44,7 @@ func Open(path string) (*Repository, error) {
 	return repo, nil
 }
 
+// OpenInMemory opens in memory.
 func OpenInMemory() (*Repository, error) {
 	db, err := sql.Open(driverName, "file::memory:?cache=shared")
 	if err != nil {
@@ -54,10 +58,12 @@ func OpenInMemory() (*Repository, error) {
 	return repo, nil
 }
 
+// Close closes the requested operation.
 func (r *Repository) Close() error {
 	return r.db.Close()
 }
 
+// migrate handles migrate.
 func (r *Repository) migrate(ctx context.Context) error {
 	stmts := []string{
 		`PRAGMA foreign_keys = ON;`,
@@ -113,6 +119,7 @@ func (r *Repository) migrate(ctx context.Context) error {
 	return nil
 }
 
+// CreateProject creates project.
 func (r *Repository) CreateProject(ctx context.Context, p domain.Project) error {
 	metaJSON, err := json.Marshal(p.Metadata)
 	if err != nil {
@@ -125,6 +132,7 @@ func (r *Repository) CreateProject(ctx context.Context, p domain.Project) error 
 	return err
 }
 
+// UpdateProject updates state for the requested operation.
 func (r *Repository) UpdateProject(ctx context.Context, p domain.Project) error {
 	metaJSON, err := json.Marshal(p.Metadata)
 	if err != nil {
@@ -141,6 +149,7 @@ func (r *Repository) UpdateProject(ctx context.Context, p domain.Project) error 
 	return translateNoRows(res)
 }
 
+// GetProject returns project.
 func (r *Repository) GetProject(ctx context.Context, id string) (domain.Project, error) {
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id, slug, name, description, metadata_json, created_at, updated_at, archived_at
@@ -150,6 +159,7 @@ func (r *Repository) GetProject(ctx context.Context, id string) (domain.Project,
 	return scanProject(row)
 }
 
+// ListProjects lists projects.
 func (r *Repository) ListProjects(ctx context.Context, includeArchived bool) ([]domain.Project, error) {
 	query := `
 		SELECT id, slug, name, description, metadata_json, created_at, updated_at, archived_at
@@ -192,6 +202,7 @@ func (r *Repository) ListProjects(ctx context.Context, includeArchived bool) ([]
 	return out, rows.Err()
 }
 
+// CreateColumn creates column.
 func (r *Repository) CreateColumn(ctx context.Context, c domain.Column) error {
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO columns_v1(id, project_id, name, wip_limit, position, created_at, updated_at, archived_at)
@@ -200,6 +211,7 @@ func (r *Repository) CreateColumn(ctx context.Context, c domain.Column) error {
 	return err
 }
 
+// UpdateColumn updates state for the requested operation.
 func (r *Repository) UpdateColumn(ctx context.Context, c domain.Column) error {
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE columns_v1
@@ -212,6 +224,7 @@ func (r *Repository) UpdateColumn(ctx context.Context, c domain.Column) error {
 	return translateNoRows(res)
 }
 
+// ListColumns lists columns.
 func (r *Repository) ListColumns(ctx context.Context, projectID string, includeArchived bool) ([]domain.Column, error) {
 	query := `
 		SELECT id, project_id, name, wip_limit, position, created_at, updated_at, archived_at
@@ -248,6 +261,7 @@ func (r *Repository) ListColumns(ctx context.Context, projectID string, includeA
 	return out, rows.Err()
 }
 
+// CreateTask creates task.
 func (r *Repository) CreateTask(ctx context.Context, t domain.Task) error {
 	labelsJSON, err := json.Marshal(t.Labels)
 	if err != nil {
@@ -260,6 +274,7 @@ func (r *Repository) CreateTask(ctx context.Context, t domain.Task) error {
 	return err
 }
 
+// UpdateTask updates state for the requested operation.
 func (r *Repository) UpdateTask(ctx context.Context, t domain.Task) error {
 	labelsJSON, err := json.Marshal(t.Labels)
 	if err != nil {
@@ -276,6 +291,7 @@ func (r *Repository) UpdateTask(ctx context.Context, t domain.Task) error {
 	return translateNoRows(res)
 }
 
+// GetTask returns task.
 func (r *Repository) GetTask(ctx context.Context, id string) (domain.Task, error) {
 	row := r.db.QueryRowContext(ctx, `
 		SELECT id, project_id, column_id, position, title, description, priority, due_at, labels_json, created_at, updated_at, archived_at
@@ -285,6 +301,7 @@ func (r *Repository) GetTask(ctx context.Context, id string) (domain.Task, error
 	return scanTask(row)
 }
 
+// ListTasks lists tasks.
 func (r *Repository) ListTasks(ctx context.Context, projectID string, includeArchived bool) ([]domain.Task, error) {
 	query := `
 		SELECT id, project_id, column_id, position, title, description, priority, due_at, labels_json, created_at, updated_at, archived_at
@@ -313,6 +330,7 @@ func (r *Repository) ListTasks(ctx context.Context, projectID string, includeArc
 	return out, rows.Err()
 }
 
+// DeleteTask deletes task.
 func (r *Repository) DeleteTask(ctx context.Context, id string) error {
 	res, err := r.db.ExecContext(ctx, `DELETE FROM tasks WHERE id = ?`, id)
 	if err != nil {
@@ -321,10 +339,12 @@ func (r *Repository) DeleteTask(ctx context.Context, id string) error {
 	return translateNoRows(res)
 }
 
+// scanner represents scanner data used by this package.
 type scanner interface {
 	Scan(dest ...any) error
 }
 
+// scanProject handles scan project.
 func scanProject(s scanner) (domain.Project, error) {
 	var (
 		p           domain.Project
@@ -351,6 +371,7 @@ func scanProject(s scanner) (domain.Project, error) {
 	return p, nil
 }
 
+// scanTask handles scan task.
 func scanTask(s scanner) (domain.Task, error) {
 	var (
 		t          domain.Task
@@ -378,6 +399,7 @@ func scanTask(s scanner) (domain.Task, error) {
 	return t, nil
 }
 
+// translateNoRows handles translate no rows.
 func translateNoRows(res sql.Result) error {
 	affected, err := res.RowsAffected()
 	if err != nil {
@@ -389,10 +411,12 @@ func translateNoRows(res sql.Result) error {
 	return nil
 }
 
+// ts handles ts.
 func ts(t time.Time) string {
 	return t.UTC().Format(time.RFC3339Nano)
 }
 
+// nullableTS handles nullable ts.
 func nullableTS(t *time.Time) any {
 	if t == nil {
 		return nil
@@ -400,6 +424,7 @@ func nullableTS(t *time.Time) any {
 	return t.UTC().Format(time.RFC3339Nano)
 }
 
+// parseTS parses input into a normalized form.
 func parseTS(v string) time.Time {
 	ts, err := time.Parse(time.RFC3339Nano, v)
 	if err != nil {
@@ -408,6 +433,7 @@ func parseTS(v string) time.Time {
 	return ts.UTC()
 }
 
+// parseNullTS parses input into a normalized form.
 func parseNullTS(v sql.NullString) *time.Time {
 	if !v.Valid || strings.TrimSpace(v.String) == "" {
 		return nil
@@ -416,6 +442,7 @@ func parseNullTS(v sql.NullString) *time.Time {
 	return &ts
 }
 
+// isDuplicateColumnErr reports whether the expected condition is satisfied.
 func isDuplicateColumnErr(err error) bool {
 	if err == nil {
 		return false
