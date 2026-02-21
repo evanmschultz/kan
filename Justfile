@@ -10,7 +10,10 @@ bootstrap:
   fi
 
 fmt:
-  @gofmt -w $(rg --files -g'*.go')
+  @set -- $(git ls-files '*.go'); \
+  if [ "$#" -gt 0 ]; then \
+    gofmt -w "$@"; \
+  fi
 
 test:
   @go test ./...
