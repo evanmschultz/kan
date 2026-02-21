@@ -15,11 +15,6 @@ A local-first Kanban TUI built with Bubble Tea v2, Bubbles v2, and Lip Gloss v2.
 just run
 ```
 
-Use dev-mode paths (isolated `kan-dev` config/data roots):
-```bash
-just run-dev
-```
-
 Or build once and run the binary:
 ```bash
 just build
@@ -114,26 +109,10 @@ just test
 just ci
 ```
 
-TUI visual previews:
-```bash
-just vhs
-```
-
-Snapshot helpers:
-```bash
-just export .artifacts/kan-export.json
-just import .artifacts/kan-export.json
-```
-
 Golden tests:
 ```bash
 just test-golden
 just test-golden-update
-```
-
-Release dry-run:
-```bash
-just release-check
 ```
 
 ## CI

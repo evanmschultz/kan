@@ -1,20 +1,20 @@
 # Repository Guidelines
 
+This file defines instructions for coding agents working in this repository. It is not runtime behavior for `kan`.
+
 You are a senior Go dev. YOU ALWAYS:
 
-- ALWAYS automatically use Context7 for code generation and library documentation before writing a single line of code.
-- ALWAYS re-run Context7 before any code edit after a test failure or runtime error.
-- Write idiomatic Go comments and docstrings for every code block, including all production and test code (`*_test.go`), with no uncommented behavior blocks.
-- Review the `Justfile` at startup to align on recipes, environment expectations, and cleanup patterns.
-- Run `just check-llm` whenever you touch Go code (unless the user explicitly approves a narrower suite).
-- Add or use package-scoped Justfile test recipes for fast iteration, then run `just check-llm` before final confirmation.
-- Run tests only via `just` recipes. Do not run `go test` directly from the agent.
-- If a needed test command does not exist in `Justfile`, add a recipe first (or ask the user which recipe to use), then run that recipe.
-- If dependency updates require network access, ask the user to run `go get` and related module commands in their own shell.
-- Never use dependency-fetch sandbox workarounds (for example `GOPROXY=direct`, `GOSUMDB=off`, or checksum bypass flags).
+- ALWAYS use Context7 for library and API documentation before writing any code.
+- ALWAYS re-run Context7 after any test failure or runtime error before making the next edit.
+- Write idiomatic Go docstrings and comments for all non-obvious behavior in production and test code, including behavior blocks in `*_test.go`.
+- Review `Justfile` at startup and use its recipes as the source of truth for local automation.
+- Run tests/checks through `just` recipes only; do not run `go test` directly from the agent.
+- When you touch Go code, finish by running `just ci` unless the user explicitly approves a narrower suite.
+- Add package-scoped `Justfile` recipes when needed for fast iteration, then still finish with `just ci`.
+- If dependency updates need network access, ask the user to run `go get` and module update commands in their own shell.
+- Never use dependency-fetch bypasses (for example `GOPROXY=direct`, `GOSUMDB=off`, or checksum bypass flags).
 - Never delete files or directories without explicit user approval.
-- Keep all active worklogs/spec notes in `worklogs/` at repository root.
-- Treat the active worklog as both execution plan and progress ledger; update it continuously while you work.
+- Keep the active execution/work log in `PLAN.md`. Use `worklogs/` only when the user explicitly asks for split logs.
 
 ## Project Structure
 
@@ -25,23 +25,17 @@ You are a senior Go dev. YOU ALWAYS:
 - `internal/config`: TOML loading, defaults, validation.
 - `internal/platform`: OS-specific config/data/db path resolution.
 - `internal/tui`: Bubble Tea/Bubbles/Lip Gloss presentation layer.
-- `vhs/`: tracked VHS tapes used for visual regression checks.
-- `.artifacts/`: generated local outputs (VHS gifs, exports, temporary build outputs).
-- `PLAN.md`: active roadmap + integrated worklog.
+- `.artifacts/`: generated local outputs (exports, temporary build outputs).
+- `PLAN.md`: active roadmap and execution/work log.
 
 ## Build and Run
 
 - `just run`: run app from source (`go run ./cmd/kan`).
-- `just run-dev`: run app with dev path isolation (`--dev`).
 - `just build`: build local binary `./kan`.
-- `just run-bin`: build and run local binary.
-- `just paths`: print resolved config/data/db paths.
 - `just fmt`: format Go files.
-- `just test`, `just test-unit`, `just test-tui`, `just test-pkg <pkg>`: test entrypoints.
+- `just test`, `just test-pkg <pkg>`: test entrypoints.
 - `just test-golden`, `just test-golden-update`: golden fixture validation/update.
-- `just vhs`, `just vhs-board`, `just vhs-workflow`: visual snapshots.
-- `just ci`: canonical local gate (format, tests, coverage floor, build-all).
-- `just check-llm`: alias to strongest local gate in this repo.
+- `just ci`: canonical local gate (source verification, format, tests, coverage floor, build).
 
 ## Worktrees
 
@@ -52,7 +46,7 @@ You are a senior Go dev. YOU ALWAYS:
 
 ## Worklogs
 
-- Use `PLAN.md` and/or files in `worklogs/` as the live execution ledger.
+- Use `PLAN.md` as the live execution ledger.
 - Keep updates step-by-step while work is in progress. At minimum log:
   - current objective/plan,
   - each command/test run and outcome,
@@ -81,8 +75,6 @@ You are a senior Go dev. YOU ALWAYS:
 - Prefer table-driven tests and behavior-oriented assertions.
 - Run package-focused loops with `just test-pkg <pkg>` during implementation.
 - For substantial TUI changes, update or add tea-driven tests and golden fixtures.
-- Use `just vhs` for visual UX verification when layout/modal/help behavior changes.
-- VHS artifacts are for visual inspection only; they are not source-of-truth logic.
 - Coverage below 70% is a hard failure.
 - Build/test execution must go through `just` recipes only.
 
