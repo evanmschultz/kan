@@ -279,6 +279,139 @@ func TestRepository_MigratesLegacyProjectsTable(t *testing.T) {
 	}
 }
 
+// TestRepository_MigratesLegacyTasksTable verifies behavior for the covered scenario.
+func TestRepository_MigratesLegacyTasksTable(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "legacy-tasks.db")
+	db, err := sql.Open(driverName, dbPath)
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = db.Close()
+	})
+
+	legacySchema := []string{
+		`CREATE TABLE projects (
+			id TEXT PRIMARY KEY,
+			slug TEXT NOT NULL,
+			name TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			archived_at TEXT
+		)`,
+		`CREATE TABLE columns_v1 (
+			id TEXT PRIMARY KEY,
+			project_id TEXT NOT NULL,
+			name TEXT NOT NULL,
+			wip_limit INTEGER NOT NULL DEFAULT 0,
+			position INTEGER NOT NULL,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			archived_at TEXT
+		)`,
+		`CREATE TABLE tasks (
+			id TEXT PRIMARY KEY,
+			project_id TEXT NOT NULL,
+			column_id TEXT NOT NULL,
+			position INTEGER NOT NULL,
+			title TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			priority TEXT NOT NULL,
+			due_at TEXT,
+			labels_json TEXT NOT NULL DEFAULT '[]',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			archived_at TEXT
+		)`,
+	}
+	for _, stmt := range legacySchema {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("create legacy schema error = %v", err)
+		}
+	}
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	for _, stmt := range []string{
+		`INSERT INTO projects(id, slug, name, description, created_at, updated_at, archived_at)
+		 VALUES ('p1', 'legacy', 'Legacy', '', '` + now.Format(time.RFC3339Nano) + `', '` + now.Format(time.RFC3339Nano) + `', NULL)`,
+		`INSERT INTO columns_v1(id, project_id, name, wip_limit, position, created_at, updated_at, archived_at)
+		 VALUES ('c1', 'p1', 'To Do', 0, 0, '` + now.Format(time.RFC3339Nano) + `', '` + now.Format(time.RFC3339Nano) + `', NULL)`,
+		`INSERT INTO tasks(id, project_id, column_id, position, title, description, priority, due_at, labels_json, created_at, updated_at, archived_at)
+		 VALUES ('t1', 'p1', 'c1', 0, 'Legacy task', 'desc', 'medium', NULL, '["legacy"]', '` + now.Format(time.RFC3339Nano) + `', '` + now.Format(time.RFC3339Nano) + `', NULL)`,
+	} {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("seed legacy rows error = %v", err)
+		}
+	}
+
+	repo, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open() on legacy task db error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	rows, err := repo.db.QueryContext(ctx, `PRAGMA table_info(tasks)`)
+	if err != nil {
+		t.Fatalf("PRAGMA table_info(tasks) error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = rows.Close()
+	})
+
+	seenParentID := false
+	for rows.Next() {
+		var (
+			cid        int
+			name       string
+			colType    string
+			notNull    int
+			defaultVal sql.NullString
+			primaryKey int
+		)
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &defaultVal, &primaryKey); err != nil {
+			t.Fatalf("rows.Scan() error = %v", err)
+		}
+		if name == "parent_id" {
+			seenParentID = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows.Err() = %v", err)
+	}
+	if !seenParentID {
+		t.Fatal("expected parent_id column to be added during migration")
+	}
+
+	var workItemCount int
+	if err := repo.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM work_items WHERE id = 't1'`).Scan(&workItemCount); err != nil {
+		t.Fatalf("count work_items error = %v", err)
+	}
+	if workItemCount != 1 {
+		t.Fatalf("expected migrated work_items row count 1, got %d", workItemCount)
+	}
+	loaded, err := repo.GetTask(ctx, "t1")
+	if err != nil {
+		t.Fatalf("GetTask() migrated row error = %v", err)
+	}
+	if loaded.Title != "Legacy task" || loaded.ProjectID != "p1" {
+		t.Fatalf("unexpected migrated task %#v", loaded)
+	}
+	if loaded.Kind != domain.WorkKindTask || loaded.LifecycleState != domain.StateTodo {
+		t.Fatalf("expected default kind/state migration values, got kind=%q state=%q", loaded.Kind, loaded.LifecycleState)
+	}
+
+	var tableCount int
+	if err := repo.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='change_events'`).Scan(&tableCount); err != nil {
+		t.Fatalf("count change_events table error = %v", err)
+	}
+	if tableCount != 1 {
+		t.Fatalf("expected change_events table to exist after migration, got %d", tableCount)
+	}
+}
+
 // TestRepositoryOpenValidation verifies behavior for the covered scenario.
 func TestRepositoryOpenValidation(t *testing.T) {
 	if _, err := Open("   "); err == nil {
@@ -317,5 +450,111 @@ func TestRepositoryUpdateNotFound(t *testing.T) {
 	}, now)
 	if err := repo.UpdateTask(context.Background(), tk); err != app.ErrNotFound {
 		t.Fatalf("expected app.ErrNotFound for UpdateTask, got %v", err)
+	}
+}
+
+// TestRepository_ListProjectChangeEventsLifecycle verifies behavior for the covered scenario.
+func TestRepository_ListProjectChangeEventsLifecycle(t *testing.T) {
+	ctx := context.Background()
+	repo, err := Open(filepath.Join(t.TempDir(), "events.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Events", "", now)
+	if err := repo.CreateProject(ctx, project); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	todo, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	done, _ := domain.NewColumn("c2", project.ID, "Done", 1, 0, now)
+	if err := repo.CreateColumn(ctx, todo); err != nil {
+		t.Fatalf("CreateColumn(todo) error = %v", err)
+	}
+	if err := repo.CreateColumn(ctx, done); err != nil {
+		t.Fatalf("CreateColumn(done) error = %v", err)
+	}
+
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:             "t1",
+		ProjectID:      project.ID,
+		ColumnID:       todo.ID,
+		Position:       0,
+		Title:          "Track me",
+		Priority:       domain.PriorityMedium,
+		CreatedByActor: "user-1",
+		UpdatedByActor: "user-1",
+		UpdatedByType:  domain.ActorTypeUser,
+	}, now)
+	if err := repo.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+
+	if err := task.UpdateDetails("Track me v2", task.Description, task.Priority, task.DueAt, task.Labels, now.Add(time.Minute)); err != nil {
+		t.Fatalf("UpdateDetails() error = %v", err)
+	}
+	task.UpdatedByActor = "agent-1"
+	task.UpdatedByType = domain.ActorTypeAgent
+	if err := repo.UpdateTask(ctx, task); err != nil {
+		t.Fatalf("UpdateTask(update) error = %v", err)
+	}
+
+	if err := task.Move(done.ID, 1, now.Add(2*time.Minute)); err != nil {
+		t.Fatalf("Move() error = %v", err)
+	}
+	task.UpdatedByActor = "user-2"
+	task.UpdatedByType = domain.ActorTypeUser
+	if err := repo.UpdateTask(ctx, task); err != nil {
+		t.Fatalf("UpdateTask(move) error = %v", err)
+	}
+
+	task.Archive(now.Add(3 * time.Minute))
+	task.UpdatedByActor = "user-3"
+	task.UpdatedByType = domain.ActorTypeUser
+	if err := repo.UpdateTask(ctx, task); err != nil {
+		t.Fatalf("UpdateTask(archive) error = %v", err)
+	}
+
+	task.Restore(now.Add(4 * time.Minute))
+	task.UpdatedByActor = "user-4"
+	task.UpdatedByType = domain.ActorTypeUser
+	if err := repo.UpdateTask(ctx, task); err != nil {
+		t.Fatalf("UpdateTask(restore) error = %v", err)
+	}
+
+	if err := repo.DeleteTask(ctx, task.ID); err != nil {
+		t.Fatalf("DeleteTask() error = %v", err)
+	}
+
+	events, err := repo.ListProjectChangeEvents(ctx, project.ID, 10)
+	if err != nil {
+		t.Fatalf("ListProjectChangeEvents() error = %v", err)
+	}
+	if len(events) != 6 {
+		t.Fatalf("expected 6 events, got %d (%#v)", len(events), events)
+	}
+
+	wantOps := []domain.ChangeOperation{
+		domain.ChangeOperationDelete,
+		domain.ChangeOperationRestore,
+		domain.ChangeOperationArchive,
+		domain.ChangeOperationMove,
+		domain.ChangeOperationUpdate,
+		domain.ChangeOperationCreate,
+	}
+	for i, want := range wantOps {
+		if events[i].Operation != want {
+			t.Fatalf("unexpected event operation at index %d: got %q want %q", i, events[i].Operation, want)
+		}
+	}
+
+	if events[3].Metadata["from_column_id"] != todo.ID || events[3].Metadata["to_column_id"] != done.ID {
+		t.Fatalf("expected move metadata to include column transition, got %#v", events[3].Metadata)
+	}
+	if events[5].ActorID != "user-1" {
+		t.Fatalf("expected create actor user-1, got %q", events[5].ActorID)
 	}
 }

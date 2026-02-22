@@ -6,11 +6,24 @@ You are a senior Go dev. YOU ALWAYS:
 
 - ALWAYS use Context7 for library and API documentation before writing any code.
 - ALWAYS re-run Context7 after any test failure or runtime error before making the next edit.
-- Write idiomatic Go docstrings and comments for all non-obvious behavior in production and test code, including behavior blocks in `*_test.go`.
+- If Context7 is unavailable (quota, network, outage), record the fallback source before proceeding (for example official docs, `go doc`, or package-local docs).
+- Write idiomatic Go doc comments for all top-level declarations and methods in production and test code, and add inline comments for non-obvious behavior blocks (including behavior blocks in `*_test.go`).
 - Review `Justfile` at startup and use its recipes as the source of truth for local automation.
 - Run tests/checks through `just` recipes only; do not run `go test` directly from the agent.
 - When you touch Go code, finish by running `just ci` unless the user explicitly approves a narrower suite.
+- In subagent parallel mode (single-branch orchestration), worker lanes may run scoped checks (`just test-pkg ...`), but the integrator must run `just ci` before marking a lane integrated/closed.
+- In subagent prompts, explicitly require: Context7 before any code change, Context7 again after any failed test/runtime error, and package-scoped `just test-pkg` checks for touched packages.
 - Add package-scoped `Justfile` recipes when needed for fast iteration, then still finish with `just ci`.
+- Treat runtime logging as a first-class implementation concern:
+  - use `github.com/charmbracelet/log` as the canonical logger for application/runtime logs.
+  - keep colored/styled console output enabled for local developer ergonomics.
+  - in dev mode, write logs to a workspace-local `.kan/log/` directory so logs are easy to inspect during debugging.
+  - log meaningful runtime operations and failures (startup paths/config load, persistence/migrations, mutating actions, recoverable/non-recoverable errors).
+- During troubleshooting, inspect recent local log files before proposing fixes and include relevant findings in your reasoning.
+- Keep error handling idiomatic:
+  - wrap errors with `%w`,
+  - return errors upward at clean boundaries,
+  - log context-rich failures at adapter/runtime edges instead of swallowing errors.
 - If dependency updates need network access, ask the user to run `go get` and module update commands in their own shell.
 - Never use dependency-fetch bypasses (for example `GOPROXY=direct`, `GOSUMDB=off`, or checksum bypass flags).
 - Never delete files or directories without explicit user approval.
@@ -53,6 +66,62 @@ You are a senior Go dev. YOU ALWAYS:
   - each file edit and why,
   - each failure and remediation,
   - current status and next step.
+- In subagent parallel mode, `PLAN.md` is single-writer:
+  - only the orchestrator/integrator updates lock tables, lane status, and completion markers.
+  - worker subagents must not directly edit `PLAN.md`; they provide handoff notes for orchestrator ingestion.
+- Every orchestrator checkpoint update in `PLAN.md` must include command/test evidence:
+  - commands run and outcomes,
+  - tests/checks run and outcomes,
+  - or explicit `test_not_applicable` with rationale for docs-only/process-only steps.
+
+## Parallel/Subagent Mode
+
+- This repository supports parallel subagent execution on a single branch only under lock discipline.
+- Roles:
+  - orchestrator: decomposition, lane assignment, lock ownership, approval escalation.
+  - worker subagent: scoped implementation lane and evidence handoff.
+  - integrator: sole patch applier to shared branch and gate owner.
+- Lock rules:
+  - lane must declare file-glob lock scope before edits.
+  - no edits outside lane lock.
+  - hotspot files require serialized ownership (`internal/tui/model.go`, `internal/app/service.go`, `internal/adapters/storage/sqlite/repo.go`).
+- Approval/permission failure flow:
+  - subagent command fails on permission gate.
+  - orchestrator surfaces exact failure and approval request.
+  - after user approval, orchestrator reruns blocked command or resumes lane.
+- Completion policy:
+  - no lane is marked complete until integrator verifies acceptance criteria and test evidence.
+  - final wave closeout requires successful `just ci`.
+
+### Orchestrator Prompt Contract (Required)
+
+- Every worker-lane prompt must include:
+  - lane id and single acceptance objective,
+  - lock scope (allowed file globs) and explicit out-of-scope paths,
+  - concrete acceptance criteria mapped to the current phase/task,
+  - architecture constraints for this repo (hexagonal boundaries, allowed dependency directions, and hotspot ownership),
+  - testing plan (`just` commands only) and whether lane follows tests-first or a justified TDD exception,
+  - explicit worker test scope: package-level `just test-pkg <pkg>` for touched packages (no repo-wide gate in worker lanes),
+  - doc/comment expectations for touched Go declarations and non-obvious logic,
+  - explicit Context7 checkpoints: before first code edit and after every failed test/runtime error, plus fallback behavior when unavailable,
+  - expected handoff format and evidence requirements.
+- Worker prompts must explicitly forbid:
+  - edits outside lane lock,
+  - direct `go test` execution,
+  - running repo-wide test gates (`just test`, `just ci`) unless the orchestrator explicitly assigns it,
+  - architecture-layer violations unless explicitly authorized by the lane objective.
+
+### Worker Handoff Contract (Required)
+
+- Every worker handoff must include:
+  - lane id and checkpoint id,
+  - files changed and why,
+  - commands run and pass/fail outcomes,
+  - acceptance criteria checklist with pass/fail per item,
+  - architecture-boundary compliance note,
+  - doc/comment compliance note for touched Go code,
+  - Context7 compliance note (initial consult + any failure-triggered re-consults),
+  - unresolved risks/blockers and recommended next step.
 
 ## Tech Stack
 

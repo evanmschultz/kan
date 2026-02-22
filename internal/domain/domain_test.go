@@ -203,3 +203,169 @@ func TestTaskMoveUpdateArchiveRestore(t *testing.T) {
 		t.Fatal("expected archived_at nil")
 	}
 }
+
+// TestNewTaskRichMetadataAndDefaults verifies behavior for the covered scenario.
+func TestNewTaskRichMetadataAndDefaults(t *testing.T) {
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	lastVerified := now.Add(-time.Hour)
+	task, err := NewTask(TaskInput{
+		ID:        "t-rich",
+		ProjectID: "p1",
+		ColumnID:  "c1",
+		Position:  0,
+		Title:     "rich task",
+		Priority:  PriorityMedium,
+		Metadata: TaskMetadata{
+			Objective: "  Ship feature  ",
+			ContextBlocks: []ContextBlock{
+				{Title: "rule", Body: "  always run tests  ", Type: ContextType("RUNBOOK"), Importance: ContextImportance("HIGH")},
+			},
+			ResourceRefs: []ResourceRef{
+				{
+					ID:             "res1",
+					ResourceType:   ResourceType("URL"),
+					Location:       " https://example.com/spec ",
+					PathMode:       PathMode("ABSOLUTE"),
+					Tags:           []string{"Spec", "spec"},
+					LastVerifiedAt: &lastVerified,
+				},
+			},
+			CompletionContract: CompletionContract{
+				StartCriteria: []ChecklistItem{{Text: "ready", Done: true}},
+			},
+		},
+	}, now)
+	if err != nil {
+		t.Fatalf("NewTask() error = %v", err)
+	}
+	if task.Kind != WorkKindTask {
+		t.Fatalf("expected default kind task, got %q", task.Kind)
+	}
+	if task.LifecycleState != StateTodo {
+		t.Fatalf("expected default state todo, got %q", task.LifecycleState)
+	}
+	if task.UpdatedByType != ActorTypeUser {
+		t.Fatalf("expected default actor type user, got %q", task.UpdatedByType)
+	}
+	if task.Metadata.Objective != "Ship feature" {
+		t.Fatalf("expected normalized objective, got %q", task.Metadata.Objective)
+	}
+	if len(task.Metadata.ContextBlocks) != 1 || task.Metadata.ContextBlocks[0].Type != ContextTypeRunbook {
+		t.Fatalf("unexpected context blocks %#v", task.Metadata.ContextBlocks)
+	}
+	if len(task.Metadata.ResourceRefs) != 1 || task.Metadata.ResourceRefs[0].ResourceType != ResourceTypeURL {
+		t.Fatalf("unexpected resource refs %#v", task.Metadata.ResourceRefs)
+	}
+	if len(task.Metadata.ResourceRefs[0].Tags) != 1 || task.Metadata.ResourceRefs[0].Tags[0] != "spec" {
+		t.Fatalf("unexpected normalized resource tags %#v", task.Metadata.ResourceRefs[0].Tags)
+	}
+}
+
+// TestTaskLifecycleTransitions verifies behavior for the covered scenario.
+func TestTaskLifecycleTransitions(t *testing.T) {
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	task, err := NewTask(TaskInput{
+		ID:        "t-state",
+		ProjectID: "p1",
+		ColumnID:  "c1",
+		Position:  0,
+		Title:     "stateful",
+		Priority:  PriorityLow,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewTask() error = %v", err)
+	}
+
+	if err := task.SetLifecycleState(StateProgress, now.Add(time.Minute)); err != nil {
+		t.Fatalf("SetLifecycleState(progress) error = %v", err)
+	}
+	if task.StartedAt == nil || task.LifecycleState != StateProgress {
+		t.Fatalf("expected started/progress state, got %#v", task)
+	}
+	if err := task.SetLifecycleState(StateDone, now.Add(2*time.Minute)); err != nil {
+		t.Fatalf("SetLifecycleState(done) error = %v", err)
+	}
+	if task.CompletedAt == nil || task.LifecycleState != StateDone {
+		t.Fatalf("expected completed/done state, got %#v", task)
+	}
+	if err := task.Reparent("parent-1", now.Add(3*time.Minute)); err != nil {
+		t.Fatalf("Reparent() error = %v", err)
+	}
+	if task.ParentID != "parent-1" {
+		t.Fatalf("unexpected parent id %q", task.ParentID)
+	}
+	if err := task.Reparent(task.ID, now.Add(4*time.Minute)); err != ErrInvalidParentID {
+		t.Fatalf("expected ErrInvalidParentID, got %v", err)
+	}
+	task.Archive(now.Add(5 * time.Minute))
+	if task.LifecycleState != StateArchived {
+		t.Fatalf("expected archived state, got %q", task.LifecycleState)
+	}
+	task.Restore(now.Add(6 * time.Minute))
+	if task.LifecycleState != StateTodo {
+		t.Fatalf("expected restore to todo, got %q", task.LifecycleState)
+	}
+}
+
+// TestTaskContractUnmetChecks verifies behavior for the covered scenario.
+func TestTaskContractUnmetChecks(t *testing.T) {
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	task, err := NewTask(TaskInput{
+		ID:        "t-contract",
+		ProjectID: "p1",
+		ColumnID:  "c1",
+		Position:  0,
+		Title:     "contract",
+		Priority:  PriorityHigh,
+		Metadata: TaskMetadata{
+			CompletionContract: CompletionContract{
+				StartCriteria: []ChecklistItem{
+					{ID: "s1", Text: "design approved", Done: false},
+					{ID: "s2", Text: "repo ready", Done: true},
+				},
+				CompletionCriteria: []ChecklistItem{
+					{ID: "c1", Text: "tests green", Done: false},
+				},
+				CompletionChecklist: []ChecklistItem{
+					{ID: "k1", Text: "docs updated", Done: false},
+				},
+				Policy: CompletionPolicy{RequireChildrenDone: true},
+			},
+		},
+	}, now)
+	if err != nil {
+		t.Fatalf("NewTask() error = %v", err)
+	}
+	startUnmet := task.StartCriteriaUnmet()
+	if len(startUnmet) != 1 || startUnmet[0] != "design approved" {
+		t.Fatalf("unexpected start unmet list %#v", startUnmet)
+	}
+	children := []Task{
+		{ID: "child-1", Title: "child", LifecycleState: StateProgress},
+	}
+	doneUnmet := task.CompletionCriteriaUnmet(children)
+	if len(doneUnmet) < 3 {
+		t.Fatalf("expected unmet completion checks, got %#v", doneUnmet)
+	}
+}
+
+// TestNewTaskRejectsInvalidMetadata verifies behavior for the covered scenario.
+func TestNewTaskRejectsInvalidMetadata(t *testing.T) {
+	now := time.Now()
+	_, err := NewTask(TaskInput{
+		ID:        "t-bad",
+		ProjectID: "p1",
+		ColumnID:  "c1",
+		Position:  0,
+		Title:     "bad",
+		Priority:  PriorityMedium,
+		Metadata: TaskMetadata{
+			ContextBlocks: []ContextBlock{
+				{Body: "x", Type: ContextType("invalid")},
+			},
+		},
+	}, now)
+	if err == nil {
+		t.Fatal("expected invalid context type error")
+	}
+}

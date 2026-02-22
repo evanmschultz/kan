@@ -16,6 +16,13 @@ path = ""
 # archive | hard
 default_mode = "archive"
 
+[confirm]
+# Confirmation gates for state-changing/destructive actions.
+delete = true
+archive = true
+hard_delete = true
+restore = false
+
 [task_fields]
 show_priority = true
 show_due_date = true
@@ -27,30 +34,32 @@ show_wip_warnings = true
 # none | priority | state
 group_by = "none"
 
-[[board.states]]
-id = "todo"
-name = "To Do"
-wip_limit = 0
-position = 0
-
-[[board.states]]
-id = "progress"
-name = "In Progress"
-wip_limit = 0
-position = 1
-
-[[board.states]]
-id = "done"
-name = "Done"
-wip_limit = 0
-position = 2
-
 [search]
 # When true, `/` can search across all projects.
 cross_project = false
 include_archived = false
-# Valid values are board state IDs plus "archived".
+# Canonical lifecycle states only: todo | progress | done | archived.
 states = ["todo", "progress", "done"]
+
+[ui]
+# Durations used for "due soon" badges and summary counts.
+due_soon_windows = ["24h", "1h"]
+show_due_summary = true
+
+[project_roots]
+# Machine-local root mappings by project slug. Keep these in TOML so DB exports stay portable.
+# Example:
+# inbox = "/Users/you/dev/inbox-repo"
+
+[labels]
+# Suggested labels available across all projects.
+global = ["planning", "bug", "chore"]
+# When true, task labels must come from global + project-specific allowlists.
+enforce_allowed = false
+
+[labels.projects]
+# Per-project suggested labels, keyed by project slug.
+inbox = ["kan", "roadmap", "ux"]
 
 [keys]
 command_palette = ":"

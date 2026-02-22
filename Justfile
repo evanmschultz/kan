@@ -15,7 +15,16 @@ test:
   @go test ./...
 
 test-pkg pkg:
-  @go test {{pkg}}
+  @pkg="{{pkg}}"; \
+  if [ -d "$pkg" ]; then \
+    if ls "$pkg"/*.go >/dev/null 2>&1; then \
+      go test "$pkg"; \
+    else \
+      go test "$pkg/..."; \
+    fi; \
+  else \
+    go test "$pkg"; \
+  fi
 
 test-golden:
   @go test ./internal/tui -run 'Golden'

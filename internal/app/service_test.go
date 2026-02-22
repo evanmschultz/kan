@@ -11,17 +11,19 @@ import (
 
 // fakeRepo represents fake repo data used by this package.
 type fakeRepo struct {
-	projects map[string]domain.Project
-	columns  map[string]domain.Column
-	tasks    map[string]domain.Task
+	projects     map[string]domain.Project
+	columns      map[string]domain.Column
+	tasks        map[string]domain.Task
+	changeEvents map[string][]domain.ChangeEvent
 }
 
 // newFakeRepo constructs fake repo.
 func newFakeRepo() *fakeRepo {
 	return &fakeRepo{
-		projects: map[string]domain.Project{},
-		columns:  map[string]domain.Column{},
-		tasks:    map[string]domain.Task{},
+		projects:     map[string]domain.Project{},
+		columns:      map[string]domain.Column{},
+		tasks:        map[string]domain.Task{},
+		changeEvents: map[string][]domain.ChangeEvent{},
 	}
 }
 
@@ -131,6 +133,15 @@ func (f *fakeRepo) DeleteTask(_ context.Context, id string) error {
 	}
 	delete(f.tasks, id)
 	return nil
+}
+
+// ListProjectChangeEvents lists change events.
+func (f *fakeRepo) ListProjectChangeEvents(_ context.Context, projectID string, limit int) ([]domain.ChangeEvent, error) {
+	events := append([]domain.ChangeEvent(nil), f.changeEvents[projectID]...)
+	if limit <= 0 || limit >= len(events) {
+		return events, nil
+	}
+	return events[:limit], nil
 }
 
 // TestEnsureDefaultProject verifies behavior for the covered scenario.
@@ -596,5 +607,222 @@ func TestEnsureDefaultProjectErrorPropagation(t *testing.T) {
 	_, err := svc.EnsureDefaultProject(context.Background())
 	if !errors.Is(err, expected) {
 		t.Fatalf("expected wrapped error %v, got %v", expected, err)
+	}
+}
+
+// TestMoveTaskBlocksWhenStartCriteriaUnmet verifies behavior for the covered scenario.
+func TestMoveTaskBlocksWhenStartCriteriaUnmet(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	repo.projects[project.ID] = project
+	todo, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	progress, _ := domain.NewColumn("c2", project.ID, "In Progress", 1, 0, now)
+	repo.columns[todo.ID] = todo
+	repo.columns[progress.ID] = progress
+
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  todo.ID,
+		Position:  0,
+		Title:     "blocked",
+		Priority:  domain.PriorityMedium,
+		Metadata: domain.TaskMetadata{
+			CompletionContract: domain.CompletionContract{
+				StartCriteria: []domain.ChecklistItem{{ID: "s1", Text: "design reviewed", Done: false}},
+			},
+		},
+	}, now)
+	repo.tasks[task.ID] = task
+
+	svc := NewService(repo, nil, func() time.Time { return now }, ServiceConfig{})
+	_, err := svc.MoveTask(context.Background(), task.ID, progress.ID, 0)
+	if err == nil || !errors.Is(err, domain.ErrTransitionBlocked) {
+		t.Fatalf("expected ErrTransitionBlocked, got %v", err)
+	}
+}
+
+// TestMoveTaskAllowsDoneWhenContractsSatisfied verifies behavior for the covered scenario.
+func TestMoveTaskAllowsDoneWhenContractsSatisfied(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	repo.projects[project.ID] = project
+	progress, _ := domain.NewColumn("c2", project.ID, "In Progress", 1, 0, now)
+	done, _ := domain.NewColumn("c3", project.ID, "Done", 2, 0, now)
+	repo.columns[progress.ID] = progress
+	repo.columns[done.ID] = done
+
+	parent, _ := domain.NewTask(domain.TaskInput{
+		ID:             "t-parent",
+		ProjectID:      project.ID,
+		ColumnID:       progress.ID,
+		Position:       0,
+		Title:          "parent",
+		Priority:       domain.PriorityHigh,
+		LifecycleState: domain.StateProgress,
+		Metadata: domain.TaskMetadata{
+			CompletionContract: domain.CompletionContract{
+				CompletionCriteria: []domain.ChecklistItem{{ID: "c1", Text: "tests green", Done: true}},
+				CompletionChecklist: []domain.ChecklistItem{
+					{ID: "k1", Text: "docs updated", Done: true},
+				},
+				Policy: domain.CompletionPolicy{RequireChildrenDone: true},
+			},
+		},
+	}, now)
+	child, _ := domain.NewTask(domain.TaskInput{
+		ID:             "t-child",
+		ProjectID:      project.ID,
+		ParentID:       parent.ID,
+		ColumnID:       done.ID,
+		Position:       0,
+		Title:          "child",
+		Priority:       domain.PriorityLow,
+		LifecycleState: domain.StateDone,
+	}, now)
+	repo.tasks[parent.ID] = parent
+	repo.tasks[child.ID] = child
+
+	svc := NewService(repo, nil, func() time.Time { return now.Add(time.Minute) }, ServiceConfig{})
+	moved, err := svc.MoveTask(context.Background(), parent.ID, done.ID, 0)
+	if err != nil {
+		t.Fatalf("MoveTask() error = %v", err)
+	}
+	if moved.LifecycleState != domain.StateDone {
+		t.Fatalf("expected done lifecycle state, got %q", moved.LifecycleState)
+	}
+	if moved.CompletedAt == nil {
+		t.Fatal("expected completed_at to be set")
+	}
+}
+
+// TestReparentTaskAndListChildTasks verifies behavior for the covered scenario.
+func TestReparentTaskAndListChildTasks(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	repo.projects[project.ID] = project
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	repo.columns[column.ID] = column
+	parent, _ := domain.NewTask(domain.TaskInput{
+		ID:        "parent",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "parent",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	child, _ := domain.NewTask(domain.TaskInput{
+		ID:        "child",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  1,
+		Title:     "child",
+		Priority:  domain.PriorityLow,
+	}, now)
+	repo.tasks[parent.ID] = parent
+	repo.tasks[child.ID] = child
+
+	svc := NewService(repo, nil, func() time.Time { return now.Add(2 * time.Minute) }, ServiceConfig{})
+	updated, err := svc.ReparentTask(context.Background(), child.ID, parent.ID)
+	if err != nil {
+		t.Fatalf("ReparentTask() error = %v", err)
+	}
+	if updated.ParentID != parent.ID {
+		t.Fatalf("expected parent id %q, got %q", parent.ID, updated.ParentID)
+	}
+	children, err := svc.ListChildTasks(context.Background(), project.ID, parent.ID, false)
+	if err != nil {
+		t.Fatalf("ListChildTasks() error = %v", err)
+	}
+	if len(children) != 1 || children[0].ID != child.ID {
+		t.Fatalf("unexpected child list %#v", children)
+	}
+}
+
+// TestGetProjectDependencyRollup verifies behavior for the covered scenario.
+func TestGetProjectDependencyRollup(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	repo.projects[project.ID] = project
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	repo.columns[column.ID] = column
+
+	readyDep, _ := domain.NewTask(domain.TaskInput{
+		ID:             "dep-ready",
+		ProjectID:      project.ID,
+		ColumnID:       column.ID,
+		Position:       0,
+		Title:          "ready dep",
+		Priority:       domain.PriorityLow,
+		LifecycleState: domain.StateDone,
+	}, now)
+	openDep, _ := domain.NewTask(domain.TaskInput{
+		ID:             "dep-open",
+		ProjectID:      project.ID,
+		ColumnID:       column.ID,
+		Position:       1,
+		Title:          "open dep",
+		Priority:       domain.PriorityLow,
+		LifecycleState: domain.StateProgress,
+	}, now)
+	blocked, _ := domain.NewTask(domain.TaskInput{
+		ID:        "blocked",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  2,
+		Title:     "blocked",
+		Priority:  domain.PriorityMedium,
+		Metadata: domain.TaskMetadata{
+			DependsOn:     []string{"dep-ready", "dep-open", "dep-missing"},
+			BlockedBy:     []string{"dep-open"},
+			BlockedReason: "waiting on review",
+		},
+	}, now)
+
+	repo.tasks[readyDep.ID] = readyDep
+	repo.tasks[openDep.ID] = openDep
+	repo.tasks[blocked.ID] = blocked
+
+	svc := NewService(repo, nil, func() time.Time { return now }, ServiceConfig{})
+	rollup, err := svc.GetProjectDependencyRollup(context.Background(), project.ID)
+	if err != nil {
+		t.Fatalf("GetProjectDependencyRollup() error = %v", err)
+	}
+	if rollup.TotalItems != 3 {
+		t.Fatalf("expected 3 total items, got %d", rollup.TotalItems)
+	}
+	if rollup.ItemsWithDependencies != 1 || rollup.DependencyEdges != 3 {
+		t.Fatalf("unexpected dependency counts %#v", rollup)
+	}
+	if rollup.BlockedItems != 1 || rollup.BlockedByEdges != 1 {
+		t.Fatalf("unexpected blocked counts %#v", rollup)
+	}
+	if rollup.UnresolvedDependencyEdges != 2 {
+		t.Fatalf("expected 2 unresolved dependencies, got %d", rollup.UnresolvedDependencyEdges)
+	}
+}
+
+// TestListProjectChangeEvents verifies behavior for the covered scenario.
+func TestListProjectChangeEvents(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	repo.projects[project.ID] = project
+	repo.changeEvents[project.ID] = []domain.ChangeEvent{
+		{ID: 3, ProjectID: project.ID, WorkItemID: "t1", Operation: domain.ChangeOperationUpdate},
+		{ID: 2, ProjectID: project.ID, WorkItemID: "t1", Operation: domain.ChangeOperationCreate},
+	}
+
+	svc := NewService(repo, nil, func() time.Time { return now }, ServiceConfig{})
+	events, err := svc.ListProjectChangeEvents(context.Background(), project.ID, 1)
+	if err != nil {
+		t.Fatalf("ListProjectChangeEvents() error = %v", err)
+	}
+	if len(events) != 1 || events[0].Operation != domain.ChangeOperationUpdate {
+		t.Fatalf("unexpected events %#v", events)
 	}
 }

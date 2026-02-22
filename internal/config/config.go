@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
+	"time"
 
 	toml "github.com/pelletier/go-toml/v2"
 )
@@ -22,12 +24,16 @@ const (
 
 // Config holds package configuration.
 type Config struct {
-	Database   DatabaseConfig   `toml:"database"`
-	Delete     DeleteConfig     `toml:"delete"`
-	TaskFields TaskFieldsConfig `toml:"task_fields"`
-	Board      BoardConfig      `toml:"board"`
-	Search     SearchConfig     `toml:"search"`
-	Keys       KeyConfig        `toml:"keys"`
+	Database     DatabaseConfig    `toml:"database"`
+	Delete       DeleteConfig      `toml:"delete"`
+	Confirm      ConfirmConfig     `toml:"confirm"`
+	TaskFields   TaskFieldsConfig  `toml:"task_fields"`
+	Board        BoardConfig       `toml:"board"`
+	Search       SearchConfig      `toml:"search"`
+	UI           UIConfig          `toml:"ui"`
+	ProjectRoots map[string]string `toml:"project_roots"`
+	Labels       LabelConfig       `toml:"labels"`
+	Keys         KeyConfig         `toml:"keys"`
 }
 
 // DatabaseConfig holds configuration for database.
@@ -40,6 +46,14 @@ type DeleteConfig struct {
 	DefaultMode DeleteMode `toml:"default_mode"`
 }
 
+// ConfirmConfig holds configuration for confirmation behavior.
+type ConfirmConfig struct {
+	Delete     bool `toml:"delete"`
+	Archive    bool `toml:"archive"`
+	HardDelete bool `toml:"hard_delete"`
+	Restore    bool `toml:"restore"`
+}
+
 // TaskFieldsConfig holds configuration for task fields.
 type TaskFieldsConfig struct {
 	ShowPriority    bool `toml:"show_priority"`
@@ -50,17 +64,8 @@ type TaskFieldsConfig struct {
 
 // BoardConfig holds configuration for board.
 type BoardConfig struct {
-	States          []StateConfig `toml:"states"`
-	ShowWIPWarnings bool          `toml:"show_wip_warnings"`
-	GroupBy         string        `toml:"group_by"` // none | priority | state
-}
-
-// StateConfig holds configuration for state.
-type StateConfig struct {
-	ID       string `toml:"id"`
-	Name     string `toml:"name"`
-	WIPLimit int    `toml:"wip_limit"`
-	Position int    `toml:"position"`
+	ShowWIPWarnings bool   `toml:"show_wip_warnings"`
+	GroupBy         string `toml:"group_by"` // none | priority | state
 }
 
 // SearchConfig holds configuration for search.
@@ -68,6 +73,19 @@ type SearchConfig struct {
 	CrossProject    bool     `toml:"cross_project"`
 	IncludeArchived bool     `toml:"include_archived"`
 	States          []string `toml:"states"`
+}
+
+// UIConfig holds configuration for UI behavior.
+type UIConfig struct {
+	DueSoonWindows []string `toml:"due_soon_windows"`
+	ShowDueSummary bool     `toml:"show_due_summary"`
+}
+
+// LabelConfig holds label suggestion and enforcement configuration.
+type LabelConfig struct {
+	Global         []string            `toml:"global"`
+	Projects       map[string][]string `toml:"projects"`
+	EnforceAllowed bool                `toml:"enforce_allowed"`
 }
 
 // KeyConfig holds configuration for key.
@@ -80,15 +98,6 @@ type KeyConfig struct {
 	Redo           string `toml:"redo"`
 }
 
-// defaultStates returns default states.
-func defaultStates() []StateConfig {
-	return []StateConfig{
-		{ID: "todo", Name: "To Do", WIPLimit: 0, Position: 0},
-		{ID: "progress", Name: "In Progress", WIPLimit: 0, Position: 1},
-		{ID: "done", Name: "Done", WIPLimit: 0, Position: 2},
-	}
-}
-
 // Default returns default the requested value.
 func Default(dbPath string) Config {
 	return Config{
@@ -98,6 +107,12 @@ func Default(dbPath string) Config {
 		Delete: DeleteConfig{
 			DefaultMode: DeleteModeArchive,
 		},
+		Confirm: ConfirmConfig{
+			Delete:     true,
+			Archive:    true,
+			HardDelete: true,
+			Restore:    false,
+		},
 		TaskFields: TaskFieldsConfig{
 			ShowPriority:    true,
 			ShowDueDate:     true,
@@ -105,7 +120,6 @@ func Default(dbPath string) Config {
 			ShowDescription: false,
 		},
 		Board: BoardConfig{
-			States:          defaultStates(),
 			ShowWIPWarnings: true,
 			GroupBy:         "none",
 		},
@@ -114,10 +128,20 @@ func Default(dbPath string) Config {
 			IncludeArchived: false,
 			States:          []string{"todo", "progress", "done"},
 		},
+		UI: UIConfig{
+			DueSoonWindows: []string{"24h", "1h"},
+			ShowDueSummary: true,
+		},
+		ProjectRoots: map[string]string{},
+		Labels: LabelConfig{
+			Global:         []string{},
+			Projects:       map[string][]string{},
+			EnforceAllowed: false,
+		},
 		Keys: KeyConfig{
 			CommandPalette: ":",
 			QuickActions:   ".",
-			MultiSelect:    " ",
+			MultiSelect:    "space",
 			ActivityLog:    "g",
 			Undo:           "z",
 			Redo:           "Z",
@@ -146,6 +170,7 @@ func Load(path string, defaults Config) (Config, error) {
 	if err := toml.Unmarshal(content, &cfg); err != nil {
 		return Config{}, fmt.Errorf("decode toml: %w", err)
 	}
+	cfg.normalize()
 
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
@@ -155,7 +180,7 @@ func Load(path string, defaults Config) (Config, error) {
 }
 
 // Validate validates the requested operation.
-func (c Config) Validate() error {
+func (c *Config) Validate() error {
 	c.Database.Path = strings.TrimSpace(c.Database.Path)
 	if c.Database.Path == "" {
 		return errors.New("database path is required")
@@ -167,54 +192,189 @@ func (c Config) Validate() error {
 		return fmt.Errorf("invalid delete.default_mode: %q", c.Delete.DefaultMode)
 	}
 
-	if len(c.Board.States) == 0 {
-		return errors.New("board.states must include at least one state")
-	}
-	seenStateID := map[string]struct{}{}
-	for idx := range c.Board.States {
-		state := c.Board.States[idx]
-		state.ID = strings.TrimSpace(strings.ToLower(state.ID))
-		state.Name = strings.TrimSpace(state.Name)
-		if state.ID == "" {
-			return fmt.Errorf("board.states[%d].id is required", idx)
-		}
-		if state.Name == "" {
-			return fmt.Errorf("board.states[%d].name is required", idx)
-		}
-		if state.WIPLimit < 0 {
-			return fmt.Errorf("board.states[%d].wip_limit must be >= 0", idx)
-		}
-		if state.Position < 0 {
-			return fmt.Errorf("board.states[%d].position must be >= 0", idx)
-		}
-		if _, ok := seenStateID[state.ID]; ok {
-			return fmt.Errorf("board.states[%d].id is duplicated: %s", idx, state.ID)
-		}
-		seenStateID[state.ID] = struct{}{}
-		c.Board.States[idx] = state
-	}
 	switch strings.TrimSpace(strings.ToLower(c.Board.GroupBy)) {
 	case "", "none", "priority", "state":
 	default:
 		return fmt.Errorf("invalid board.group_by: %q", c.Board.GroupBy)
 	}
 
-	knownStates := make([]string, 0, len(c.Board.States)+1)
-	for _, state := range c.Board.States {
-		knownStates = append(knownStates, state.ID)
-	}
-	knownStates = append(knownStates, "archived")
 	for i, state := range c.Search.States {
-		s := strings.TrimSpace(strings.ToLower(state))
-		if s == "" {
+		if !isKnownLifecycleState(state) {
+			return fmt.Errorf("search.states[%d] references unknown state %q", i, state)
+		}
+	}
+
+	for i, raw := range c.UI.DueSoonWindows {
+		window := strings.TrimSpace(raw)
+		if window == "" {
 			continue
 		}
-		if !slices.Contains(knownStates, s) {
-			return fmt.Errorf("search.states[%d] references unknown state %q", i, s)
+		d, err := time.ParseDuration(window)
+		if err != nil {
+			return fmt.Errorf("ui.due_soon_windows[%d] invalid duration %q", i, raw)
+		}
+		if d <= 0 {
+			return fmt.Errorf("ui.due_soon_windows[%d] must be > 0", i)
+		}
+	}
+	for key, rootPath := range c.ProjectRoots {
+		if strings.TrimSpace(key) == "" {
+			return errors.New("project_roots contains an empty key")
+		}
+		if strings.TrimSpace(rootPath) == "" {
+			return fmt.Errorf("project_roots.%s path is empty", key)
+		}
+	}
+	for projectSlug, labels := range c.Labels.Projects {
+		if strings.TrimSpace(projectSlug) == "" {
+			return errors.New("labels.projects contains an empty project key")
+		}
+		for i, label := range labels {
+			if strings.TrimSpace(label) == "" {
+				return fmt.Errorf("labels.projects.%s[%d] is empty", projectSlug, i)
+			}
 		}
 	}
 
 	return nil
+}
+
+// DueSoonDurations handles due soon durations.
+func (c Config) DueSoonDurations() []time.Duration {
+	out := make([]time.Duration, 0, len(c.UI.DueSoonWindows))
+	seen := map[time.Duration]struct{}{}
+	for _, raw := range c.UI.DueSoonWindows {
+		s := strings.TrimSpace(strings.ToLower(raw))
+		if s == "" {
+			continue
+		}
+		d, err := time.ParseDuration(s)
+		if err != nil || d <= 0 {
+			continue
+		}
+		if _, ok := seen[d]; ok {
+			continue
+		}
+		seen[d] = struct{}{}
+		out = append(out, d)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i] < out[j]
+	})
+	return out
+}
+
+// AllowedLabels returns normalized allowed label suggestions for a project slug.
+func (c Config) AllowedLabels(projectSlug string) []string {
+	projectSlug = strings.TrimSpace(strings.ToLower(projectSlug))
+	out := make([]string, 0)
+	seen := map[string]struct{}{}
+	appendUnique := func(values []string) {
+		for _, value := range values {
+			label := strings.TrimSpace(strings.ToLower(value))
+			if label == "" {
+				continue
+			}
+			if _, ok := seen[label]; ok {
+				continue
+			}
+			seen[label] = struct{}{}
+			out = append(out, label)
+		}
+	}
+	appendUnique(c.Labels.Global)
+	if labels, ok := c.Labels.Projects[projectSlug]; ok {
+		appendUnique(labels)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// normalize canonicalizes config slices/maps after defaults + TOML overlay.
+func (c *Config) normalize() {
+	states := make([]string, 0, len(c.Search.States))
+	seenStates := map[string]struct{}{}
+	for _, raw := range c.Search.States {
+		state := strings.TrimSpace(strings.ToLower(raw))
+		if state == "" {
+			continue
+		}
+		if _, ok := seenStates[state]; ok {
+			continue
+		}
+		seenStates[state] = struct{}{}
+		states = append(states, state)
+	}
+	if len(states) == 0 {
+		states = []string{"todo", "progress", "done"}
+	}
+	c.Search.States = states
+
+	windows := make([]string, 0, len(c.UI.DueSoonWindows))
+	seenWindows := map[string]struct{}{}
+	for _, raw := range c.UI.DueSoonWindows {
+		window := strings.TrimSpace(strings.ToLower(raw))
+		if window == "" {
+			continue
+		}
+		if _, ok := seenWindows[window]; ok {
+			continue
+		}
+		seenWindows[window] = struct{}{}
+		windows = append(windows, window)
+	}
+	if len(windows) == 0 {
+		windows = []string{"24h", "1h"}
+	}
+	c.UI.DueSoonWindows = windows
+
+	roots := make(map[string]string, len(c.ProjectRoots))
+	for rawKey, rawPath := range c.ProjectRoots {
+		key := strings.TrimSpace(strings.ToLower(rawKey))
+		path := strings.TrimSpace(rawPath)
+		if key == "" || path == "" {
+			continue
+		}
+		roots[key] = path
+	}
+	c.ProjectRoots = roots
+
+	c.Labels.Global = normalizeLabelConfigList(c.Labels.Global)
+	projectLabels := make(map[string][]string, len(c.Labels.Projects))
+	for rawKey, labels := range c.Labels.Projects {
+		key := strings.TrimSpace(strings.ToLower(rawKey))
+		if key == "" {
+			continue
+		}
+		projectLabels[key] = normalizeLabelConfigList(labels)
+	}
+	c.Labels.Projects = projectLabels
+
+	c.Keys.CommandPalette = normalizeKeyBinding(c.Keys.CommandPalette, ":")
+	c.Keys.QuickActions = normalizeKeyBinding(c.Keys.QuickActions, ".")
+	c.Keys.MultiSelect = normalizeKeyBinding(c.Keys.MultiSelect, "space")
+	c.Keys.ActivityLog = normalizeKeyBinding(c.Keys.ActivityLog, "g")
+	c.Keys.Undo = normalizeKeyBinding(c.Keys.Undo, "z")
+	c.Keys.Redo = normalizeKeyBinding(c.Keys.Redo, "Z")
+}
+
+// normalizeLabelConfigList trims, lowercases, and deduplicates label config entries.
+func normalizeLabelConfigList(in []string) []string {
+	out := make([]string, 0, len(in))
+	seen := map[string]struct{}{}
+	for _, raw := range in {
+		label := strings.TrimSpace(strings.ToLower(raw))
+		if label == "" {
+			continue
+		}
+		if _, ok := seen[label]; ok {
+			continue
+		}
+		seen[label] = struct{}{}
+		out = append(out, label)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // EnsureConfigDir ensures config dir.
@@ -224,4 +384,18 @@ func EnsureConfigDir(path string) error {
 		return nil
 	}
 	return os.MkdirAll(dir, 0o755)
+}
+
+// isKnownLifecycleState reports whether the requested condition is satisfied.
+func isKnownLifecycleState(state string) bool {
+	return slices.Contains([]string{"todo", "progress", "done", "archived"}, state)
+}
+
+// normalizeKeyBinding trims keybinding text and applies fallback defaults.
+func normalizeKeyBinding(raw, fallback string) string {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return fallback
+	}
+	return value
 }

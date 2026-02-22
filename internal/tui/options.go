@@ -1,6 +1,11 @@
 package tui
 
-import "github.com/evanschultz/kan/internal/app"
+import (
+	"strings"
+	"time"
+
+	"github.com/evanschultz/kan/internal/app"
+)
 
 // TaskFieldConfig holds configuration for task field.
 type TaskFieldConfig struct {
@@ -15,6 +20,43 @@ type SearchConfig struct {
 	CrossProject    bool
 	IncludeArchived bool
 	States          []string
+}
+
+// ConfirmConfig holds confirmation behavior flags.
+type ConfirmConfig struct {
+	Delete     bool
+	Archive    bool
+	HardDelete bool
+	Restore    bool
+}
+
+// BoardConfig holds board rendering behavior settings.
+type BoardConfig struct {
+	ShowWIPWarnings bool
+	GroupBy         string
+}
+
+// UIConfig holds general UI behavior settings.
+type UIConfig struct {
+	DueSoonWindows []time.Duration
+	ShowDueSummary bool
+}
+
+// KeyConfig holds configurable keybinding settings.
+type KeyConfig struct {
+	CommandPalette string
+	QuickActions   string
+	MultiSelect    string
+	ActivityLog    string
+	Undo           string
+	Redo           string
+}
+
+// LabelConfig holds label suggestion and enforcement settings.
+type LabelConfig struct {
+	Global         []string
+	Projects       map[string][]string
+	EnforceAllowed bool
 }
 
 // Option defines a functional option for model configuration.
@@ -50,10 +92,83 @@ func WithDefaultDeleteMode(mode app.DeleteMode) Option {
 // WithSearchConfig returns an option that sets search config.
 func WithSearchConfig(cfg SearchConfig) Option {
 	return func(m *Model) {
+		m.searchDefaultCrossProject = cfg.CrossProject
+		m.searchDefaultIncludeArchive = cfg.IncludeArchived
 		m.searchCrossProject = cfg.CrossProject
 		m.showArchived = cfg.IncludeArchived
 		if len(cfg.States) > 0 {
-			m.searchStates = append([]string(nil), cfg.States...)
+			m.searchDefaultStates = canonicalSearchStates(cfg.States)
+			m.searchStates = append([]string(nil), m.searchDefaultStates...)
+		} else {
+			m.searchDefaultStates = []string{"todo", "progress", "done"}
+			m.searchStates = append([]string(nil), m.searchDefaultStates...)
 		}
+	}
+}
+
+// WithConfirmConfig returns an option that sets confirmation behavior.
+func WithConfirmConfig(cfg ConfirmConfig) Option {
+	return func(m *Model) {
+		m.confirmDelete = cfg.Delete
+		m.confirmArchive = cfg.Archive
+		m.confirmHardDelete = cfg.HardDelete
+		m.confirmRestore = cfg.Restore
+	}
+}
+
+// WithBoardConfig returns an option that sets board rendering behavior.
+func WithBoardConfig(cfg BoardConfig) Option {
+	return func(m *Model) {
+		m.showWIPWarnings = cfg.ShowWIPWarnings
+		switch normalizeBoardGroupBy(cfg.GroupBy) {
+		case "priority", "state":
+			m.boardGroupBy = normalizeBoardGroupBy(cfg.GroupBy)
+		default:
+			m.boardGroupBy = "none"
+		}
+	}
+}
+
+// WithUIConfig returns an option that sets UI behavior.
+func WithUIConfig(cfg UIConfig) Option {
+	return func(m *Model) {
+		if len(cfg.DueSoonWindows) > 0 {
+			m.dueSoonWindows = append([]time.Duration(nil), cfg.DueSoonWindows...)
+		}
+		m.showDueSummary = cfg.ShowDueSummary
+	}
+}
+
+// WithLabelConfig returns an option that sets label config behavior.
+func WithLabelConfig(cfg LabelConfig) Option {
+	return func(m *Model) {
+		m.allowedLabelGlobal = append([]string(nil), cfg.Global...)
+		m.allowedLabelProject = map[string][]string{}
+		for project, labels := range cfg.Projects {
+			m.allowedLabelProject[project] = append([]string(nil), labels...)
+		}
+		m.enforceAllowedLabels = cfg.EnforceAllowed
+	}
+}
+
+// WithProjectRoots returns an option that configures per-project filesystem roots.
+func WithProjectRoots(projectRoots map[string]string) Option {
+	return func(m *Model) {
+		m.projectRoots = map[string]string{}
+		for rawSlug, rawPath := range projectRoots {
+			slug := strings.TrimSpace(strings.ToLower(rawSlug))
+			path := strings.TrimSpace(rawPath)
+			if slug == "" || path == "" {
+				continue
+			}
+			m.projectRoots[slug] = path
+		}
+	}
+}
+
+// WithKeyConfig returns an option that configures keybindings.
+func WithKeyConfig(cfg KeyConfig) Option {
+	return func(m *Model) {
+		m.keys.applyConfig(cfg)
 	}
 }

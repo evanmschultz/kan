@@ -3,8 +3,8 @@
 ╭────────────────────────────────────────╮
 │                                        │
 │  To Do (1)                             │
-│  > │ Help Golden Task                  │
-│    │ [low]                             │
+│  │  Help Golden Task                   │
+│  │  [low]                              │
 │                                        │
 │                                        │
 │                                        │
@@ -21,30 +21,35 @@
 │                                        │
 │                                        │
 ╰────────────────────────────────────────╯
-project: Inbox • tasks: 1 • selected: Help Golden Task[4B n new task • i/enter task info • e edit task • N new project • : command palette …M[J[H    ╭──────────────────────────────────────────────────────────────────────────────────────╮
+project: Inbox • tasks: 1 • selected: Help Golden Task
+deps: total 1 • blocked 0 • unresolved 0 • edges 0
+0 overdue * 0 due soon
+
+ n new task • s new subtask • i/enter task info • e edit task • f focus subtree …[H    ╭──────────────────────────────────────────────────────────────────────────────────────╮
 [4C│ KAN Help                                                                             │
     │ Fang-style command reference                                                         │
     │                                                                                      │
-    │ n       new task           h/← column left        d delete (default)                 │
-    │ i/enter task info          l/→ column right       a archive task                     │
-    │ e       edit task          k/↑ task up            D hard delete                      │
-    │ N       new project        j/↓ task down          u restore task                     │
-    │ M       edit project       [   move task left                                        │
-    │ :       command palette    ]   move task right                                       │
-    │ .       quick actions                                                                │
+    │ n       new task           h/← column left        d     delete (default)             │
+    │ s       new subtask        l/→ column right       a     archive task                 │
+    │ i/enter task info          k/↑ task up            D     hard delete                  │
+    │ e       edit task          j/↓ task down          u     restore task                 │
+    │ N       new project        [   move task left     space toggle select                │
+    │ M       edit project       ]   move task right    z     undo                         │
+    │ :       command palette                           Z     redo                         │
+    │ .       quick actions                             g     activity log                 │
     │ /       search                                                                       │
     │ p/P     project picker                                                               │
     │ t       toggle archived                                                              │
+    │ f       focus subtree                                                                │
+    │ F       full board                                                                   │
     │ ?       toggle help                                                                  │
     │ r       reload                                                                       │
     │ q       quit                                                                         │
     │                                                                                      │
     │ Workflows                                                                            │
-    │ 1. n add task  •  i/enter view task  •  e edit task                                  │
-    │ 2. [ ] move task across states  •  d/a/D delete modes                                │
-    │ 3. N new project  •  M edit project  •  p switch project                             │
-    │ 4. / search (tab fields, ctrl+p scope, ctrl+a archived)                              │
-    │ 5. : command palette  •  . quick actions                                             │
-[4C│ 6. task form: h/l priority picker  •  ctrl+d/D due picker                            │
-[4C│ press ? or esc to close                                                              │
-[4C╰──────────────────────────────────────────────────────────────────────────────────────╯[?1049l[?25h[?2004l[?1002l[?1003l[?1006l[=0;1u
+    │ 1. n add task  •  s add subtask  •  i/enter view task  •  e edit task                │
+    │ 2. space toggle select  •  . quick actions / : command palette for bulk actions      │
+    │ 3. [ ] move task across states  •  d/a/D/u actions use confirmations                 │
+    │ 4. f focus selected subtree  •  F return full board  •  breadcrumb shows active      │
+[4C│ focus                                                                                │
+    │ 5. z undo  •  Z redo  •  g activity log                                              │[?1049l[?25h[?2004l[?1002l[?1003l[?1006l[=0;1u

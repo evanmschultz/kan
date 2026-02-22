@@ -175,13 +175,19 @@ func (s *Service) CreateColumn(ctx context.Context, projectID, name string, posi
 
 // CreateTaskInput holds input values for create task operations.
 type CreateTaskInput struct {
-	ProjectID   string
-	ColumnID    string
-	Title       string
-	Description string
-	Priority    domain.Priority
-	DueAt       *time.Time
-	Labels      []string
+	ProjectID      string
+	ParentID       string
+	Kind           domain.WorkKind
+	ColumnID       string
+	Title          string
+	Description    string
+	Priority       domain.Priority
+	DueAt          *time.Time
+	Labels         []string
+	Metadata       domain.TaskMetadata
+	CreatedByActor string
+	UpdatedByActor string
+	UpdatedByType  domain.ActorType
 }
 
 // UpdateTaskInput holds input values for update task operations.
@@ -192,6 +198,9 @@ type UpdateTaskInput struct {
 	Priority    domain.Priority
 	DueAt       *time.Time
 	Labels      []string
+	Metadata    *domain.TaskMetadata
+	UpdatedBy   string
+	UpdatedType domain.ActorType
 }
 
 // SearchTasksFilter defines filtering criteria for queries.
@@ -216,6 +225,14 @@ func (s *Service) CreateTask(ctx context.Context, in CreateTaskInput) (domain.Ta
 	if err != nil {
 		return domain.Task{}, err
 	}
+	columns, err := s.repo.ListColumns(ctx, in.ProjectID, true)
+	if err != nil {
+		return domain.Task{}, err
+	}
+	lifecycleState := lifecycleStateForColumnID(columns, in.ColumnID)
+	if lifecycleState == "" {
+		lifecycleState = domain.StateTodo
+	}
 	position := 0
 	for _, t := range tasks {
 		if t.ColumnID == in.ColumnID && t.Position >= position {
@@ -224,15 +241,22 @@ func (s *Service) CreateTask(ctx context.Context, in CreateTaskInput) (domain.Ta
 	}
 
 	task, err := domain.NewTask(domain.TaskInput{
-		ID:          s.idGen(),
-		ProjectID:   in.ProjectID,
-		ColumnID:    in.ColumnID,
-		Position:    position,
-		Title:       in.Title,
-		Description: in.Description,
-		Priority:    in.Priority,
-		DueAt:       in.DueAt,
-		Labels:      in.Labels,
+		ID:             s.idGen(),
+		ProjectID:      in.ProjectID,
+		ParentID:       in.ParentID,
+		Kind:           in.Kind,
+		LifecycleState: lifecycleState,
+		ColumnID:       in.ColumnID,
+		Position:       position,
+		Title:          in.Title,
+		Description:    in.Description,
+		Priority:       in.Priority,
+		DueAt:          in.DueAt,
+		Labels:         in.Labels,
+		Metadata:       in.Metadata,
+		CreatedByActor: in.CreatedByActor,
+		UpdatedByActor: in.UpdatedByActor,
+		UpdatedByType:  in.UpdatedByType,
 	}, s.clock())
 	if err != nil {
 		return domain.Task{}, err
@@ -250,7 +274,42 @@ func (s *Service) MoveTask(ctx context.Context, taskID, toColumnID string, posit
 	if err != nil {
 		return domain.Task{}, err
 	}
+	columns, err := s.repo.ListColumns(ctx, task.ProjectID, true)
+	if err != nil {
+		return domain.Task{}, err
+	}
+	fromState := lifecycleStateForColumnID(columns, task.ColumnID)
+	if fromState == "" {
+		fromState = task.LifecycleState
+	}
+	toState := lifecycleStateForColumnID(columns, toColumnID)
+	if toState == "" {
+		toState = fromState
+	}
+	if fromState == domain.StateTodo && toState == domain.StateProgress {
+		if unmet := task.StartCriteriaUnmet(); len(unmet) > 0 {
+			return domain.Task{}, fmt.Errorf("%w: start criteria unmet (%s)", domain.ErrTransitionBlocked, strings.Join(unmet, ", "))
+		}
+	}
+	if fromState == domain.StateProgress && toState == domain.StateDone {
+		projectTasks, listErr := s.repo.ListTasks(ctx, task.ProjectID, true)
+		if listErr != nil {
+			return domain.Task{}, listErr
+		}
+		children := make([]domain.Task, 0)
+		for _, candidate := range projectTasks {
+			if candidate.ParentID == task.ID {
+				children = append(children, candidate)
+			}
+		}
+		if unmet := task.CompletionCriteriaUnmet(children); len(unmet) > 0 {
+			return domain.Task{}, fmt.Errorf("%w: completion criteria unmet (%s)", domain.ErrTransitionBlocked, strings.Join(unmet, ", "))
+		}
+	}
 	if err := task.Move(toColumnID, position, s.clock()); err != nil {
+		return domain.Task{}, err
+	}
+	if err := task.SetLifecycleState(toState, s.clock()); err != nil {
 		return domain.Task{}, err
 	}
 	if err := s.repo.UpdateTask(ctx, task); err != nil {
@@ -266,6 +325,17 @@ func (s *Service) RestoreTask(ctx context.Context, taskID string) (domain.Task, 
 		return domain.Task{}, err
 	}
 	task.Restore(s.clock())
+	columns, err := s.repo.ListColumns(ctx, task.ProjectID, true)
+	if err != nil {
+		return domain.Task{}, err
+	}
+	restoredState := lifecycleStateForColumnID(columns, task.ColumnID)
+	if restoredState == "" {
+		restoredState = domain.StateTodo
+	}
+	if err := task.SetLifecycleState(restoredState, s.clock()); err != nil {
+		return domain.Task{}, err
+	}
 	if err := s.repo.UpdateTask(ctx, task); err != nil {
 		return domain.Task{}, err
 	}
@@ -295,6 +365,15 @@ func (s *Service) UpdateTask(ctx context.Context, in UpdateTaskInput) (domain.Ta
 	}
 	if err := task.UpdateDetails(in.Title, in.Description, in.Priority, in.DueAt, in.Labels, s.clock()); err != nil {
 		return domain.Task{}, err
+	}
+	if in.Metadata != nil {
+		actorType := in.UpdatedType
+		if actorType == "" {
+			actorType = domain.ActorTypeUser
+		}
+		if err := task.UpdatePlanningMetadata(*in.Metadata, in.UpdatedBy, actorType, s.clock()); err != nil {
+			return domain.Task{}, err
+		}
 	}
 	if err := s.repo.UpdateTask(ctx, task); err != nil {
 		return domain.Task{}, err
@@ -353,6 +432,74 @@ func (s *Service) ListTasks(ctx context.Context, projectID string, includeArchiv
 		return strings.Compare(a.ColumnID, b.ColumnID)
 	})
 	return tasks, nil
+}
+
+// ListProjectChangeEvents lists recent change events for a project.
+func (s *Service) ListProjectChangeEvents(ctx context.Context, projectID string, limit int) ([]domain.ChangeEvent, error) {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return nil, domain.ErrInvalidID
+	}
+	return s.repo.ListProjectChangeEvents(ctx, projectID, limit)
+}
+
+// GetProjectDependencyRollup summarizes dependency and blocked-state counts.
+func (s *Service) GetProjectDependencyRollup(ctx context.Context, projectID string) (domain.DependencyRollup, error) {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return domain.DependencyRollup{}, domain.ErrInvalidID
+	}
+	if _, err := s.repo.GetProject(ctx, projectID); err != nil {
+		return domain.DependencyRollup{}, err
+	}
+	tasks, err := s.repo.ListTasks(ctx, projectID, false)
+	if err != nil {
+		return domain.DependencyRollup{}, err
+	}
+	return buildDependencyRollup(projectID, tasks), nil
+}
+
+// ListChildTasks lists child tasks for a parent within the same project.
+func (s *Service) ListChildTasks(ctx context.Context, projectID, parentID string, includeArchived bool) ([]domain.Task, error) {
+	parentID = strings.TrimSpace(parentID)
+	if parentID == "" {
+		return nil, domain.ErrInvalidParentID
+	}
+	tasks, err := s.ListTasks(ctx, projectID, includeArchived)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]domain.Task, 0)
+	for _, task := range tasks {
+		if task.ParentID == parentID {
+			out = append(out, task)
+		}
+	}
+	return out, nil
+}
+
+// ReparentTask changes parent task relationship.
+func (s *Service) ReparentTask(ctx context.Context, taskID, parentID string) (domain.Task, error) {
+	task, err := s.repo.GetTask(ctx, taskID)
+	if err != nil {
+		return domain.Task{}, err
+	}
+	if parentID != "" {
+		parent, parentErr := s.repo.GetTask(ctx, parentID)
+		if parentErr != nil {
+			return domain.Task{}, parentErr
+		}
+		if parent.ProjectID != task.ProjectID {
+			return domain.Task{}, domain.ErrInvalidParentID
+		}
+	}
+	if err := task.Reparent(parentID, s.clock()); err != nil {
+		return domain.Task{}, err
+	}
+	if err := s.repo.UpdateTask(ctx, task); err != nil {
+		return domain.Task{}, err
+	}
+	return task, nil
 }
 
 // SearchTasks handles search tasks.
@@ -439,7 +586,10 @@ func (s *Service) SearchTaskMatches(ctx context.Context, in SearchTasksFilter) (
 		for _, task := range tasks {
 			stateID := stateByColumn[task.ColumnID]
 			if stateID == "" {
-				stateID = "unknown"
+				stateID = string(task.LifecycleState)
+			}
+			if stateID == "" {
+				stateID = "todo"
 			}
 			if task.ArchivedAt != nil {
 				if !in.IncludeArchived || !wantsArchivedState {
@@ -495,6 +645,58 @@ func labelsContainQuery(labels []string, query string) bool {
 		}
 	}
 	return false
+}
+
+// buildDependencyRollup computes aggregate dependency and blocked-state counts.
+func buildDependencyRollup(projectID string, tasks []domain.Task) domain.DependencyRollup {
+	rollup := domain.DependencyRollup{
+		ProjectID:  projectID,
+		TotalItems: len(tasks),
+	}
+	stateByID := make(map[string]domain.LifecycleState, len(tasks))
+	for _, task := range tasks {
+		stateByID[task.ID] = task.LifecycleState
+	}
+	for _, task := range tasks {
+		dependsOn := uniqueNonEmptyIDs(task.Metadata.DependsOn)
+		blockedBy := uniqueNonEmptyIDs(task.Metadata.BlockedBy)
+
+		if len(dependsOn) > 0 {
+			rollup.ItemsWithDependencies++
+			rollup.DependencyEdges += len(dependsOn)
+		}
+		if len(blockedBy) > 0 || strings.TrimSpace(task.Metadata.BlockedReason) != "" {
+			rollup.BlockedItems++
+		}
+		rollup.BlockedByEdges += len(blockedBy)
+
+		// Dependencies are unresolved when the target is missing or not done.
+		for _, depID := range dependsOn {
+			state, ok := stateByID[depID]
+			if !ok || state != domain.StateDone {
+				rollup.UnresolvedDependencyEdges++
+			}
+		}
+	}
+	return rollup
+}
+
+// uniqueNonEmptyIDs trims and de-duplicates IDs while preserving order.
+func uniqueNonEmptyIDs(in []string) []string {
+	out := make([]string, 0, len(in))
+	seen := map[string]struct{}{}
+	for _, raw := range in {
+		id := strings.TrimSpace(raw)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
 }
 
 // defaultStateTemplates returns default state templates.
@@ -578,6 +780,28 @@ func normalizeStateID(name string) string {
 	default:
 		return normalized
 	}
+}
+
+// lifecycleStateForColumnID resolves canonical lifecycle state for a column.
+func lifecycleStateForColumnID(columns []domain.Column, columnID string) domain.LifecycleState {
+	for _, column := range columns {
+		if column.ID != columnID {
+			continue
+		}
+		switch normalizeStateID(column.Name) {
+		case "todo":
+			return domain.StateTodo
+		case "progress":
+			return domain.StateProgress
+		case "done":
+			return domain.StateDone
+		case "archived":
+			return domain.StateArchived
+		default:
+			return domain.StateTodo
+		}
+	}
+	return ""
 }
 
 // createDefaultColumns creates default columns.

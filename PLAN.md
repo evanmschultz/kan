@@ -7,6 +7,10 @@ Execution gate: Planning update only in this step (no code changes)
 ## 1) Product Goal
 Build a polished, Charm-style Kanban TUI with local SQLite persistence, multiple projects, customizable columns, strong keyboard support (`vim` + arrows), mouse support, and cross-platform releases (macOS/Linux/Windows).
 
+Scope guard:
+- Pre-Phase-11 implementation is local/TUI-first.
+- MCP/HTTP integration and external system sync are roadmap-only and intentionally deferred.
+
 ## 2) Confirmed Decisions
 - UI stack: Bubble Tea v2 + Bubbles v2 + Lip Gloss v2.
 - Start point: use `bubbletea-app-template` as architecture seed, then expand.
@@ -21,6 +25,12 @@ Build a polished, Charm-style Kanban TUI with local SQLite persistence, multiple
 - CI target OS: macOS, Linux, Windows (manual dev testing on macOS).
 - Quality requirement: Teatest included for TUI behavior tests.
 - Tooling requirement: use `just` recipes as the primary dev/CI interface.
+- Kan is the authoritative planning source in current scope.
+- External integrations (Git, GitHub, Jira, Slack, etc.) are roadmap-only; do not design/block current implementation around them.
+- Logging baseline is in current scope:
+  - use `github.com/charmbracelet/log`,
+  - keep styled local console logs,
+  - support dev-mode workspace log files under `.kan/log/`.
 - Canonical lifecycle states are fixed and non-configurable for now:
   - `todo`, `progress`, `done`, `archived`.
 - UI display labels for lifecycle states are fixed:
@@ -29,6 +39,28 @@ Build a polished, Charm-style Kanban TUI with local SQLite persistence, multiple
 - Completion contracts are required across all work-item levels (phase/task/subtask/etc):
   - transition into `progress` and `done` must evaluate contract criteria.
   - LLM-driven transitions must receive contract context and validation feedback.
+- Workspace linking model is intentionally simple:
+  - `workspace_linked = true|false` at project scope.
+  - no extra "automation-ready" state in pre-Phase-11.
+- Import safety policy (pre-Phase-11):
+  - never export absolute paths.
+  - import fails if referenced relative file/dir resources cannot be resolved from mapped roots.
+  - advanced divergence reconciliation is roadmap-only.
+
+## 2.1) Worklog Governance (Locked)
+- `PLAN.md` is the only active execution/worklog ledger for this repository.
+- `PRE_PHASE11_CLOSEOUT_DISCUSSION.md` is a decision register and discussion memory artifact, not a step-by-step execution ledger.
+- In parallel/subagent mode, only the orchestrator/integrator writes lock ownership, checkpoint progression, and completion state in `PLAN.md`.
+- Worker subagents provide evidence handoffs; the orchestrator ingests those into `PLAN.md`.
+- Every checkpoint entry in `PLAN.md` must include:
+  - objective and lane/checkpoint id,
+  - files touched and why,
+  - commands run,
+  - test/check outcomes (or explicit `test_not_applicable` with reason),
+  - failures/remediation,
+  - current status and next step.
+- No lane is marked complete without acceptance evidence and verification notes.
+- No wave is marked complete without integrator closeout and successful `just ci`.
 
 ## 3) Open Decisions To Lock Before Coding
 No open decisions. Locked defaults:
@@ -611,7 +643,33 @@ Goal: capture all edits with provenance and prepare incremental sync semantics f
   - "agent changed Y"
   - "system changed Z".
 
-### Phase 10.4: Authorization Model and Dangerous Mode Policy
+### Phase 10.4: Attention Signals and Branch-Scoped Delivery Contract
+- Add first-class attention fields on work items:
+  - `attention_state` enum: `none|note|unresolved`.
+  - `attention_note`.
+  - `attention_set_by`, `attention_set_at`.
+  - `attention_cleared_by`, `attention_cleared_at`.
+- Delivery contract for future branch-context reads:
+  - always return `changes_since_cursor` for all meaningful edits at or below the requested branch scope.
+  - always return `active_attention_items` (open `note|unresolved`) in the same response.
+- Event-noise policy:
+  - emit events for committed mutations only (`save`, `move`, `transition`, `archive`, `restore`, `delete`, contract/policy updates).
+  - never emit per-keystroke modal typing events.
+- Cursor/ack semantics:
+  - cursor scope is `(agent_id, branch_id)`.
+  - cursor advances only on explicit ack.
+  - no ack means deterministic resend of the same unseen delta set.
+- Session identifiers:
+  - `session_id` may be carried optionally for diagnostics.
+  - correctness and delivery guarantees are branch-scoped and do not require session affinity.
+- Active-attention shape:
+  - one active attention record per work item (`state + note + audit metadata`).
+  - many items may be concurrently flagged; item-level history remains in `change_events`.
+- Default transition gate:
+  - `attention_state=unresolved` blocks `progress -> done` by default.
+  - explicit override remains policy-controlled and must be actor-attributed with reason.
+
+### Phase 10.5: Authorization Model and Dangerous Mode Policy
 - Default-safe authorization policy:
   - agent destructive actions require user approval by default.
   - agent transitions into `progress` and `done` require completion-contract validation by default.
@@ -635,9 +693,29 @@ Goal: capture all edits with provenance and prepare incremental sync semantics f
 - Per-agent cursor model is defined and testable locally.
 - Delta payload contract is documented for later MCP implementation.
 - Authorization policy and dangerous-mode config are validated and documented.
+- Attention state model and branch-scoped delivery contract are documented for MCP-phase implementation.
 
 ## Phase 11: MCP/HTTP Integration Roadmap (Not Implemented Yet)
 Goal: define the path to expose this system as an MCP-capable planning backend.
+
+### Phase 11.0: Mandatory Research/Design Gate (No Build Yet)
+- Before any MCP implementation work in this phase:
+  - run a focused design review on `mcp-go` + stateless HTTP-served MCP architecture.
+  - map the MCP adapter shape to existing hexagonal boundaries (app core remains transport-agnostic).
+  - validate that the schema/contracts already locked in Phases 7-10 satisfy this adapter model.
+- Research/discussion scope to explicitly cover:
+  - dynamic tool discovery/update behavior and payload implications:
+    - https://modelcontextprotocol.io/legacy/concepts/tools#tool-discovery-and-updates
+  - tool-loading strategy for minimizing context-window overhead.
+  - branch-scoped delta and attention delivery behavior in MCP responses.
+- Dogfooding requirement:
+  - this MCP slice must be planned so `kan` can be used to dogfood the broader system this project will belong to.
+- Open questions to settle before coding 11.1+:
+  - stateless request contract shape and cursor/ack lifecycle details.
+  - whether any session metadata is needed beyond diagnostics.
+  - dynamic tool refresh triggers and compatibility constraints for clients.
+- Implementation guard:
+  - do not start 11.1+ implementation until this 11.0 review/discussion is complete and documented.
 
 ### Phase 11.1: Transport and API Boundaries
 - Keep app core transport-agnostic; expose use cases through ports.
@@ -648,11 +726,15 @@ Goal: define the path to expose this system as an MCP-capable planning backend.
 
 ### Phase 11.2: Candidate MCP Tool Surface (Roadmap)
 - `list_projects`
+- `list_branches`
 - `get_project_context`
+- `get_branch_context`
 - `search_items`
 - `get_item_context`
 - `create_item` / `update_item`
 - `append_memory_node`
+- `set_attention_state`
+- `clear_attention_state`
 - `list_changes_since`
 - `ack_changes`.
 
@@ -664,6 +746,26 @@ Goal: define the path to expose this system as an MCP-capable planning backend.
   - redaction pipeline for known secret patterns in notes/resources.
 - Context budgets:
   - ranked/truncated context blocks with deterministic priority.
+
+### Phase 11.4: Delivery and Attention Defaults (Locked)
+- Cursor advancement:
+  - `ack_changes` is the canonical cursor-advance mechanism.
+  - `get_branch_context` must not advance cursor unless an explicit ack behavior is requested by contract.
+- Attention gating:
+  - unresolved attention blocks `progress -> done` by default.
+  - policy may allow explicit override with required actor-attributed reason.
+- Attention cardinality:
+  - one active attention record per work item.
+  - event history captures prior set/clear operations.
+- Branch-context delta scope:
+  - include branch and descendants changes since cursor.
+  - include project-level/config changes only when they affect branch execution context.
+  - exclude unrelated project/global chatter from default payloads.
+- Agent attention defaults:
+  - agents can set `note|unresolved` by default.
+  - clearing `unresolved` requires user approval by default (configurable).
+- Session metadata:
+  - optional diagnostics only; never correctness-critical.
 
 ### Phase 11 Acceptance
 - Clear API/tool contracts exist before network implementation.
@@ -679,11 +781,16 @@ Goal: define the path to expose this system as an MCP-capable planning backend.
 - Label scope:
   - project + phase first, item-level ad hoc later.
 - Actor attribution:
-  - always capture `actor_type`; optional `actor_id` and `session_id`.
+  - always capture `actor_type`; require `actor_id` for writes; optional `session_id` for diagnostics only.
+  - branch-scoped delivery correctness must not depend on session identifiers.
 - History policy:
   - append-only event envelope, optional retention for older detailed diffs.
+- Attention policy:
+  - one active attention record per item (`none|note|unresolved`), with set/clear audit metadata.
+  - unresolved attention blocks completion transitions by default.
 - Lifecycle model:
   - fixed non-configurable lifecycle states: `todo`, `progress`, `done`, `archived`.
+  - UI display label for `progress` is always `In Progress`.
 - Completion contracts:
   - mandatory contract support at every work-item level.
   - transition guards required for `todo -> progress` and `progress -> done`.
@@ -701,6 +808,42 @@ Goal: define the path to expose this system as an MCP-capable planning backend.
   - exists as explicit TOML opt-in, defaults off, includes startup and in-app warnings.
 - Actor identity:
   - `system` is internal automation, must be identified and audited like all other actors.
+- Delta delivery policy:
+  - branch-scoped changes are delivered via cursor/ack flow.
+  - `ack_changes` is canonical cursor advance.
+  - include only context-relevant project/config deltas in branch feeds.
+- Logging policy:
+  - runtime logging is required now (not deferred).
+  - canonical package is `github.com/charmbracelet/log`.
+  - dev mode must emit local file logs under workspace `.kan/log/`.
+
+## Pre-Phase-11 Logging Baseline (In Scope Now)
+Goal: make troubleshooting and runtime diagnostics reliable during current local/TUI development.
+
+### Logging Baseline Requirements
+- Adopt `github.com/charmbracelet/log` as the canonical runtime logger.
+- Use styled/colorized terminal logs for local developer visibility.
+- Log meaningful runtime operations end-to-end:
+  - startup/config/path resolution,
+  - DB open/migration and persistence failures,
+  - mutating actions and transition guard failures.
+- Add file logging in dev mode:
+  - config-controlled dev mode flag enables workspace-local logs.
+  - default dev log directory is `.kan/log/` under the current working directory.
+  - include sensible defaults for file name, level, and append behavior.
+- Ensure loggable failures are visible and diagnosable:
+  - retain wrapped error chains (`%w`) for upstream handling.
+  - log adapter/runtime boundary failures with enough context to reproduce.
+- Document troubleshooting workflow:
+  - where log files live in dev mode,
+  - how to increase log verbosity,
+  - how to correlate status-bar errors with log entries.
+
+### Post-MCP Observability Expansion (Roadmap)
+- After MCP/HTTP implementation is stable:
+  - add service-oriented observability strategy (structured event export, metrics, tracing).
+  - evaluate sinks/collectors and retention policies for team/shared deployments.
+  - define correlation between MCP requests, branch context calls, and change-event writes.
 
 ## Remaining Open Questions (Next Refinement Round)
 - Nesting depth and performance guardrails:
@@ -713,6 +856,9 @@ Goal: define the path to expose this system as an MCP-capable planning backend.
   - should dangerous mode require a typed confirmation phrase each launch, or only a persistent warning banner?
 
 ## Additional Roadmap Gaps to Track
+- External integrations and sync:
+  - Git/GitHub/Jira/Slack and other API connectors are roadmap-only.
+  - evaluate authoritative-sync policy and conflict ownership before implementation.
 - Template system:
   - reusable project/phase/task templates with default memory nodes, labels, resources, and completion contracts.
 - Dependency and scheduling aids:
@@ -729,6 +875,9 @@ Goal: define the path to expose this system as an MCP-capable planning backend.
   - role presets (`strict`, `balanced`, `dangerous`) to simplify TOML setup for common workflows.
 - Config implementation guardrails:
   - example TOML, migration notes, and validation errors must stay synchronized across releases.
+- Import reconciliation:
+  - future guided resolution for path/branch divergence across shared snapshots.
+  - pre-Phase-11 remains strict fail on unresolved relative refs.
 
 ## Parallel Workstream Candidates (Can Start Now)
 - Safe to run now with low coupling to roadmap-phase schema work:
@@ -743,6 +892,144 @@ Goal: define the path to expose this system as an MCP-capable planning backend.
   - Phase 6.7 + 6.8 (due datetime + due window config).
 - Should wait for schema implementation kickoff:
   - deep data-model work under Phase 7+ (work_items migration, completion contracts, and event ledger extensions).
+
+## Subagent Execution Model (Single Branch, No Worktrees)
+This repository can run multiple subagents in parallel on one branch, but only with strict orchestration discipline.
+Reference: see `PARALLEL_AGENT_RUNBOOK.md` for the generic reusable paradigm and templates.
+
+### Roles
+- Orchestrator agent:
+  - decomposes work, assigns lanes, tracks lock ownership, and coordinates retries.
+- Worker subagents:
+  - implement one scoped lane and return patch artifacts plus test notes.
+- Integrator agent:
+  - the only actor allowed to apply patches to the shared branch.
+  - runs integration tests and resolves conflicts.
+
+### Orchestrator Prompt Contract (Required)
+- Every worker-lane assignment must include:
+  - lane id and single bounded objective,
+  - lock scope (allowed file globs) and explicit out-of-scope paths,
+  - concrete acceptance criteria for that slice,
+  - architecture constraints (hexagonal dependency directions and hotspot restrictions),
+  - required `just` commands for lane verification and TDD declaration (`tests-first` or justified exception),
+  - doc/comment requirements for touched Go declarations and non-obvious logic blocks,
+  - Context7 requirement and fallback behavior when Context7 is unavailable.
+- Worker prompts must explicitly forbid:
+  - edits outside lane lock,
+  - direct `go test`,
+  - cross-layer architecture violations unless explicitly required by lane objective.
+
+### Locking and Edit Ownership
+- Use lock entries in `PLAN.md` before starting each lane:
+  - `lock_id`
+  - owner (agent/lane)
+  - file globs
+  - acceptance target
+  - `start_time`
+  - `heartbeat`
+  - `expires_at`.
+- Subagents must not edit outside their lock scope.
+- Hotspot files require serialized ownership:
+  - `internal/tui/model.go`
+  - `internal/app/service.go`
+  - `internal/adapters/storage/sqlite/repo.go`.
+
+### Single-Branch Parallel Protocol
+- Subagents run in parallel for analysis, code edits, and patch generation.
+- Integrator applies patches one-by-one in deterministic order.
+- After each applied patch:
+  - run package-level checks for touched areas (`just test-pkg <pkg>`),
+  - then continue to next patch.
+- End each wave with full gate:
+  - `just ci`.
+
+### Permission Escalation and Recovery Loop
+- Subagents inherit sandbox policy and cannot do interactive approval prompts.
+- If a subagent hits a permission-gated action:
+  - action fails and returns to orchestrator context.
+  - orchestrator reports exact failure and required approval.
+  - user approves at parent level.
+  - orchestrator reruns blocked command or resumes/restarts subagent lane with updated permissions.
+- Progress continuation rule:
+  - subagent resumes from last completed checkpoint recorded in `PLAN.md`.
+
+### Delivery Unit and Checkpointing
+- Smallest mergeable unit per lane:
+  - one acceptance criterion or one tightly-coupled slice.
+- Each lane update must record:
+  - lane id + checkpoint id
+  - files touched
+  - commands executed
+  - test outcomes
+  - acceptance checklist (pass/fail per criterion)
+  - architecture-boundary compliance note
+  - doc/comment compliance note
+  - unresolved risks.
+- Integrator may reject a lane patch if:
+  - lock violation
+  - missing tests
+  - failing acceptance criteria.
+  - missing architecture/doc-comment compliance evidence.
+
+### Suggested Wave Order for Current Roadmap
+- Wave A:
+  - Phase 6.1, 6.2, 6.4, 6.5, 6.6, 6.10, 6.11.
+- Wave B:
+  - Phase 6.7, 6.8 (due datetime + config).
+- Wave C (serialized core-model wave):
+  - Phase 7.1, 7.2, 7.6, 8.4.
+- Wave D (serialized event/policy wave):
+  - Phase 10.1, 10.2, 10.3, 10.4.
+- Wave E:
+  - docs, polish, and final validation.
+
+### Acceptance for Parallel Execution
+- No unresolved lock collisions.
+- All applied patches have checkpoint records in `PLAN.md`.
+- Permission-gated failures have explicit remediation notes.
+- Final integrated branch passes `just ci`.
+
+## Orchestrator Bootstrap (Active)
+Single-branch parallel execution is now bootstrapped. This section is the source of truth for lane ownership and integration order.
+
+### Active Locks
+| lock_id | lane | owner_role | scope | objective | status | start_time | heartbeat | expires_at |
+|---|---|---|---|---|---|---|---|---|
+| L-A | Wave A / Lane A | worker-subagent | `internal/tui/*`, `vhs/*` | Phase 6.1/6.2/6.4/6.5/6.6/6.10/6.11 | verified | 2026-02-21 | 2026-02-21 | closed |
+| L-B | Wave A / Lane B | worker-subagent | `internal/config/*`, `config.example.toml`, `README.md` | Phase 6.7/6.8 config + due windows alignment | verified | 2026-02-21 | 2026-02-21 | closed |
+| L-C | Wave 1 / Lane C | worker-subagent | `internal/adapters/storage/sqlite/**`, `internal/app/**`, `internal/domain/**` | pre-Phase-11 backend foundations (`work_items`, dependency rollups, change event ledger) | verified | 2026-02-22 | 2026-02-22 | closed |
+| L-D | Wave 1 / Lane D | worker-subagent | `internal/tui/**`, `internal/config/**`, `cmd/kan/main.go`, `config.example.toml` | Phase 5 stretch UX (multi-select/bulk, activity log, undo/redo, grouping + WIP) | verified | 2026-02-22 | 2026-02-22 | closed |
+| L-E | Wave 2 / Lane E | worker-subagent | `internal/tui/**`, `internal/config/**`, `cmd/kan/main.go`, `config.example.toml` | remaining pre-Phase-11 UI gaps (resource picker, label inheritance UI, projection breadcrumbs, dependency rollups) | verified | 2026-02-22 | 2026-02-22 | closed |
+| L-I | Integrator | integrator | shared-branch apply scope | serialized patch apply + validation + `just ci` gate | verified | 2026-02-22 | 2026-02-22 | closed |
+| L-QA | Audit / Remediation | orchestrator+worker | `internal/tui/**`, `internal/app/**`, `internal/adapters/storage/sqlite/**`, `vhs/*`, `PLAN.md` | independent quality audit + pre-Phase-11 completion reconciliation | in_progress | 2026-02-22 | 2026-02-22 | open |
+
+### Lane State Machine
+- `planned`
+- `in_progress`
+- `ready_for_integration`
+- `integrated`
+- `verified`
+- `closed`.
+
+### Integration Queue (Initial)
+1. Lane A patch slice 1 (`6.1` search focus/controls)
+2. Lane A patch slice 2 (`6.2` canonical state selector)
+3. Lane A patch slice 3 (`6.4` list marker cleanup)
+4. Lane A patch slice 4 (`6.5` confirmations)
+5. Lane A patch slice 5 (`6.6` modal consistency)
+6. Lane A patch slice 6 (`6.10` help copy)
+7. Lane A patch slice 7 (`6.11` tests/VHS)
+8. Lane B patch slice (`6.7` + `6.8` due datetime/config alignment)
+9. Integrator full wave verification (`just ci`).
+
+### Permission Escalation Queue
+- Record each permission-gated failure as:
+  - lane
+  - blocked command
+  - reason
+  - approval requested
+  - remediation outcome.
 
 ## 12) Definition of Done (MVP)
 - Multi-project board is fully usable from TUI.
@@ -866,10 +1153,10 @@ Goal: define the path to expose this system as an MCP-capable planning backend.
   - [x] cross-project + state-aware search/filter
   - [x] Fang-style help/onboarding presentation
   - [x] command palette + quick actions
-  - [ ] multi-select + bulk actions
+  - [x] multi-select + bulk actions
   - [x] due picker + label suggestions
-  - [ ] WIP warnings + swimlanes + activity log + undo/redo
-- [ ] Next: close remaining Phase 5 stretch features (multi-select/bulk, activity log, undo/redo, swimlane/grouping polish) after UX baseline is stable.
+  - [x] WIP warnings + swimlanes + activity log + undo/redo
+- [x] Next: close remaining Phase 5 stretch features (multi-select/bulk, activity log, undo/redo, swimlane/grouping polish) after UX baseline is stable.
 - [x] 2026-02-21: Completed Phase 5 slices 1-5 baseline:
   - Slice 1: config/platform foundation + example TOML + docs
   - Slice 2: project metadata domain/storage/app + create/edit workflows
@@ -936,6 +1223,11 @@ Goal: define the path to expose this system as an MCP-capable planning backend.
   - added dangerous-mode authorization roadmap (TOML policy, startup warnings, audit requirements)
   - defined `system` actor as internal automation with mandatory attribution metadata
   - converted transition/evidence/child-policy/versioning items from open questions into locked defaults
+- [x] 2026-02-21: Subagent orchestration planning update (planning only; no code changes):
+  - added single-branch/no-worktree subagent execution model with lock ownership, integrator-only patch application, and wave sequencing
+  - documented permission-failure escalation loop (subagent fail -> parent approval -> retry/resume)
+  - linked current phase set to practical multi-agent wave ordering
+  - added `PARALLEL_AGENT_RUNBOOK.md` with project-agnostic parallel execution framework, templates, and external resources
 - [x] 2026-02-21: Repo-wide comment/docstring hardening pass (active)
   - objective: enforce explicit comment/docstring coverage across all Go code blocks, including tests
   - command: `ls -la` (repo inventory) -> success
@@ -1045,3 +1337,438 @@ Goal: define the path to expose this system as an MCP-capable planning backend.
     - only unexpected untracked source under first-class dirs: `cmd/kan/*.go`
   - command: `git check-ignore -v cmd/kan/main.go` -> matched by `.gitignore` pattern `kan`
   - conclusion: primary repo-integrity issue is broad ignore rule `kan` unintentionally masking `cmd/kan`; no second ignored source tree found under core project dirs
+- [x] 2026-02-21: Parallel governance hardening (docs/process only; no code changes)
+  - updated `AGENTS.md` with explicit subagent-parallel policy:
+    - single-writer `PLAN.md` rule
+    - worker-lane lock boundaries
+    - integrator-only shared-branch apply
+    - permission-failure escalation loop
+    - lane closeout requires integrator verification
+  - updated `PARALLEL_AGENT_RUNBOOK.md` with mandatory bootstrap rule:
+    - before parallel execution in any repo, update that repo's `AGENTS.md` to encode execution policy
+  - initialized orchestrator bootstrap block in `PLAN.md`:
+    - active lock table
+    - lane state machine
+    - initial integration queue
+    - permission escalation queue format
+- [x] 2026-02-21: Codex subagent config readiness check (investigation/discussion only; no code changes)
+  - objective: verify whether current `~/.codex/config.toml` requires changes to use subagents in this repo
+  - local docs/process reviewed:
+    - `PLAN.md` subagent execution model and lock protocol (`Subagent Execution Model`, `Orchestrator Bootstrap`)
+    - `PARALLEL_AGENT_RUNBOOK.md` bootstrap and approval-escalation requirements
+  - commands:
+    - `codex --version` -> `codex-cli 0.104.0`
+    - `codex features list` -> `multi_agent experimental false`
+  - online source check:
+    - OpenAI Codex multi-agent docs indicate subagents require explicit enablement via `/experimental` or config `features.multi_agent = true`
+    - OpenAI config basics confirm per-project settings load only for trusted projects; this repo is already configured as trusted
+  - conclusion:
+    - process docs in this repo are already aligned for subagent operation
+    - config update still needed to persist enablement: set `features.multi_agent = true` (or enable each session via `/experimental`)
+- [x] 2026-02-21: Subagent smoke run after config update (runtime verification; no code changes)
+  - objective: verify subagent execution path by delegating a real repo task
+  - startup policy check:
+    - reviewed `Justfile` to confirm repo automation baseline before execution
+  - commands/actions:
+    - spawned explorer subagent `019c8236-9ed4-7c62-8993-d9098eb99cb9`
+    - task: read `README.md` and return purpose/architecture/commands/caveats summary
+    - waited for completion and captured handoff response
+    - closed subagent handle after successful completion
+  - result:
+    - subagent completed successfully and returned requested README summary
+    - delegation path is working in current session
+- [x] 2026-02-21: Subagent prompt-policy hardening pass (docs/process only; no product code changes)
+  - objective: tighten orchestrator-to-worker prompting so lanes consistently enforce hexagonal boundaries, TDD intent, doc/comment quality, and evidence-rich handoffs
+  - commands/context review:
+    - `sed -n '1,320p' AGENTS.md`
+    - `sed -n '730,930p' PLAN.md`
+    - `sed -n '1,320p' PARALLEL_AGENT_RUNBOOK.md`
+    - `nl -ba AGENTS.md | sed -n '1,260p'`
+    - `nl -ba PLAN.md | sed -n '730,900p'`
+    - `nl -ba PARALLEL_AGENT_RUNBOOK.md | sed -n '1,280p'`
+  - edits:
+    - `AGENTS.md`: clarified Context7 fallback behavior; strengthened doc/comment requirement wording; added required orchestrator prompt contract and required worker handoff contract
+    - `PLAN.md`: added required orchestrator prompt contract in subagent model; expanded checkpoint evidence requirements; aligned active lock schema to include `start_time`, `heartbeat`, `expires_at`
+    - `PARALLEL_AGENT_RUNBOOK.md`: added generic orchestrator assignment contract, expanded lane handoff template with acceptance/compliance fields, and expanded bootstrap checklist to include assignment + handoff requirements
+  - verification:
+    - docs-only change; no Go source touched and no tests required for this pass
+- [x] 2026-02-21: Execution wave complete (non-roadmap implementation only; no MCP/HTTP)
+  - scope lock:
+    - implement concrete UX/config fixes from Phase 6 and outstanding non-roadmap product behavior before Phase 11
+    - explicitly exclude MCP transport and roadmap-only schema phases
+  - startup checks completed:
+    - reviewed `Justfile` recipes (tests via `just` only)
+    - re-reviewed `PLAN.md` phase checklist and lock table
+    - consulted Context7 for Bubble Tea/Bubbles input and modal patterns before edits
+  - Lane B implementation (`internal/config/*`, `config.example.toml`, `cmd/kan/main.go`):
+    - locked canonical lifecycle search-state validation to `todo|progress|done|archived`
+    - removed runtime dependence on configurable `board.states`
+    - added confirmation config surface:
+      - `confirm.delete`
+      - `confirm.archive`
+      - `confirm.hard_delete`
+      - `confirm.restore`
+    - added due-summary UI config surface:
+      - `ui.due_soon_windows`
+      - `ui.show_due_summary`
+    - updated command wiring to pass confirm/UI settings into TUI and dropped `stateTemplatesFromConfig` path
+  - Lane A implementation (`internal/tui/*`):
+    - rebuilt search modal interaction model:
+      - focus order `query -> states -> scope -> archived -> apply`
+      - canonical multi-select state toggles (no free-text state input)
+      - clear-query and reset-filters command semantics
+    - upgraded command palette:
+      - live filtered commands while typing
+      - highlighted selection execution on enter
+      - tab autocomplete for top match
+      - descriptions + aliases shown inline
+      - clear-query and reset-filters command aliases wired
+    - fixed board row marker semantics:
+      - removed `>` indicator
+      - only focused item uses the vertical accent bar
+    - added confirmation modal for destructive/state-changing actions
+      - archive, hard delete, default delete mode, restore (config gated)
+      - `d` now respects `confirm.delete` independently from `confirm.archive`/`confirm.hard_delete`
+    - kept modal overlays centered and non-shifting
+    - added due datetime support (typed date or datetime), due-past warning hint, and due summary row:
+      - `<overdue_count> overdue * <due_soon_count> due soon`
+    - updated help overlay copy for new search/command/confirmation semantics
+  - tests and verification:
+    - `GOCACHE=$(pwd)/.go-cache just test-pkg ./internal/config` -> pass
+    - `GOCACHE=$(pwd)/.go-cache just test-pkg ./internal/tui` -> pass (after fixture + behavior updates)
+    - `GOCACHE=$(pwd)/.go-cache just test-golden-update` -> pass (golden fixtures refreshed)
+    - `GOCACHE=$(pwd)/.go-cache just test` -> pass
+    - `GOCACHE=$(pwd)/.go-cache just ci` -> pass
+      - package coverage floors remain >= 70% (TUI now 72.7%)
+    - targeted regression fix:
+      - search query typing preserved while in query focus (no `h/l` shortcut interception)
+  - operational note:
+    - observed non-fatal Go stat-cache write warning under sandboxed module cache during final `just ci`; command still exited successfully.
+- [x] 2026-02-21: Phase 7/8 foundation slice implemented (non-MCP runtime features only)
+  - objective:
+    - implement pre-Phase-11 local feature foundations after Phase 6:
+      - rich work-item/task context model
+      - nesting foundations (parent/child + kind)
+      - completion-contract transition guards
+      - project-root and label-policy TOML surfaces
+  - implementation summary:
+    - domain model expansion (`internal/domain/*`):
+      - added canonical lifecycle/actor/kind modeling:
+        - `LifecycleState` (`todo|progress|done|archived`)
+        - `ActorType` (`user|agent|system`)
+        - `WorkKind` defaults (`task|subtask|phase|decision|note`)
+      - added rich task metadata model:
+        - context blocks (typed + importance)
+        - resource references (local/url/doc/ticket/snippet with path mode)
+        - completion contracts (start criteria, completion criteria, checklist, evidence, policy)
+      - added task-level operations:
+        - lifecycle transition timestamp management
+        - planning metadata updates
+        - parent reassignment
+        - unmet criteria derivation for start/completion checks
+    - app-layer behavior (`internal/app/*`):
+      - `CreateTaskInput` now supports `parent_id`, `kind`, metadata, actor attribution
+      - move transitions now enforce completion contracts:
+        - `todo -> progress` checks unmet start criteria
+        - `progress -> done` checks completion criteria/checklist and optional child-done policy
+      - added nesting use cases:
+        - `ListChildTasks`
+        - `ReparentTask`
+      - lifecycle resolution now maps from canonical column state semantics while preserving backward compatibility
+      - snapshot compatibility updated to include rich fields while auto-defaulting missing legacy values
+    - sqlite adapter updates (`internal/adapters/storage/sqlite/repo.go`):
+      - migrated `tasks` schema with compatibility-safe additive columns:
+        - `parent_id`, `kind`, `lifecycle_state`
+        - `metadata_json`
+        - actor attribution columns
+        - lifecycle timestamp columns (`started_at`, `completed_at`, `canceled_at`)
+      - added parent index and scan/create/update support for new fields
+    - config + wiring updates:
+      - added TOML surfaces:
+        - `[project_roots]`
+        - `[labels]` + `[labels.projects]`
+      - added label allowlist policy:
+        - `labels.enforce_allowed`
+      - added config helper:
+        - `AllowedLabels(project_slug)`
+      - updated runtime wiring to pass label policy into TUI
+      - updated `config.example.toml` with project-root and label-policy examples
+    - TUI behavior updates (`internal/tui/*`):
+      - added subtask creation action:
+        - `s` key (`new subtask`) from selected task
+        - command palette commands: `new-task`, `new-subtask`, `edit-task`
+      - task form now supports label suggestions from config allowlists (global + project-scoped)
+      - optional label enforcement in form submit path when enabled in TOML
+      - hierarchical task ordering in column rendering (parent before children) with indentation
+      - help/workflow text updated for subtask flow
+      - task info modal includes kind/state/parent/objective/completion summary hints
+  - test/verification trail:
+    - `GOCACHE=$(pwd)/.go-cache just test-pkg ./internal/domain` -> pass
+    - `GOCACHE=$(pwd)/.go-cache just test-pkg ./internal/config` -> pass
+    - `GOCACHE=$(pwd)/.go-cache just test-pkg ./internal/app` -> pass
+    - `GOCACHE=$(pwd)/.go-cache just test-pkg ./internal/adapters/storage/sqlite` -> pass
+    - `GOCACHE=$(pwd)/.go-cache just test-golden-update` -> pass
+    - `GOCACHE=$(pwd)/.go-cache just test-pkg ./internal/tui` -> pass
+    - `GOCACHE=$(pwd)/.go-cache just test` -> pass
+    - `GOCACHE=$(pwd)/.go-cache just ci` -> pass
+      - coverage floors restored:
+        - `internal/app` 70.6%
+        - `internal/domain` 77.0%
+        - `internal/tui` 70.4%
+  - operational note:
+    - non-fatal Go stat-cache write warning persists under sandboxed module cache during `just ci`; command still exits successfully.
+  - remaining pre-Phase-11 gaps not completed in this slice:
+    - full first-class `work_items` table migration (currently task-compatible extension, not full table replacement)
+    - explicit file-picker UX for resource attachment
+    - full project/phase-scoped label inheritance UI (foundation is in TOML + task form enforcement/suggestions)
+    - dedicated nested board projections/breadcrumb mode switching beyond current parent/child ordering + subtask creation
+    - dependency graph UX (`depends_on`, `blocked_by`) and rollup visualizations
+  - resolution note:
+    - these gaps were closed in 2026-02-22 Wave 1/2 integrations (`L-C`, `L-D`, `L-E`)
+- [x] 2026-02-21: Post-slice coverage recovery + gate verification
+  - command: `GOCACHE=$(pwd)/.go-cache just test-pkg ./internal/domain` -> pass
+  - command: `GOCACHE=$(pwd)/.go-cache just test-pkg ./internal/app` -> pass
+  - command: `GOCACHE=$(pwd)/.go-cache just ci` -> pass
+  - result:
+    - restored per-package coverage floor compliance after schema/model expansion
+    - final gate remains green with known non-fatal sandbox stat-cache write warning.
+- [x] 2026-02-21: Runtime migration hotfix for legacy DBs missing `tasks.parent_id`
+  - user-reported failure:
+    - `just run` -> `error: migrate sqlite: SQL logic error: no such column: parent_id (1)`
+  - diagnostics:
+    - default runtime DB path is dev-mode platform path, not repo root:
+      - `go run ./cmd/kan paths` -> `/Users/evanschultz/Library/Application Support/kan-dev/kan-dev.db`
+    - legacy DB verified to lack `parent_id`:
+      - `sqlite3 ... \"PRAGMA table_info(tasks);\"` showed old schema without added columns
+    - root cause:
+      - migration attempted `CREATE INDEX ... tasks(project_id, parent_id)` before additive `ALTER TABLE` statements for legacy `tasks`
+  - docs consulted before edit:
+    - Context7 (`/websites/sqlite_cli`) for SQLite index/column behavior and migration ordering constraints
+  - code fix:
+    - moved `idx_tasks_project_parent` creation out of initial statement batch so it runs only after legacy column-add migration path
+    - file: `internal/adapters/storage/sqlite/repo.go`
+  - regression test:
+    - added legacy-schema migration test that seeds old `tasks` table and verifies `parent_id` exists after `Open`
+    - file: `internal/adapters/storage/sqlite/repo_test.go`
+  - verification:
+    - `GOCACHE=$(pwd)/.go-cache just test-pkg ./internal/adapters/storage/sqlite` -> pass
+    - legacy runtime upgrade simulation:
+      - create old schema db via `sqlite3`
+      - run `KAN_DB_PATH=<legacy.db> go run ./cmd/kan export --out -`
+      - result: success
+    - `GOCACHE=$(pwd)/.go-cache just ci` -> pass
+  - operational notes:
+    - local sandbox cannot write to user home data path, so local verification used `KAN_DB_PATH` in writable temp path
+    - non-fatal Go stat-cache warning remains under sandboxed module cache; `just ci` exits success
+- [x] 2026-02-21: Orchestrator wave kickoff (current run)
+  - diagnosed `just test-pkg ./cmd/` failure:
+    - root cause: recipe passed package arg directly and `./cmd/` has no Go files; package path is `./cmd/kan`
+    - fix: `test-pkg` now auto-expands directory inputs with no local Go files to `<dir>/...`
+    - verification:
+      - `just test-pkg ./cmd/` -> pass
+      - `just test-pkg ./cmd/kan` -> pass
+  - launched parallel worker lanes:
+    - `L-C`: backend pre-Phase-11 foundations
+    - `L-D`: TUI Phase 5 stretch UX features
+- [x] 2026-02-22: Wave 1 backend lane integrated (`L-C`)
+  - implemented canonical persistence + audit foundation:
+    - added `work_items` table migration and non-destructive legacy bridge from `tasks`
+    - switched task CRUD queries to canonical `work_items`
+    - added `change_events` ledger table and event emission for task mutations
+    - added app/domain surface for project activity events and dependency rollup summaries
+  - verification:
+    - `GOCACHE=$(pwd)/.go-cache just test-pkg ./internal/domain` -> pass
+    - `GOCACHE=$(pwd)/.go-cache just test-pkg ./internal/app` -> pass
+    - `GOCACHE=$(pwd)/.go-cache just test-pkg ./internal/adapters/storage/sqlite` -> pass
+  - lane closure:
+    - fixed failing fixture (`labels_json`) during lane finalization and re-verified package tests
+- [x] 2026-02-22: Wave 1 TUI lane integrated (`L-D`)
+  - completed Phase 5 stretch UX in TUI:
+    - multi-select and bulk actions (move/archive/delete) with command palette + quick action integration
+    - activity log modal with bounded retention
+    - undo/redo basics for reversible operations
+    - grouping/WIP warning rendering and configurable key overrides
+  - verification:
+    - `GOCACHE=$(pwd)/.go-cache just test-golden-update` -> pass
+    - `GOCACHE=$(pwd)/.go-cache just test-pkg ./internal/tui` -> pass
+- [x] 2026-02-22: Wave 2 advanced TUI lane integrated (`L-E`)
+  - closed remaining pre-Phase-11 UI gaps:
+    - resource picker modal (filesystem browse + attach resource refs to task metadata)
+    - inherited label picker + source visibility (`global/project/phase`)
+    - subtree projection mode with breadcrumb (`f` focus / `F` clear)
+    - dependency rollup summaries and task dependency hints in task info modal
+  - wiring updates:
+    - passed `project_roots` config into TUI options
+    - updated help/keymap surfaces for new flows
+  - verification:
+    - `GOCACHE=$(pwd)/.go-cache just test-golden-update` -> pass
+    - `GOCACHE=$(pwd)/.go-cache just test-pkg ./internal/tui` -> pass
+- [x] 2026-02-22: Coverage recovery + final integrator gate
+  - issue:
+    - `just ci` initially failed with `internal/tui` coverage below floor (`68.5%`, then `69.5%`, then `69.8%`)
+  - remediation:
+    - added targeted helper/edge-path tests in `internal/tui/model_test.go` and `internal/tui/keymap_test.go`
+    - refreshed formatting and reran package tests
+  - final verification:
+    - `GOCACHE=$(pwd)/.go-cache just test-pkg ./internal/tui` -> pass
+    - `GOCACHE=$(pwd)/.go-cache just ci` -> pass
+      - `internal/tui` coverage restored to `70.1%`
+  - operational note:
+    - earlier VHS panic in sandboxed runtime was resolved; rerun with approved `vhs` prefix now succeeds locally.
+- [x] 2026-02-22: Post-integration audit + VHS visual inspection (L-QA, current run)
+  - objectives:
+    - verify AGENTS/RUNBOOK contracts enforce subagent Context7 and package-scoped `just test-pkg` behavior.
+    - run independent quality review against pre-Phase-11 completion claims.
+    - validate VHS artifacts visually (not test output only).
+  - reviewer subagent:
+    - spawned explorer reviewer lane and collected findings.
+    - reviewer output summary:
+      - missing durable activity log wiring:
+        - TUI activity modal reads in-memory `activityLog` only.
+        - persisted `change_events` APIs exist but are not consumed by TUI.
+      - missing first-run onboarding flow:
+        - Phase 5 plan includes onboarding but no dedicated onboarding mode/flag exists in TUI state machine.
+      - dead/unused path:
+        - `internal/app/service.go` `SearchTasks` is not used by runtime clients (test-only usage).
+  - VHS validation:
+    - commands:
+      - `vhs vhs/board.tape` -> pass
+      - `vhs vhs/workflow.tape` -> pass
+    - visual verification:
+      - extracted representative frames from `.artifacts/vhs/board.gif` and `.artifacts/vhs/workflow.gif`.
+      - confirmed centered modal rendering and board/help overlays appear in captured frames.
+      - confirmed first-frame shell prompt screenshots are expected tape startup frames, not app runtime failures.
+  - gate:
+    - `GOCACHE=$(pwd)/.go-cache just ci` -> pass
+    - `GOCACHE=$(pwd)/.go-cache just test-pkg ./cmd/` -> pass
+  - resulting status adjustment:
+    - pre-Phase-11 is functionally close but not fully complete against `PLAN.md` acceptance text.
+    - open gaps to close before claiming full completion:
+      - durable activity log modal backed by persisted change events.
+      - first-run onboarding flow.
+      - optional cleanup: remove or integrate currently-unused `SearchTasks` path.
+- [x] 2026-02-22: Manual worksheet synthesis + external research discussion packet
+  - user input source reviewed:
+    - `TUI_MANUAL_TEST_WORKSHEET.md` notes across every section (0-15).
+  - external research completed for decision support:
+    - Bubble Tea/Bubbles/Lip Gloss capabilities (fuzzy list filtering, filepicker, placement, mouse options)
+    - task-manager behavior references (taskwarrior-tui, taskwarrior docs, Trello, ClickUp)
+    - path portability and multi-root workflows (`os.UserConfigDir`, `filepath.Rel`, `git-worktree`)
+    - datepicker compatibility (`ethanefung/bubble-datepicker` dependency versions)
+  - artifact created:
+    - `PRE_PHASE11_CLOSEOUT_DISCUSSION.md`
+  - artifact scope:
+    - explicit pre-Phase-11 remaining gaps
+    - section-by-section mapping of worksheet notes to implementation/discussion items
+    - ordered decision list for final consensus round
+    - source links for each researched area
+- [x] 2026-02-22: Manual worksheet deep pass refinement (line-referenced)
+  - re-read all user notes from `TUI_MANUAL_TEST_WORKSHEET.md` with line references and reconciled against current code paths.
+  - expanded `PRE_PHASE11_CLOSEOUT_DISCUSSION.md` with:
+    - direct worksheet line mapping for each raised concern,
+    - current-behavior vs closeout-direction notes,
+    - architecture-first clarifying question set for final consensus lock.
+- [x] 2026-02-22: Consensus and architecture-discussion expansion (second discussion pass)
+  - captured latest user consensus points (global-first model, pointer-only resources, fuzzy everywhere, onboarding moved to roadmap).
+  - restored missing dropped discussion points ("2-4") in closeout doc and tied them to implementation implications.
+  - added ASCII option sets with pros/cons for:
+    - archived item UX,
+    - hierarchy/subtree rendering model,
+    - dependency authoring/visibility model.
+  - added big-picture architecture questions to drive decisions before low-level execution.
+  - added updated external references for MCP roots, Trello/Jira archive behavior, ClickUp/Linear dependency and hierarchy patterns.
+- [x] 2026-02-22: Third-pass consensus capture (track-only clarification + roots/import policy + SQLite direction)
+  - updated `PRE_PHASE11_CLOSEOUT_DISCUSSION.md` with:
+    - explicit clarification that kan is track/planning-only; execution permissioning is external policy context.
+    - project path policy (`linked/unlinked`) and agent eligibility semantics.
+    - strict portable import/export root-resolution flow with local TOML mapping and bypass warning path.
+    - locked decisions for archive/hierarchy/dependency first-ships (A1/B1/C1).
+    - SQLite-first storage direction and graph-db deferment to roadmap.
+    - lifecycle/lexicon consistency notes and recovered missing 5-7 discussion items.
+- [x] 2026-02-22: Fourth-pass consensus cleanup (terminology + scope lock)
+  - removed confusing capability terminology from closeout discussion:
+    - replaced `planning_ready`/`automation_context_ready` with `workspace_linked` only.
+  - tightened import policy in closeout discussion:
+    - strict-fail unresolved relative path refs in pre-Phase-11.
+    - advanced divergence reconciliation moved to roadmap.
+  - updated `PLAN.md`/`README.md` scope statements:
+    - local/TUI-first implementation now.
+    - MCP/HTTP and external connectors explicitly roadmap-only.
+- [x] 2026-02-22: Fifth-pass consensus lock (user feedback reconciliation)
+  - refined closeout doc policy for linked/unlinked projects:
+    - unlinked projects remain valid for planning.
+    - URL resources allowed when unlinked; filesystem path resources require workspace link.
+  - locked import semantics for pre-Phase-11:
+    - strict fail on unresolved relative path refs under mapped roots.
+    - branch/path divergence resolution deferred to roadmap.
+  - clarified architecture direction:
+    - SQLite relational model remains primary.
+    - single local DB default + project-scoped export/import for sharing.
+- [x] 2026-02-22: Final-decision lock in pre-Phase-11 closeout doc
+  - updated `PRE_PHASE11_CLOSEOUT_DISCUSSION.md` to mark Section 15.8 as authoritative locked decisions.
+  - collapsed confusing execution wording to explicit planning-only semantics for `kan`.
+  - added Section 15.9 with only two truly unresolved non-roadmap items for explicit user lock:
+    - dependency default scope,
+    - repo identity mismatch behavior.
+- [x] 2026-02-22: Final unresolved pre-Phase-11 locks captured from user decision
+  - dependency default scope locked:
+    - same-branch default, cross-branch explicit opt-in.
+  - repo identity mismatch behavior locked:
+    - warning + explicit user-confirm continue.
+  - `PRE_PHASE11_CLOSEOUT_DISCUSSION.md` Section 15.9 updated from unresolved to resolved.
+- [x] 2026-02-22: Phase 11 roadmap consensus update (attention signals + branch delta delivery)
+  - updated `PLAN.md`:
+    - added attention-state roadmap contract (`none|note|unresolved`) with audit metadata fields.
+    - added branch-scoped delta delivery contract (`changes_since_cursor` + `active_attention_items`).
+    - documented cursor semantics (`agent_id + branch_id`, explicit ack, deterministic resend without ack).
+    - clarified `session_id` as optional diagnostic metadata, not correctness-critical.
+    - expanded candidate Phase 11 tool surface (`list_branches`, `get_branch_context`, `set_attention_state`, `clear_attention_state`).
+    - added Phase 11 open-contract questions for ack shape and unresolved gating policy.
+    - locked lifecycle display mapping note (`progress` internal, `In Progress` display).
+  - updated `PRE_PHASE11_CLOSEOUT_DISCUSSION.md`:
+    - corrected stale dependency wording (`same-branch` default).
+    - corrected lifecycle terminology drift (`progress` canonical, `In Progress` display label).
+    - added Section 15.10 capturing roadmap-only consensus for attention-state and branch-context delta delivery.
+- [x] 2026-02-22: Phase 11/docs lock refresh (delivery defaults + logging policy alignment)
+  - updated `PLAN.md`:
+    - converted Phase 11 contract questions into locked defaults for cursor/ack and attention behavior.
+    - locked one-active-attention-per-item policy and unresolved-by-default completion gating.
+    - locked branch-feed scope policy (branch descendants + context-relevant project/config deltas only).
+    - added logging policy section:
+      - adopt `github.com/charmbracelet/log`,
+      - styled/colorized terminal logs,
+      - developer local log-file output,
+      - post-MCP observability expansion deferred.
+  - updated `PRE_PHASE11_CLOSEOUT_DISCUSSION.md`:
+    - added Section 15.11 with locked Phase 11 delivery defaults.
+    - added Section 15.12 with logging baseline lock (pre-Phase-11 in-scope).
+- [x] 2026-02-22: Added explicit Phase 11.0 MCP design gate (docs-only)
+  - updated `PLAN.md`:
+    - inserted `Phase 11.0` mandatory research/discussion gate before `Phase 11.1`.
+    - locked requirement to review `mcp-go`, stateless HTTP serving, hexagonal adapter fit, and dynamic tool discovery/update behavior before implementation.
+    - documented dogfooding intent and open contract questions for pre-implementation review.
+  - updated `PRE_PHASE11_CLOSEOUT_DISCUSSION.md`:
+    - added Section 15.13 locking the same Phase 11.0 gate and reference link.
+- [x] 2026-02-22: Logging scope correction + agent policy hardening (docs-only)
+  - updated `AGENTS.md`:
+    - logging is now mandatory implementation scope with `github.com/charmbracelet/log`.
+    - dev mode requires workspace-local `.kan/log/` file logging.
+    - troubleshooting requires inspecting local logs.
+    - reinforced idiomatic error bubbling/wrapping expectations.
+  - updated `PLAN.md`:
+    - moved logging baseline from deferred roadmap framing to explicit pre-Phase-11 in-scope requirements.
+    - kept broader observability pipeline work deferred until after MCP/HTTP.
+- [x] 2026-02-22: Worklog governance lock sync across planning docs (orchestrator docs pass)
+  - objective:
+    - make execution-ledger ownership and checkpoint evidence requirements explicit across repository docs.
+  - files updated:
+    - `PLAN.md`
+    - `PRE_PHASE11_CLOSEOUT_DISCUSSION.md`
+    - `PARALLEL_AGENT_RUNBOOK.md`
+    - `AGENTS.md`
+  - commands run:
+    - `rg -n "Worklog Governance \\(Locked\\)|closeout decision register|Worklog Source-of-Truth Split|test_not_applicable" PLAN.md PRE_PHASE11_CLOSEOUT_DISCUSSION.md PARALLEL_AGENT_RUNBOOK.md AGENTS.md` -> pass
+  - tests:
+    - `test_not_applicable` (docs-only update; no code-path changes)
+  - status:
+    - governance wording is now aligned: `PLAN.md` is single execution ledger, closeout file is decision register, and orchestrator/integrator is single writer for checkpoint state.

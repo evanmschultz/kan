@@ -135,7 +135,6 @@ func run(ctx context.Context, args []string, stdout, _ io.Writer) error {
 	svc := app.NewService(repo, uuid.NewString, nil, app.ServiceConfig{
 		DefaultDeleteMode:        app.DeleteMode(cfg.Delete.DefaultMode),
 		AutoCreateProjectColumns: true,
-		StateTemplates:           stateTemplatesFromConfig(cfg.Board.States),
 	})
 
 	switch command {
@@ -166,6 +165,34 @@ func run(ctx context.Context, args []string, stdout, _ io.Writer) error {
 			CrossProject:    cfg.Search.CrossProject,
 			IncludeArchived: cfg.Search.IncludeArchived,
 			States:          append([]string(nil), cfg.Search.States...),
+		}),
+		tui.WithBoardConfig(tui.BoardConfig{
+			ShowWIPWarnings: cfg.Board.ShowWIPWarnings,
+			GroupBy:         cfg.Board.GroupBy,
+		}),
+		tui.WithConfirmConfig(tui.ConfirmConfig{
+			Delete:     cfg.Confirm.Delete,
+			Archive:    cfg.Confirm.Archive,
+			HardDelete: cfg.Confirm.HardDelete,
+			Restore:    cfg.Confirm.Restore,
+		}),
+		tui.WithUIConfig(tui.UIConfig{
+			DueSoonWindows: cfg.DueSoonDurations(),
+			ShowDueSummary: cfg.UI.ShowDueSummary,
+		}),
+		tui.WithLabelConfig(tui.LabelConfig{
+			Global:         append([]string(nil), cfg.Labels.Global...),
+			Projects:       cloneLabelProjectConfig(cfg.Labels.Projects),
+			EnforceAllowed: cfg.Labels.EnforceAllowed,
+		}),
+		tui.WithProjectRoots(cloneProjectRoots(cfg.ProjectRoots)),
+		tui.WithKeyConfig(tui.KeyConfig{
+			CommandPalette: cfg.Keys.CommandPalette,
+			QuickActions:   cfg.Keys.QuickActions,
+			MultiSelect:    cfg.Keys.MultiSelect,
+			ActivityLog:    cfg.Keys.ActivityLog,
+			Undo:           cfg.Keys.Undo,
+			Redo:           cfg.Keys.Redo,
 		}),
 	)
 	_, err = programFactory(m).Run()
@@ -244,23 +271,6 @@ func firstArg(args []string) string {
 	return args[0]
 }
 
-// stateTemplatesFromConfig handles state templates from config.
-func stateTemplatesFromConfig(states []config.StateConfig) []app.StateTemplate {
-	out := make([]app.StateTemplate, 0, len(states))
-	for _, state := range states {
-		if strings.TrimSpace(state.Name) == "" {
-			continue
-		}
-		out = append(out, app.StateTemplate{
-			ID:       state.ID,
-			Name:     state.Name,
-			WIPLimit: state.WIPLimit,
-			Position: state.Position,
-		})
-	}
-	return out
-}
-
 // parseBoolEnv parses input into a normalized form.
 func parseBoolEnv(name string) (bool, bool) {
 	raw := strings.TrimSpace(os.Getenv(name))
@@ -272,4 +282,22 @@ func parseBoolEnv(name string) (bool, bool) {
 		return false, false
 	}
 	return v, true
+}
+
+// cloneLabelProjectConfig deep-copies per-project label lists.
+func cloneLabelProjectConfig(in map[string][]string) map[string][]string {
+	out := make(map[string][]string, len(in))
+	for key, labels := range in {
+		out[key] = append([]string(nil), labels...)
+	}
+	return out
+}
+
+// cloneProjectRoots deep-copies project-root path mappings.
+func cloneProjectRoots(in map[string]string) map[string]string {
+	out := make(map[string]string, len(in))
+	for key, path := range in {
+		out[key] = path
+	}
+	return out
 }

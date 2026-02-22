@@ -2,6 +2,11 @@
 
 A local-first Kanban TUI built with Bubble Tea v2, Bubbles v2, and Lip Gloss v2.
 
+Current scope:
+- local tracking and planning workflows (human-operated TUI).
+- local runtime diagnostics with styled logging and dev-mode local log files.
+- MCP/HTTP integrations are roadmap items and are not implemented yet.
+
 ## Features
 - Multi-project Kanban board.
 - SQLite persistence (`modernc.org/sqlite`, no CGO).
@@ -50,6 +55,7 @@ Path resolution controls:
 - `--app` / `KAN_APP_NAME` to namespace paths (default `kan`)
 - `--dev` / `KAN_DEV_MODE` to use `<app>-dev` path roots
 - `kan paths` prints the resolved config/data/db paths for the current environment
+- dev mode logging is expected to write under workspace-local `.kan/log/` for troubleshooting
 
 Example:
 ```toml

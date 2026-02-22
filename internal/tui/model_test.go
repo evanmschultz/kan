@@ -2,6 +2,8 @@ package tui
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +20,7 @@ type fakeService struct {
 	columns  map[string][]domain.Column
 	tasks    map[string][]domain.Task
 	err      error
+	rollups  map[string]domain.DependencyRollup
 }
 
 // newFakeService constructs fake service.
@@ -34,6 +37,7 @@ func newFakeService(projects []domain.Project, columns []domain.Column, tasks []
 		projects: projects,
 		columns:  colByProject,
 		tasks:    taskByProject,
+		rollups:  map[string]domain.DependencyRollup{},
 	}
 }
 
@@ -77,6 +81,44 @@ func (f *fakeService) ListTasks(_ context.Context, projectID string, includeArch
 		out = append(out, task)
 	}
 	return out, nil
+}
+
+// GetProjectDependencyRollup returns project dependency rollup totals.
+func (f *fakeService) GetProjectDependencyRollup(_ context.Context, projectID string) (domain.DependencyRollup, error) {
+	if f.err != nil {
+		return domain.DependencyRollup{}, f.err
+	}
+	if rollup, ok := f.rollups[projectID]; ok {
+		return rollup, nil
+	}
+	tasks := f.tasks[projectID]
+	rollup := domain.DependencyRollup{
+		ProjectID:  projectID,
+		TotalItems: len(tasks),
+	}
+	stateByID := map[string]domain.LifecycleState{}
+	for _, task := range tasks {
+		stateByID[task.ID] = task.LifecycleState
+	}
+	for _, task := range tasks {
+		dependsOn := uniqueTrimmed(task.Metadata.DependsOn)
+		blockedBy := uniqueTrimmed(task.Metadata.BlockedBy)
+		if len(dependsOn) > 0 {
+			rollup.ItemsWithDependencies++
+			rollup.DependencyEdges += len(dependsOn)
+		}
+		if len(blockedBy) > 0 || strings.TrimSpace(task.Metadata.BlockedReason) != "" {
+			rollup.BlockedItems++
+		}
+		rollup.BlockedByEdges += len(blockedBy)
+		for _, depID := range dependsOn {
+			state, ok := stateByID[depID]
+			if !ok || state != domain.StateDone {
+				rollup.UnresolvedDependencyEdges++
+			}
+		}
+	}
+	return rollup, nil
 }
 
 // SearchTasks handles search tasks.
@@ -265,6 +307,9 @@ func (f *fakeService) UpdateTask(_ context.Context, in app.UpdateTaskInput) (dom
 			f.tasks[projectID][idx].Priority = in.Priority
 			f.tasks[projectID][idx].DueAt = in.DueAt
 			f.tasks[projectID][idx].Labels = in.Labels
+			if in.Metadata != nil {
+				f.tasks[projectID][idx].Metadata = *in.Metadata
+			}
 			return f.tasks[projectID][idx], nil
 		}
 	}
@@ -345,6 +390,18 @@ func (f *fakeService) projectByID(projectID string) (domain.Project, bool) {
 	return domain.Project{}, false
 }
 
+// taskByID returns task by id.
+func (f *fakeService) taskByID(taskID string) (domain.Task, bool) {
+	for projectID := range f.tasks {
+		for _, task := range f.tasks[projectID] {
+			if task.ID == taskID {
+				return task, true
+			}
+		}
+	}
+	return domain.Task{}, false
+}
+
 // TestModelLoadAndNavigation verifies behavior for the covered scenario.
 func TestModelLoadAndNavigation(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
@@ -410,6 +467,11 @@ func TestModelQuickAddMoveArchiveRestoreDelete(t *testing.T) {
 	}
 
 	m = applyMsg(t, m, keyRune('d'))
+	if m.mode != modeConfirmAction {
+		t.Fatalf("expected confirm mode for archive, got %v", m.mode)
+	}
+	m.confirmChoice = 0
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if svc.tasks[p.ID][0].ArchivedAt == nil {
 		t.Fatal("expected selected task archived")
 	}
@@ -419,6 +481,10 @@ func TestModelQuickAddMoveArchiveRestoreDelete(t *testing.T) {
 	}
 
 	m = applyMsg(t, m, keyRune('D'))
+	if m.mode != modeConfirmAction {
+		t.Fatalf("expected confirm mode for hard delete, got %v", m.mode)
+	}
+	m = applyMsg(t, m, keyRune('y'))
 	if len(svc.tasks[p.ID]) != 1 {
 		t.Fatalf("expected hard delete to remove task, got %d tasks", len(svc.tasks[p.ID]))
 	}
@@ -604,7 +670,9 @@ func TestModelCommandPaletteAndQuickActions(t *testing.T) {
 
 	m.mode = modeNone
 	m = applyMsg(t, m, keyRune(':'))
-	m = applyMsg(t, m, keyRune('x'))
+	m = applyMsg(t, m, keyRune('z'))
+	m = applyMsg(t, m, keyRune('z'))
+	m = applyMsg(t, m, keyRune('z'))
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if !strings.Contains(m.status, "unknown command") {
 		t.Fatalf("expected unknown command status, got %q", m.status)
@@ -1005,6 +1073,11 @@ func TestDeleteUsesConfiguredDefaultMode(t *testing.T) {
 
 	m := loadReadyModel(t, NewModel(svc, WithDefaultDeleteMode(app.DeleteModeHard)))
 	m = applyMsg(t, m, keyRune('d'))
+	if m.mode != modeConfirmAction {
+		t.Fatalf("expected confirm mode for default hard delete, got %v", m.mode)
+	}
+	m.confirmChoice = 0
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if len(svc.tasks[p.ID]) != 1 {
 		t.Fatalf("expected default delete mode hard to remove selected task, got %d", len(svc.tasks[p.ID]))
 	}
@@ -1037,6 +1110,13 @@ func TestParseDueAndLabelsInput(t *testing.T) {
 	if gotDue == nil || gotDue.Format("2006-01-02") != "2026-03-01" {
 		t.Fatalf("expected parsed due date, got %#v", gotDue)
 	}
+	gotDue, err = parseDueInput("2026-03-01T15:04", nil)
+	if err != nil {
+		t.Fatalf("parseDueInput datetime unexpected error: %v", err)
+	}
+	if gotDue == nil || gotDue.UTC().Hour() != 15 || gotDue.UTC().Minute() != 4 {
+		t.Fatalf("expected parsed due datetime, got %#v", gotDue)
+	}
 
 	if _, err = parseDueInput("03/01/2026", nil); err == nil {
 		t.Fatal("expected parseDueInput invalid format error")
@@ -1053,11 +1133,14 @@ func TestParseDueAndLabelsInput(t *testing.T) {
 		t.Fatalf("expected parsed labels, got %#v", got)
 	}
 
-	if got := parseStateFilters("", []string{"todo"}); len(got) != 1 || got[0] != "todo" {
+	if got := canonicalSearchStates([]string{}); len(got) != 3 || got[0] != "todo" {
 		t.Fatalf("expected state fallback, got %#v", got)
 	}
-	if got := parseStateFilters("todo, progress, todo", nil); len(got) != 2 || got[1] != "progress" {
+	if got := canonicalSearchStates([]string{"todo", "progress", "todo"}); len(got) != 2 || got[1] != "progress" {
 		t.Fatalf("expected deduped state filters, got %#v", got)
+	}
+	if got := canonicalSearchStates([]string{"unknown"}); len(got) != 3 || got[0] != "todo" {
+		t.Fatalf("expected canonical fallback for unknown states, got %#v", got)
 	}
 }
 
@@ -1211,7 +1294,7 @@ func TestModelFormValidationPaths(t *testing.T) {
 	m.formInputs[2].SetValue("high")
 	m.formInputs[3].SetValue("03/01/2026")
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if !strings.Contains(m.status, "due date must be YYYY-MM-DD or -") {
+	if !strings.Contains(m.status, "due date must be YYYY-MM-DD") {
 		t.Fatalf("expected invalid due status, got %q", m.status)
 	}
 
@@ -1360,6 +1443,1042 @@ func TestTaskFormLabelSuggestions(t *testing.T) {
 	if !strings.Contains(out, "kan") {
 		t.Fatalf("expected label suggestions to include 'kan', got %q", out)
 	}
+}
+
+// TestSearchAndCommandPaletteFlow verifies behavior for the covered scenario.
+func TestSearchAndCommandPaletteFlow(t *testing.T) {
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Roadmap planning",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	m := loadReadyModel(t, NewModel(svc))
+
+	m = applyMsg(t, m, keyRune('/'))
+	for _, r := range []rune("road map") {
+		m = applyMsg(t, m, keyRune(r))
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab}) // states
+	m = applyMsg(t, m, keyRune(' '))                      // toggle todo off
+	if m.isSearchStateEnabled("todo") {
+		t.Fatalf("expected todo filter disabled, got %#v", m.searchStates)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab}) // scope
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab}) // archived
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab}) // apply
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !m.searchApplied {
+		t.Fatalf("expected search applied, got %#v", m)
+	}
+	if m.searchQuery != "road map" {
+		t.Fatalf("expected search query preserved, got %q", m.searchQuery)
+	}
+	if !m.searchCrossProject || !m.showArchived {
+		t.Fatalf("expected scope+archived toggled, got cross=%t archived=%t", m.searchCrossProject, m.showArchived)
+	}
+
+	m = applyMsg(t, m, keyRune(':'))
+	for _, r := range []rune("clear-q") {
+		m = applyMsg(t, m, keyRune(r))
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.searchQuery != "" {
+		t.Fatalf("expected clear-query command to clear text, got %q", m.searchQuery)
+	}
+
+	m = applyMsg(t, m, keyRune(':'))
+	for _, r := range []rune("reset-f") {
+		m = applyMsg(t, m, keyRune(r))
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.searchApplied {
+		t.Fatalf("expected reset-filters to clear applied state, got %#v", m)
+	}
+}
+
+// TestDueHelpers verifies behavior for the covered scenario.
+func TestDueHelpers(t *testing.T) {
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	past := now.Add(-2 * time.Hour)
+	soon := now.Add(30 * time.Minute)
+	later := now.Add(72 * time.Hour)
+	archivedAt := now.Add(-10 * time.Minute)
+
+	m := Model{
+		dueSoonWindows: []time.Duration{time.Hour},
+		tasks: []domain.Task{
+			{ID: "t1", DueAt: &past},
+			{ID: "t2", DueAt: &soon},
+			{ID: "t3", DueAt: &later},
+			{ID: "t4", DueAt: &soon, ArchivedAt: &archivedAt},
+		},
+	}
+	overdue, dueSoon := m.dueCounts(now)
+	if overdue != 1 || dueSoon != 1 {
+		t.Fatalf("expected overdue=1 dueSoon=1, got %d/%d", overdue, dueSoon)
+	}
+
+	if got := dueWarning("2020-01-01", now); !strings.Contains(got, "in the past") {
+		t.Fatalf("expected due warning for past datetime, got %q", got)
+	}
+	if got := dueWarning("2099-01-01", now); got != "" {
+		t.Fatalf("expected no warning for future datetime, got %q", got)
+	}
+
+	if got := formatDueValue(&soon); !strings.Contains(got, "12:30") {
+		t.Fatalf("expected due value with time, got %q", got)
+	}
+	dateOnly := time.Date(2026, 2, 22, 0, 0, 0, 0, time.UTC)
+	if got := formatDueValue(&dateOnly); got != "2026-02-22" {
+		t.Fatalf("expected date-only due format, got %q", got)
+	}
+}
+
+// TestModelMultiSelectBulkMoveUndoRedo verifies behavior for the covered scenario.
+func TestModelMultiSelectBulkMoveUndoRedo(t *testing.T) {
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	c2, _ := domain.NewColumn("c2", p.ID, "Doing", 1, 0, now)
+	t1, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c1.ID,
+		Position:  0,
+		Title:     "One",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	t2, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t2",
+		ProjectID: p.ID,
+		ColumnID:  c1.ID,
+		Position:  1,
+		Title:     "Two",
+		Priority:  domain.PriorityLow,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c1, c2}, []domain.Task{t1, t2})
+	m := loadReadyModel(t, NewModel(svc))
+
+	m = applyMsg(t, m, keyRune(' '))
+	m = applyMsg(t, m, keyRune('j'))
+	m = applyMsg(t, m, keyRune(' '))
+	if len(m.selectedTaskIDs) != 2 {
+		t.Fatalf("expected 2 selected task ids, got %d", len(m.selectedTaskIDs))
+	}
+
+	updated, cmd := m.executeCommandPalette("bulk-move-right")
+	m = applyResult(t, updated, cmd)
+	if task, ok := svc.taskByID("t1"); !ok || task.ColumnID != c2.ID {
+		t.Fatalf("expected t1 moved to %s, got %#v ok=%t", c2.ID, task, ok)
+	}
+	if task, ok := svc.taskByID("t2"); !ok || task.ColumnID != c2.ID {
+		t.Fatalf("expected t2 moved to %s, got %#v ok=%t", c2.ID, task, ok)
+	}
+
+	m = applyMsg(t, m, keyRune('z'))
+	if task, ok := svc.taskByID("t1"); !ok || task.ColumnID != c1.ID {
+		t.Fatalf("expected t1 moved back to %s after undo, got %#v ok=%t", c1.ID, task, ok)
+	}
+	if task, ok := svc.taskByID("t2"); !ok || task.ColumnID != c1.ID {
+		t.Fatalf("expected t2 moved back to %s after undo, got %#v ok=%t", c1.ID, task, ok)
+	}
+	if !strings.Contains(strings.ToLower(m.status), "undo") {
+		t.Fatalf("expected undo status message, got %q", m.status)
+	}
+
+	m = applyMsg(t, m, keyRune('Z'))
+	if task, ok := svc.taskByID("t1"); !ok || task.ColumnID != c2.ID {
+		t.Fatalf("expected t1 moved again to %s after redo, got %#v ok=%t", c2.ID, task, ok)
+	}
+	if task, ok := svc.taskByID("t2"); !ok || task.ColumnID != c2.ID {
+		t.Fatalf("expected t2 moved again to %s after redo, got %#v ok=%t", c2.ID, task, ok)
+	}
+	if !strings.Contains(strings.ToLower(m.status), "redo") {
+		t.Fatalf("expected redo status message, got %q", m.status)
+	}
+}
+
+// TestModelActivityLogOverlay verifies behavior for the covered scenario.
+func TestModelActivityLogOverlay(t *testing.T) {
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	m := loadReadyModel(t, NewModel(svc))
+
+	m = applyMsg(t, m, keyRune(' '))
+	m = applyMsg(t, m, keyRune('g'))
+	if m.mode != modeActivityLog {
+		t.Fatalf("expected activity-log mode, got %v", m.mode)
+	}
+	out := m.renderModeOverlay(lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), lipgloss.NewStyle(), 96)
+	if !strings.Contains(out, "Activity Log") {
+		t.Fatalf("expected activity-log title, got %q", out)
+	}
+	if !strings.Contains(out, "select task") {
+		t.Fatalf("expected selection activity entry, got %q", out)
+	}
+	if !strings.Contains(out, ":") {
+		t.Fatalf("expected timestamp in activity entry, got %q", out)
+	}
+}
+
+// TestModelGroupingByPriority verifies behavior for the covered scenario.
+func TestModelGroupingByPriority(t *testing.T) {
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 1, now)
+	tLow, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Low first by position",
+		Priority:  domain.PriorityLow,
+	}, now)
+	tHigh, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t2",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  1,
+		Title:     "High later by position",
+		Priority:  domain.PriorityHigh,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{tLow, tHigh})
+	m := loadReadyModel(t, NewModel(svc, WithBoardConfig(BoardConfig{
+		ShowWIPWarnings: true,
+		GroupBy:         "priority",
+	})))
+	colTasks := m.tasksForColumn(c.ID)
+	if len(colTasks) != 2 {
+		t.Fatalf("expected 2 tasks, got %d", len(colTasks))
+	}
+	if colTasks[0].Priority != domain.PriorityHigh {
+		t.Fatalf("expected high-priority task first under priority grouping, got %#v", colTasks)
+	}
+	if got := m.groupLabelForTask(colTasks[0]); got != "Priority: High" {
+		t.Fatalf("unexpected group label %q", got)
+	}
+}
+
+// TestWithKeyConfigOverrides verifies behavior for the covered scenario.
+func TestWithKeyConfigOverrides(t *testing.T) {
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityLow,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	m := loadReadyModel(t, NewModel(svc, WithKeyConfig(KeyConfig{
+		CommandPalette: ";",
+		QuickActions:   ",",
+		MultiSelect:    "x",
+		ActivityLog:    "v",
+		Undo:           "u",
+		Redo:           "U",
+	})))
+
+	m = applyMsg(t, m, keyRune('x'))
+	if len(m.selectedTaskIDs) != 1 {
+		t.Fatalf("expected selection via configured key, got %d", len(m.selectedTaskIDs))
+	}
+	m = applyMsg(t, m, keyRune('v'))
+	if m.mode != modeActivityLog {
+		t.Fatalf("expected configured activity-log key to open modal, got %v", m.mode)
+	}
+}
+
+// TestModelSelectionHelpers verifies selection helper behavior for the covered scenario.
+func TestModelSelectionHelpers(t *testing.T) {
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	c1, _ := domain.NewColumn("c1", "p1", "To Do", 0, 0, now)
+	c2, _ := domain.NewColumn("c2", "p1", "Doing", 1, 0, now)
+	t1, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: "p1",
+		ColumnID:  c1.ID,
+		Position:  0,
+		Title:     "One",
+		Priority:  domain.PriorityLow,
+	}, now)
+	t2, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t2",
+		ProjectID: "p1",
+		ColumnID:  c2.ID,
+		Position:  0,
+		Title:     "Two",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	m := Model{
+		columns:         []domain.Column{c1, c2},
+		tasks:           []domain.Task{t1, t2},
+		selectedTaskIDs: map[string]struct{}{"t1": {}, "ghost": {}},
+	}
+
+	m.retainSelectionForLoadedTasks()
+	if m.isTaskSelected("ghost") {
+		t.Fatalf("expected stale selection removed, got %#v", m.selectedTaskIDs)
+	}
+	if !m.isTaskSelected("t1") {
+		t.Fatalf("expected t1 still selected")
+	}
+
+	if selected := m.toggleTaskSelection("t1"); selected {
+		t.Fatalf("expected toggle remove for existing selection")
+	}
+	if selected := m.toggleTaskSelection("t2"); !selected {
+		t.Fatalf("expected toggle add for missing selection")
+	}
+	if got := m.sortedSelectedTaskIDs(); len(got) != 1 || got[0] != "t2" {
+		t.Fatalf("expected deterministic selection order with t2 only, got %#v", got)
+	}
+
+	if removed := m.unselectTasks([]string{"t2", "missing"}); removed != 1 {
+		t.Fatalf("expected removed=1, got %d", removed)
+	}
+	m.toggleTaskSelection("t1")
+	m.toggleTaskSelection("t2")
+	if cleared := m.clearSelection(); cleared != 2 {
+		t.Fatalf("expected clearSelection to clear 2 entries, got %d", cleared)
+	}
+}
+
+// TestModelHistoryGuards verifies undo/redo guard behavior for the covered scenario.
+func TestModelHistoryGuards(t *testing.T) {
+	m := Model{
+		selectedTaskIDs: map[string]struct{}{},
+	}
+
+	updated, cmd := m.undoLastMutation()
+	mOut, ok := updated.(Model)
+	if !ok {
+		t.Fatalf("expected Model from undo guard, got %T", updated)
+	}
+	if cmd != nil {
+		t.Fatalf("expected nil cmd when undo stack empty")
+	}
+	if mOut.status != "nothing to undo" {
+		t.Fatalf("expected empty-stack undo status, got %q", mOut.status)
+	}
+
+	mOut.undoStack = []historyActionSet{
+		{
+			Label:    "bulk hard delete",
+			Undoable: false,
+			Steps: []historyStep{
+				{Kind: historyStepHardDelete, TaskID: "t1"},
+			},
+		},
+	}
+	updated, _ = mOut.undoLastMutation()
+	mOut, ok = updated.(Model)
+	if !ok {
+		t.Fatalf("expected Model from non-undoable guard, got %T", updated)
+	}
+	if mOut.status != "last action cannot be undone" {
+		t.Fatalf("expected non-undoable guard status, got %q", mOut.status)
+	}
+	if len(mOut.undoStack) != 0 {
+		t.Fatalf("expected undo stack popped for non-undoable action, got %d", len(mOut.undoStack))
+	}
+	if len(mOut.activityLog) == 0 || !strings.Contains(mOut.activityLog[len(mOut.activityLog)-1].Summary, "undo") {
+		t.Fatalf("expected activity log entry for undo-unavailable path, got %#v", mOut.activityLog)
+	}
+
+	mOut.redoStack = nil
+	updated, cmd = mOut.redoLastMutation()
+	mOut, ok = updated.(Model)
+	if !ok {
+		t.Fatalf("expected Model from redo guard, got %T", updated)
+	}
+	if cmd != nil {
+		t.Fatalf("expected nil cmd when redo stack empty")
+	}
+	if mOut.status != "nothing to redo" {
+		t.Fatalf("expected empty-stack redo status, got %q", mOut.status)
+	}
+}
+
+// TestModelExecuteHistorySetHardDeleteUndo verifies hard-delete undo guard behavior.
+func TestModelExecuteHistorySetHardDeleteUndo(t *testing.T) {
+	m := Model{}
+	msg := m.executeHistorySet(historyActionSet{
+		Label: "hard delete selection",
+		Steps: []historyStep{
+			{Kind: historyStepHardDelete, TaskID: "t1"},
+		},
+	}, true)()
+	action, ok := msg.(actionMsg)
+	if !ok {
+		t.Fatalf("expected actionMsg from executeHistorySet, got %T", msg)
+	}
+	if !strings.Contains(action.status, "hard delete cannot be restored") {
+		t.Fatalf("expected hard-delete undo guard message, got %q", action.status)
+	}
+}
+
+// TestModelMoveStepBuilderAndGroupingHelpers verifies helper behavior for ordering/grouping.
+func TestModelMoveStepBuilderAndGroupingHelpers(t *testing.T) {
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	c1, _ := domain.NewColumn("c1", "p1", "To Do", 0, 0, now)
+	c2, _ := domain.NewColumn("c2", "p1", "Doing", 1, 0, now)
+	t1, _ := domain.NewTask(domain.TaskInput{
+		ID:             "t1",
+		ProjectID:      "p1",
+		ColumnID:       c1.ID,
+		Position:       0,
+		Title:          "One",
+		Priority:       domain.PriorityHigh,
+		LifecycleState: domain.StateTodo,
+	}, now)
+	t2, _ := domain.NewTask(domain.TaskInput{
+		ID:             "t2",
+		ProjectID:      "p1",
+		ColumnID:       c1.ID,
+		Position:       1,
+		Title:          "Two",
+		Priority:       domain.PriorityLow,
+		LifecycleState: domain.StateDone,
+	}, now)
+	t3, _ := domain.NewTask(domain.TaskInput{
+		ID:             "t3",
+		ProjectID:      "p1",
+		ColumnID:       c2.ID,
+		Position:       0,
+		Title:          "Three",
+		Priority:       domain.PriorityMedium,
+		LifecycleState: domain.StateProgress,
+	}, now)
+	m := Model{
+		columns: []domain.Column{c1, c2},
+		tasks:   []domain.Task{t1, t2, t3},
+	}
+
+	if got := m.buildMoveSteps([]string{"t1", "t2"}, 0); got != nil {
+		t.Fatalf("expected nil move steps for delta=0, got %#v", got)
+	}
+	steps := m.buildMoveSteps([]string{"t2", "t1"}, 1)
+	if len(steps) != 2 {
+		t.Fatalf("expected 2 move steps, got %#v", steps)
+	}
+	if steps[0].TaskID != "t1" || steps[1].TaskID != "t2" {
+		t.Fatalf("expected deterministic board ordering, got %#v", steps)
+	}
+	if steps[0].ToPosition != 1 || steps[1].ToPosition != 2 {
+		t.Fatalf("expected target column append ordering, got %#v", steps)
+	}
+
+	if got := normalizeBoardGroupBy(" PRIORITY "); got != "priority" {
+		t.Fatalf("unexpected normalizeBoardGroupBy priority result: %q", got)
+	}
+	if got := normalizeBoardGroupBy("state"); got != "state" {
+		t.Fatalf("unexpected normalizeBoardGroupBy state result: %q", got)
+	}
+	if got := normalizeBoardGroupBy("weird"); got != "none" {
+		t.Fatalf("unexpected normalizeBoardGroupBy fallback result: %q", got)
+	}
+
+	m.boardGroupBy = "priority"
+	if got := m.groupLabelForTask(t1); got != "Priority: High" {
+		t.Fatalf("unexpected priority group label: %q", got)
+	}
+	m.boardGroupBy = "state"
+	if got := m.groupLabelForTask(t3); got != "State: In Progress" {
+		t.Fatalf("unexpected state group label: %q", got)
+	}
+	if rank := taskGroupRank(t1, "priority"); rank != 0 {
+		t.Fatalf("expected high priority rank=0, got %d", rank)
+	}
+	if rank := taskGroupRank(t2, "state"); rank != 2 {
+		t.Fatalf("expected done state rank=2, got %d", rank)
+	}
+}
+
+// TestModelActivityAndHistoryBounds verifies capped retention and transition helpers.
+func TestModelActivityAndHistoryBounds(t *testing.T) {
+	m := Model{}
+	for i := 0; i < 205; i++ {
+		m.appendActivity(activityEntry{
+			At:      time.Date(2026, 2, 21, 12, 0, i%60, 0, time.UTC),
+			Summary: "event",
+		})
+	}
+	if len(m.activityLog) != 200 {
+		t.Fatalf("expected bounded activity log length=200, got %d", len(m.activityLog))
+	}
+	if m.activityLog[0].Target != "-" {
+		t.Fatalf("expected default activity target fallback, got %#v", m.activityLog[0])
+	}
+
+	m.redoStack = []historyActionSet{{ID: 99}}
+	for i := 0; i < 105; i++ {
+		m.pushUndoHistory(historyActionSet{
+			Label:    "step",
+			Undoable: true,
+			Steps:    []historyStep{{Kind: historyStepMove, TaskID: "t1"}},
+		})
+	}
+	if len(m.undoStack) != 100 {
+		t.Fatalf("expected bounded undo stack length=100, got %d", len(m.undoStack))
+	}
+	if len(m.redoStack) != 0 {
+		t.Fatalf("expected redo stack cleared after new push, got %d", len(m.redoStack))
+	}
+
+	last := m.undoStack[len(m.undoStack)-1]
+	m.applyUndoTransition(last)
+	if len(m.redoStack) != 1 {
+		t.Fatalf("expected redo stack append after applyUndoTransition, got %d", len(m.redoStack))
+	}
+	m.applyRedoTransition(last)
+	if len(m.undoStack) == 0 {
+		t.Fatalf("expected undo stack append after applyRedoTransition")
+	}
+}
+
+// TestModelModeLabelPromptAndActivityTimestamp verifies mode helper rendering.
+func TestModelModeLabelPromptAndActivityTimestamp(t *testing.T) {
+	m := Model{mode: modeActivityLog}
+	if got := m.modeLabel(); got != "activity" {
+		t.Fatalf("unexpected mode label %q", got)
+	}
+	if got := m.modePrompt(); !strings.Contains(got, "activity log") {
+		t.Fatalf("unexpected mode prompt %q", got)
+	}
+	if got := formatActivityTimestamp(time.Time{}); got != "--:--:--" {
+		t.Fatalf("unexpected zero timestamp format %q", got)
+	}
+	old := time.Date(2024, 1, 10, 5, 4, 0, 0, time.Local)
+	if got := formatActivityTimestamp(old); !strings.Contains(got, "01-10") {
+		t.Fatalf("expected old-date timestamp to include month/day, got %q", got)
+	}
+	now := time.Now()
+	if got := formatActivityTimestamp(now); !strings.Contains(got, ":") {
+		t.Fatalf("expected time-of-day timestamp, got %q", got)
+	}
+}
+
+// TestResourcePickerHelpers verifies filesystem picker helper behavior.
+func TestResourcePickerHelpers(t *testing.T) {
+	root := t.TempDir()
+	projectDir := filepath.Join(root, "project")
+	if err := os.MkdirAll(filepath.Join(projectDir, "docs"), 0o755); err != nil {
+		t.Fatalf("mkdir docs: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "README.md"), []byte("ok"), 0o644); err != nil {
+		t.Fatalf("write README: %v", err)
+	}
+
+	entries, current, err := listResourcePickerEntries(projectDir, projectDir)
+	if err != nil {
+		t.Fatalf("listResourcePickerEntries root: %v", err)
+	}
+	if current != projectDir {
+		t.Fatalf("expected current dir %q, got %q", projectDir, current)
+	}
+	if len(entries) < 2 {
+		t.Fatalf("expected at least docs+README entries, got %#v", entries)
+	}
+	if !entries[0].IsDir {
+		t.Fatalf("expected directories sorted before files, got %#v", entries)
+	}
+
+	// Outside paths should clamp back to root.
+	_, current, err = listResourcePickerEntries(projectDir, root)
+	if err != nil {
+		t.Fatalf("listResourcePickerEntries clamp: %v", err)
+	}
+	if current != projectDir {
+		t.Fatalf("expected clamped current dir %q, got %q", projectDir, current)
+	}
+}
+
+// TestResourceRefHelpers verifies reference normalization and duplicate suppression.
+func TestResourceRefHelpers(t *testing.T) {
+	root := t.TempDir()
+	filePath := filepath.Join(root, "notes.txt")
+	if err := os.WriteFile(filePath, []byte("ok"), 0o644); err != nil {
+		t.Fatalf("write notes: %v", err)
+	}
+
+	ref := buildResourceRef(root, filePath, false)
+	if ref.ResourceType != domain.ResourceTypeLocalFile {
+		t.Fatalf("expected local_file resource, got %q", ref.ResourceType)
+	}
+	if ref.PathMode != domain.PathModeRelative {
+		t.Fatalf("expected relative path mode under root, got %q", ref.PathMode)
+	}
+	if ref.BaseAlias != "project_root" {
+		t.Fatalf("expected project_root base alias, got %q", ref.BaseAlias)
+	}
+
+	refs, added := appendResourceRefIfMissing(nil, ref)
+	if !added || len(refs) != 1 {
+		t.Fatalf("expected first ref append, got added=%t refs=%#v", added, refs)
+	}
+	refs, added = appendResourceRefIfMissing(refs, ref)
+	if added || len(refs) != 1 {
+		t.Fatalf("expected duplicate suppression, got added=%t refs=%#v", added, refs)
+	}
+}
+
+// TestProjectionAndRollupHelpers verifies subtree projection and summary helper behavior.
+func TestProjectionAndRollupHelpers(t *testing.T) {
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	c1, _ := domain.NewColumn("c1", "p1", "To Do", 0, 0, now)
+	c2, _ := domain.NewColumn("c2", "p1", "Doing", 1, 0, now)
+	phase, _ := domain.NewTask(domain.TaskInput{
+		ID:        "phase",
+		ProjectID: "p1",
+		ColumnID:  c1.ID,
+		Position:  0,
+		Kind:      domain.WorkKindPhase,
+		Title:     "Phase",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	child, _ := domain.NewTask(domain.TaskInput{
+		ID:        "child",
+		ProjectID: "p1",
+		ParentID:  phase.ID,
+		ColumnID:  c2.ID,
+		Position:  0,
+		Title:     "Child",
+		Priority:  domain.PriorityLow,
+	}, now)
+	unrelated, _ := domain.NewTask(domain.TaskInput{
+		ID:        "other",
+		ProjectID: "p1",
+		ColumnID:  c1.ID,
+		Position:  1,
+		Title:     "Other",
+		Priority:  domain.PriorityHigh,
+	}, now)
+
+	m := Model{
+		columns: []domain.Column{c1, c2},
+		tasks:   []domain.Task{phase, child, unrelated},
+		dependencyRollup: domain.DependencyRollup{
+			TotalItems:                3,
+			BlockedItems:              1,
+			UnresolvedDependencyEdges: 2,
+			DependencyEdges:           4,
+		},
+	}
+	m.projectionRootTaskID = phase.ID
+	set := m.projectedTaskSet()
+	if len(set) != 2 {
+		t.Fatalf("expected projected set with phase+child, got %#v", set)
+	}
+	if _, ok := set[unrelated.ID]; ok {
+		t.Fatalf("did not expect unrelated task in projected set")
+	}
+
+	col1 := m.tasksForColumn(c1.ID)
+	if len(col1) != 1 || col1[0].ID != phase.ID {
+		t.Fatalf("expected column to show focused subtree root only, got %#v", col1)
+	}
+	if breadcrumb := m.projectionBreadcrumb(); breadcrumb != "Phase" {
+		t.Fatalf("unexpected projection breadcrumb %q", breadcrumb)
+	}
+	if summary := m.dependencyRollupSummary(); !strings.Contains(summary, "blocked 1") {
+		t.Fatalf("unexpected dependency summary %q", summary)
+	}
+}
+
+// TestProjectRootFallback verifies configured root and fallback behavior.
+func TestProjectRootFallback(t *testing.T) {
+	root := t.TempDir()
+	p := domain.Project{ID: "p1", Slug: "inbox", Name: "Inbox"}
+	m := Model{
+		projects:     []domain.Project{p},
+		projectRoots: map[string]string{"inbox": root},
+	}
+	if got := m.resourcePickerRootForCurrentProject(); got != root {
+		t.Fatalf("expected configured project root %q, got %q", root, got)
+	}
+
+	m.projectRoots = map[string]string{}
+	m.defaultRootDir = "."
+	if got := m.resourcePickerRootForCurrentProject(); got == "" {
+		t.Fatalf("expected non-empty fallback root")
+	}
+}
+
+// TestLabelInheritanceHelpers verifies label inheritance and picker helper behavior.
+func TestLabelInheritanceHelpers(t *testing.T) {
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	p := domain.Project{ID: "p1", Slug: "inbox", Name: "Inbox"}
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	phase, _ := domain.NewTask(domain.TaskInput{
+		ID:        "phase",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Kind:      domain.WorkKindPhase,
+		Position:  0,
+		Title:     "Phase",
+		Labels:    []string{"PhaseA", "shared"},
+		Priority:  domain.PriorityMedium,
+	}, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "task",
+		ProjectID: p.ID,
+		ParentID:  phase.ID,
+		ColumnID:  c.ID,
+		Position:  1,
+		Title:     "Task",
+		Labels:    []string{"task-only"},
+		Priority:  domain.PriorityLow,
+	}, now)
+	m := Model{
+		projects:            []domain.Project{p},
+		columns:             []domain.Column{c},
+		tasks:               []domain.Task{phase, task},
+		selectedColumn:      0,
+		selectedTask:        1,
+		allowedLabelGlobal:  []string{"global", "shared"},
+		allowedLabelProject: map[string][]string{"inbox": {"project", "shared"}},
+	}
+
+	phaseLabels := m.labelsFromPhaseAncestors(task)
+	if len(phaseLabels) != 2 || phaseLabels[0] != "phasea" {
+		t.Fatalf("unexpected phase ancestor labels %#v", phaseLabels)
+	}
+
+	merged := mergeLabelSources(labelInheritanceSources{
+		Global:  []string{"Global", "shared"},
+		Project: []string{"Project", "shared"},
+		Phase:   []string{"PhaseA", "project"},
+	})
+	if len(merged) != 4 || merged[0] != "global" {
+		t.Fatalf("unexpected merged label set %#v", merged)
+	}
+
+	m.taskFormParentID = phase.ID
+	_ = m.startTaskForm(nil)
+	m.taskFormParentID = phase.ID
+	items := m.taskFormLabelPickerItems()
+	if len(items) == 0 {
+		t.Fatalf("expected label picker items from inheritance sources")
+	}
+
+	m.formInputs[4].SetValue("alpha")
+	m.appendTaskFormLabel("beta")
+	m.appendTaskFormLabel("alpha")
+	if got := m.formInputs[4].Value(); got != "alpha,beta" {
+		t.Fatalf("expected de-duplicated label append, got %q", got)
+	}
+}
+
+// TestResourcePickerEntrySelectionAndParent verifies picker-selection helper behavior.
+func TestResourcePickerEntrySelectionAndParent(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "child"), 0o755); err != nil {
+		t.Fatalf("mkdir child: %v", err)
+	}
+	m := Model{
+		resourcePickerRoot:  root,
+		resourcePickerDir:   filepath.Join(root, "child"),
+		resourcePickerItems: []resourcePickerEntry{{Name: "child", Path: filepath.Join(root, "child"), IsDir: true}},
+		resourcePickerIndex: 0,
+	}
+	entry, ok := m.selectedResourcePickerEntry()
+	if !ok || entry.Name != "child" {
+		t.Fatalf("expected selected picker entry child, got %#v ok=%t", entry, ok)
+	}
+
+	msg := m.openResourcePickerParent()()
+	loaded, ok := msg.(resourcePickerLoadedMsg)
+	if !ok {
+		t.Fatalf("expected resourcePickerLoadedMsg, got %T", msg)
+	}
+	if loaded.err != nil {
+		t.Fatalf("expected parent directory load success, got %v", loaded.err)
+	}
+	if loaded.current != root {
+		t.Fatalf("expected parent load to clamp at root %q, got %q", root, loaded.current)
+	}
+}
+
+// TestModelResourcePickerAttachFromTaskInfoAndEdit verifies resource attachment flows.
+func TestModelResourcePickerAttachFromTaskInfoAndEdit(t *testing.T) {
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "docs"), 0o755); err != nil {
+		t.Fatalf("Mkdir() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "notes.md"), []byte("spec"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	m := loadReadyModel(t, NewModel(svc, WithProjectRoots(map[string]string{"inbox": root})))
+	m = applyMsg(t, m, keyRune('i'))
+	m = applyMsg(t, m, keyRune('r'))
+	if m.mode != modeResourcePicker {
+		t.Fatalf("expected resource picker mode from task info, got %v", m.mode)
+	}
+	if got := strings.TrimSpace(m.resourcePickerRoot); got != root {
+		t.Fatalf("expected resource root %q, got %q", root, got)
+	}
+	m = applyMsg(t, m, keyRune('j')) // first file after directory entry
+	m = applyMsg(t, m, keyRune('a'))
+	if m.mode != modeTaskInfo {
+		t.Fatalf("expected return to task info mode after attach, got %v", m.mode)
+	}
+
+	updated, ok := svc.taskByID("t1")
+	if !ok {
+		t.Fatal("expected updated task in fake service")
+	}
+	if len(updated.Metadata.ResourceRefs) != 1 {
+		t.Fatalf("expected 1 attached resource, got %#v", updated.Metadata.ResourceRefs)
+	}
+	ref := updated.Metadata.ResourceRefs[0]
+	if ref.ResourceType != domain.ResourceTypeLocalFile {
+		t.Fatalf("expected local file resource type, got %q", ref.ResourceType)
+	}
+	if ref.PathMode != domain.PathModeRelative || ref.BaseAlias != "project_root" {
+		t.Fatalf("expected project-root relative reference, got %#v", ref)
+	}
+	if filepath.ToSlash(ref.Location) != "notes.md" {
+		t.Fatalf("expected relative location notes.md, got %q", ref.Location)
+	}
+
+	m.mode = modeNone
+	m = applyMsg(t, m, keyRune('e'))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+	if m.mode != modeResourcePicker {
+		t.Fatalf("expected resource picker mode from edit-task ctrl+r, got %v", m.mode)
+	}
+}
+
+// TestModelLabelInheritanceSourcesAndPicker verifies inherited label UX in task info/form flows.
+func TestModelLabelInheritanceSourcesAndPicker(t *testing.T) {
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	phase, _ := domain.NewTask(domain.TaskInput{
+		ID:        "phase-1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Kind:      domain.WorkKindPhase,
+		Title:     "Phase",
+		Priority:  domain.PriorityMedium,
+		Labels:    []string{"phase-label"},
+	}, now)
+	child, _ := domain.NewTask(domain.TaskInput{
+		ID:        "task-1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  1,
+		ParentID:  phase.ID,
+		Kind:      domain.WorkKindTask,
+		Title:     "Child Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{phase, child})
+	m := loadReadyModel(t, NewModel(svc, WithLabelConfig(LabelConfig{
+		Global:   []string{"global-label"},
+		Projects: map[string][]string{"inbox": []string{"project-label"}},
+	})))
+
+	m = applyMsg(t, m, keyRune('j')) // select child task
+	m = applyMsg(t, m, keyRune('i'))
+	info := m.renderModeOverlay(lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), lipgloss.NewStyle(), 96)
+	if !strings.Contains(info, "effective labels") {
+		t.Fatalf("expected effective labels section, got %q", info)
+	}
+	if !strings.Contains(info, "global: global-label") || !strings.Contains(info, "project: project-label") || !strings.Contains(info, "phase: phase-label") {
+		t.Fatalf("expected inherited label sources in task info, got %q", info)
+	}
+
+	m = applyMsg(t, m, keyRune('e'))
+	for i := 0; i < 4; i++ {
+		m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	}
+	if m.formFocus != 4 {
+		t.Fatalf("expected labels form focus, got %d", m.formFocus)
+	}
+	editOverlay := m.renderModeOverlay(lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), lipgloss.NewStyle(), 96)
+	if !strings.Contains(editOverlay, "inherited labels") {
+		t.Fatalf("expected inherited label hint in task form, got %q", editOverlay)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: 'l', Mod: tea.ModCtrl})
+	if m.mode != modeLabelPicker {
+		t.Fatalf("expected label picker mode, got %v", m.mode)
+	}
+	m = applyMsg(t, m, keyRune('j'))
+	m = applyMsg(t, m, keyRune('j'))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeEditTask {
+		t.Fatalf("expected return to edit-task after picker choose, got %v", m.mode)
+	}
+	if got := m.formInputs[4].Value(); !strings.Contains(got, "phase-label") {
+		t.Fatalf("expected appended phase label in form value, got %q", got)
+	}
+}
+
+// TestModelProjectionFocusBreadcrumbMode verifies subtree focus mode and breadcrumb switching.
+func TestModelProjectionFocusBreadcrumbMode(t *testing.T) {
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	parent, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-parent",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Parent",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	child, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-child",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  1,
+		ParentID:  parent.ID,
+		Title:     "Child",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	grandchild, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-grandchild",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  2,
+		ParentID:  child.ID,
+		Title:     "Grandchild",
+		Priority:  domain.PriorityLow,
+	}, now)
+	other, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-other",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  3,
+		Title:     "Unrelated",
+		Priority:  domain.PriorityLow,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{parent, child, grandchild, other})
+	m := loadReadyModel(t, NewModel(svc))
+
+	m = applyMsg(t, m, keyRune('j')) // select child
+	m = applyMsg(t, m, keyRune('f'))
+	if m.projectionRootTaskID != child.ID {
+		t.Fatalf("expected projection root %q, got %q", child.ID, m.projectionRootTaskID)
+	}
+	tasks := m.currentColumnTasks()
+	if len(tasks) != 2 || tasks[0].ID != child.ID || tasks[1].ID != grandchild.ID {
+		t.Fatalf("expected projected child subtree only, got %#v", tasks)
+	}
+	if got := m.projectionBreadcrumb(); got != "Parent / Child" {
+		t.Fatalf("expected breadcrumb Parent / Child, got %q", got)
+	}
+	if m.modePrompt() != "" {
+		t.Fatalf("expected normal-mode prompt while projected, got %q", m.modePrompt())
+	}
+
+	m = applyMsg(t, m, keyRune('F'))
+	if m.projectionRootTaskID != "" {
+		t.Fatalf("expected focus cleared after F, got %q", m.projectionRootTaskID)
+	}
+	if len(m.currentColumnTasks()) != 4 {
+		t.Fatalf("expected full board tasks after clearing focus, got %d", len(m.currentColumnTasks()))
+	}
+}
+
+// TestModelDependencyRollupAndTaskInfoHints verifies rollup summary and task dependency hints.
+func TestModelDependencyRollupAndTaskInfoHints(t *testing.T) {
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	done, _ := domain.NewTask(domain.TaskInput{
+		ID:             "t-done",
+		ProjectID:      p.ID,
+		ColumnID:       c.ID,
+		Position:       0,
+		Title:          "Finished",
+		Priority:       domain.PriorityLow,
+		LifecycleState: domain.StateDone,
+	}, now)
+	blocked, _ := domain.NewTask(domain.TaskInput{
+		ID:             "t-blocked",
+		ProjectID:      p.ID,
+		ColumnID:       c.ID,
+		Position:       1,
+		Title:          "Blocked",
+		Priority:       domain.PriorityHigh,
+		LifecycleState: domain.StateTodo,
+		Metadata: domain.TaskMetadata{
+			DependsOn:     []string{"t-done", "t-missing"},
+			BlockedBy:     []string{"t-done"},
+			BlockedReason: "waiting on integration",
+		},
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{done, blocked})
+	m := loadReadyModel(t, NewModel(svc))
+
+	if summary := m.dependencyRollupSummary(); !strings.Contains(summary, "total 2") || !strings.Contains(summary, "blocked 1") || !strings.Contains(summary, "unresolved 1") {
+		t.Fatalf("expected dependency rollup summary counts, got %q", summary)
+	}
+
+	m = applyMsg(t, m, keyRune('j'))
+	m = applyMsg(t, m, keyRune('i'))
+	info := m.renderModeOverlay(lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), lipgloss.NewStyle(), 96)
+	if !strings.Contains(info, "depends_on: t-done(Finished)") {
+		t.Fatalf("expected depends_on hints in task info, got %q", info)
+	}
+	if !strings.Contains(info, "blocked_by: t-done(Finished)") {
+		t.Fatalf("expected blocked_by hints in task info, got %q", info)
+	}
+	if !strings.Contains(info, "blocked_reason: waiting on integration") {
+		t.Fatalf("expected blocked_reason hint in task info, got %q", info)
+	}
+}
+
+// applyResult applies a model+command result tuple.
+func applyResult(t *testing.T, updated tea.Model, cmd tea.Cmd) Model {
+	t.Helper()
+	out, ok := updated.(Model)
+	if !ok {
+		t.Fatalf("expected Model, got %T", updated)
+	}
+	return applyCmd(t, out, cmd)
 }
 
 // loadReadyModel loads required data for the current operation.

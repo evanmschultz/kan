@@ -176,3 +176,46 @@ func TestModelGoldenHelpExpandedOutput(t *testing.T) {
 	}
 	teatest.RequireEqualOutput(t, captured.Bytes())
 }
+
+// TestModelWithTeatestWIPWarning verifies behavior for the covered scenario.
+func TestModelWithTeatestWIPWarning(t *testing.T) {
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 1, now)
+	t1, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c1.ID,
+		Position:  0,
+		Title:     "First",
+		Priority:  domain.PriorityLow,
+	}, now)
+	t2, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t2",
+		ProjectID: p.ID,
+		ColumnID:  c1.ID,
+		Position:  1,
+		Title:     "Second",
+		Priority:  domain.PriorityMedium,
+	}, now)
+
+	m := NewModel(newFakeService(
+		[]domain.Project{p},
+		[]domain.Column{c1},
+		[]domain.Task{t1, t2},
+	), WithBoardConfig(BoardConfig{
+		ShowWIPWarnings: true,
+		GroupBy:         "none",
+	}))
+	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(140, 35))
+	t.Cleanup(func() {
+		_ = tm.Quit()
+	})
+
+	teatest.WaitFor(t, tm.Output(), func(out []byte) bool {
+		return strings.Contains(string(out), "WIP limit exceeded")
+	}, teatest.WithDuration(2*time.Second), teatest.WithCheckInterval(10*time.Millisecond))
+
+	tm.Send(tea.KeyPressMsg{Code: 'q', Text: "q"})
+	tm.WaitFinished(t, teatest.WithFinalTimeout(2*time.Second))
+}

@@ -3,8 +3,8 @@
 ╭────────────────────────────────────────╮
 │                                        │
 │  To Do (1)                             │
-│  > │ Golden board task                 │
-│    │ [medium|#alpha,#beta]             │
+│  │  Golden board task                  │
+│  │  [medium|#alpha,#beta]              │
 │                                        │
 │                                        │
 │                                        │
@@ -21,4 +21,8 @@
 │                                        │
 │                                        │
 ╰────────────────────────────────────────╯
-project: Inbox • tasks: 1 • selected: Golden board task[4B n new task • i/enter task info • e edit task • N new project • : command palette …[?1049l[?25h[?2004l[?1002l[?1003l[?1006l[=0;1u
+project: Inbox • tasks: 1 • selected: Golden board task
+deps: total 1 • blocked 0 • unresolved 0 • edges 0
+0 overdue * 0 due soon
+
+ n new task • s new subtask • i/enter task info • e edit task • f focus subtree …[?1049l[?25h[?2004l[?1002l[?1003l[?1006l[=0;1u

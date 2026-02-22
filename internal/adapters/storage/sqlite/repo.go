@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -91,6 +92,9 @@ func (r *Repository) migrate(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS tasks (
 			id TEXT PRIMARY KEY,
 			project_id TEXT NOT NULL,
+			parent_id TEXT NOT NULL DEFAULT '',
+			kind TEXT NOT NULL DEFAULT 'task',
+			lifecycle_state TEXT NOT NULL DEFAULT 'todo',
 			column_id TEXT NOT NULL,
 			position INTEGER NOT NULL,
 			title TEXT NOT NULL,
@@ -98,14 +102,61 @@ func (r *Repository) migrate(ctx context.Context) error {
 			priority TEXT NOT NULL,
 			due_at TEXT,
 			labels_json TEXT NOT NULL DEFAULT '[]',
+			metadata_json TEXT NOT NULL DEFAULT '{}',
+			created_by_actor TEXT NOT NULL DEFAULT 'kan-user',
+			updated_by_actor TEXT NOT NULL DEFAULT 'kan-user',
+			updated_by_type TEXT NOT NULL DEFAULT 'user',
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL,
+			started_at TEXT,
+			completed_at TEXT,
 			archived_at TEXT,
+			canceled_at TEXT,
 			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
 			FOREIGN KEY(column_id) REFERENCES columns_v1(id) ON DELETE CASCADE
 		);`,
+		`CREATE TABLE IF NOT EXISTS work_items (
+			id TEXT PRIMARY KEY,
+			project_id TEXT NOT NULL,
+			parent_id TEXT NOT NULL DEFAULT '',
+			kind TEXT NOT NULL DEFAULT 'task',
+			lifecycle_state TEXT NOT NULL DEFAULT 'todo',
+			column_id TEXT NOT NULL,
+			position INTEGER NOT NULL,
+			title TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			priority TEXT NOT NULL,
+			due_at TEXT,
+			labels_json TEXT NOT NULL DEFAULT '[]',
+			metadata_json TEXT NOT NULL DEFAULT '{}',
+			created_by_actor TEXT NOT NULL DEFAULT 'kan-user',
+			updated_by_actor TEXT NOT NULL DEFAULT 'kan-user',
+			updated_by_type TEXT NOT NULL DEFAULT 'user',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			started_at TEXT,
+			completed_at TEXT,
+			archived_at TEXT,
+			canceled_at TEXT,
+			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
+			FOREIGN KEY(column_id) REFERENCES columns_v1(id) ON DELETE CASCADE
+		);`,
+		`CREATE TABLE IF NOT EXISTS change_events (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			project_id TEXT NOT NULL,
+			work_item_id TEXT NOT NULL,
+			operation TEXT NOT NULL,
+			actor_id TEXT NOT NULL,
+			actor_type TEXT NOT NULL,
+			metadata_json TEXT NOT NULL DEFAULT '{}',
+			created_at TEXT NOT NULL,
+			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+		);`,
 		`CREATE INDEX IF NOT EXISTS idx_columns_project_position ON columns_v1(project_id, position);`,
 		`CREATE INDEX IF NOT EXISTS idx_tasks_project_column_position ON tasks(project_id, column_id, position);`,
+		`CREATE INDEX IF NOT EXISTS idx_work_items_project_column_position ON work_items(project_id, column_id, position);`,
+		`CREATE INDEX IF NOT EXISTS idx_work_items_project_parent ON work_items(project_id, parent_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_change_events_project_created_at ON change_events(project_id, created_at DESC, id DESC);`,
 	}
 
 	for _, stmt := range stmts {
@@ -115,6 +166,90 @@ func (r *Repository) migrate(ctx context.Context) error {
 	}
 	if _, err := r.db.ExecContext(ctx, `ALTER TABLE projects ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'`); err != nil && !isDuplicateColumnErr(err) {
 		return fmt.Errorf("migrate sqlite add projects.metadata_json: %w", err)
+	}
+	taskAlterStatements := []string{
+		`ALTER TABLE tasks ADD COLUMN parent_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE tasks ADD COLUMN kind TEXT NOT NULL DEFAULT 'task'`,
+		`ALTER TABLE tasks ADD COLUMN lifecycle_state TEXT NOT NULL DEFAULT 'todo'`,
+		`ALTER TABLE tasks ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'`,
+		`ALTER TABLE tasks ADD COLUMN created_by_actor TEXT NOT NULL DEFAULT 'kan-user'`,
+		`ALTER TABLE tasks ADD COLUMN updated_by_actor TEXT NOT NULL DEFAULT 'kan-user'`,
+		`ALTER TABLE tasks ADD COLUMN updated_by_type TEXT NOT NULL DEFAULT 'user'`,
+		`ALTER TABLE tasks ADD COLUMN started_at TEXT`,
+		`ALTER TABLE tasks ADD COLUMN completed_at TEXT`,
+		`ALTER TABLE tasks ADD COLUMN canceled_at TEXT`,
+	}
+	for _, stmt := range taskAlterStatements {
+		if _, err := r.db.ExecContext(ctx, stmt); err != nil && !isDuplicateColumnErr(err) {
+			return fmt.Errorf("migrate sqlite tasks: %w", err)
+		}
+	}
+	workItemAlterStatements := []string{
+		`ALTER TABLE work_items ADD COLUMN parent_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE work_items ADD COLUMN kind TEXT NOT NULL DEFAULT 'task'`,
+		`ALTER TABLE work_items ADD COLUMN lifecycle_state TEXT NOT NULL DEFAULT 'todo'`,
+		`ALTER TABLE work_items ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'`,
+		`ALTER TABLE work_items ADD COLUMN created_by_actor TEXT NOT NULL DEFAULT 'kan-user'`,
+		`ALTER TABLE work_items ADD COLUMN updated_by_actor TEXT NOT NULL DEFAULT 'kan-user'`,
+		`ALTER TABLE work_items ADD COLUMN updated_by_type TEXT NOT NULL DEFAULT 'user'`,
+		`ALTER TABLE work_items ADD COLUMN started_at TEXT`,
+		`ALTER TABLE work_items ADD COLUMN completed_at TEXT`,
+		`ALTER TABLE work_items ADD COLUMN canceled_at TEXT`,
+	}
+	for _, stmt := range workItemAlterStatements {
+		if _, err := r.db.ExecContext(ctx, stmt); err != nil && !isDuplicateColumnErr(err) {
+			return fmt.Errorf("migrate sqlite work_items: %w", err)
+		}
+	}
+	if _, err := r.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_tasks_project_parent ON tasks(project_id, parent_id)`); err != nil {
+		return fmt.Errorf("migrate sqlite task parent index: %w", err)
+	}
+	if err := r.bridgeLegacyTasksToWorkItems(ctx); err != nil {
+		return err
+	}
+	return nil
+}
+
+// bridgeLegacyTasksToWorkItems copies legacy task rows into canonical work_items rows.
+func (r *Repository) bridgeLegacyTasksToWorkItems(ctx context.Context) error {
+	// Keep migration idempotent and non-destructive so existing tasks databases remain readable.
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO work_items(
+			id, project_id, parent_id, kind, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
+			metadata_json, created_by_actor, updated_by_actor, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
+		)
+		SELECT
+			t.id,
+			t.project_id,
+			t.parent_id,
+			t.kind,
+			t.lifecycle_state,
+			t.column_id,
+			t.position,
+			t.title,
+			t.description,
+			t.priority,
+			t.due_at,
+			t.labels_json,
+			t.metadata_json,
+			t.created_by_actor,
+			t.updated_by_actor,
+			t.updated_by_type,
+			t.created_at,
+			t.updated_at,
+			t.started_at,
+			t.completed_at,
+			t.archived_at,
+			t.canceled_at
+		FROM tasks t
+		WHERE NOT EXISTS (
+			SELECT 1
+			FROM work_items wi
+			WHERE wi.id = t.id
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("bridge legacy tasks to work_items: %w", err)
 	}
 	return nil
 }
@@ -267,10 +402,73 @@ func (r *Repository) CreateTask(ctx context.Context, t domain.Task) error {
 	if err != nil {
 		return err
 	}
-	_, err = r.db.ExecContext(ctx, `
-		INSERT INTO tasks(id, project_id, column_id, position, title, description, priority, due_at, labels_json, created_at, updated_at, archived_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, t.ID, t.ProjectID, t.ColumnID, t.Position, t.Title, t.Description, t.Priority, nullableTS(t.DueAt), string(labelsJSON), ts(t.CreatedAt), ts(t.UpdatedAt), nullableTS(t.ArchivedAt))
+	metadataJSON, err := json.Marshal(t.Metadata)
+	if err != nil {
+		return err
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO work_items(
+			id, project_id, parent_id, kind, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
+			metadata_json, created_by_actor, updated_by_actor, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`,
+		t.ID,
+		t.ProjectID,
+		t.ParentID,
+		string(t.Kind),
+		string(t.LifecycleState),
+		t.ColumnID,
+		t.Position,
+		t.Title,
+		t.Description,
+		t.Priority,
+		nullableTS(t.DueAt),
+		string(labelsJSON),
+		string(metadataJSON),
+		t.CreatedByActor,
+		t.UpdatedByActor,
+		string(t.UpdatedByType),
+		ts(t.CreatedAt),
+		ts(t.UpdatedAt),
+		nullableTS(t.StartedAt),
+		nullableTS(t.CompletedAt),
+		nullableTS(t.ArchivedAt),
+		nullableTS(t.CanceledAt),
+	)
+	if err != nil {
+		return err
+	}
+
+	err = insertTaskChangeEvent(ctx, tx, domain.ChangeEvent{
+		ProjectID:  t.ProjectID,
+		WorkItemID: t.ID,
+		Operation:  domain.ChangeOperationCreate,
+		ActorID:    chooseActorID(t.CreatedByActor, t.UpdatedByActor),
+		ActorType:  normalizeActorType(t.UpdatedByType),
+		Metadata: map[string]string{
+			"column_id": t.ColumnID,
+			"position":  strconv.Itoa(t.Position),
+			"title":     t.Title,
+		},
+		OccurredAt: t.CreatedAt,
+	})
+	if err != nil {
+		return err
+	}
+
+	err = tx.Commit()
 	return err
 }
 
@@ -280,32 +478,89 @@ func (r *Repository) UpdateTask(ctx context.Context, t domain.Task) error {
 	if err != nil {
 		return err
 	}
-	res, err := r.db.ExecContext(ctx, `
-		UPDATE tasks
-		SET column_id = ?, position = ?, title = ?, description = ?, priority = ?, due_at = ?, labels_json = ?, updated_at = ?, archived_at = ?
-		WHERE id = ?
-	`, t.ColumnID, t.Position, t.Title, t.Description, t.Priority, nullableTS(t.DueAt), string(labelsJSON), ts(t.UpdatedAt), nullableTS(t.ArchivedAt), t.ID)
+	metadataJSON, err := json.Marshal(t.Metadata)
 	if err != nil {
 		return err
 	}
-	return translateNoRows(res)
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	prev, err := getTaskByID(ctx, tx, t.ID)
+	if err != nil {
+		return err
+	}
+
+	res, err := tx.ExecContext(ctx, `
+		UPDATE work_items
+		SET parent_id = ?, kind = ?, lifecycle_state = ?, column_id = ?, position = ?, title = ?, description = ?, priority = ?, due_at = ?,
+		    labels_json = ?, metadata_json = ?, updated_by_actor = ?, updated_by_type = ?, updated_at = ?, started_at = ?, completed_at = ?, archived_at = ?, canceled_at = ?
+		WHERE id = ?
+	`,
+		t.ParentID,
+		string(t.Kind),
+		string(t.LifecycleState),
+		t.ColumnID,
+		t.Position,
+		t.Title,
+		t.Description,
+		t.Priority,
+		nullableTS(t.DueAt),
+		string(labelsJSON),
+		string(metadataJSON),
+		t.UpdatedByActor,
+		string(t.UpdatedByType),
+		ts(t.UpdatedAt),
+		nullableTS(t.StartedAt),
+		nullableTS(t.CompletedAt),
+		nullableTS(t.ArchivedAt),
+		nullableTS(t.CanceledAt),
+		t.ID,
+	)
+	if err != nil {
+		return err
+	}
+	if err := translateNoRows(res); err != nil {
+		return err
+	}
+
+	op, metadata := classifyTaskTransition(prev, t)
+	err = insertTaskChangeEvent(ctx, tx, domain.ChangeEvent{
+		ProjectID:  t.ProjectID,
+		WorkItemID: t.ID,
+		Operation:  op,
+		ActorID:    chooseActorID(t.UpdatedByActor, prev.UpdatedByActor),
+		ActorType:  normalizeActorType(t.UpdatedByType),
+		Metadata:   metadata,
+		OccurredAt: t.UpdatedAt,
+	})
+	if err != nil {
+		return err
+	}
+
+	err = tx.Commit()
+	return err
 }
 
 // GetTask returns task.
 func (r *Repository) GetTask(ctx context.Context, id string) (domain.Task, error) {
-	row := r.db.QueryRowContext(ctx, `
-		SELECT id, project_id, column_id, position, title, description, priority, due_at, labels_json, created_at, updated_at, archived_at
-		FROM tasks
-		WHERE id = ?
-	`, id)
-	return scanTask(row)
+	return getTaskByID(ctx, r.db, id)
 }
 
 // ListTasks lists tasks.
 func (r *Repository) ListTasks(ctx context.Context, projectID string, includeArchived bool) ([]domain.Task, error) {
 	query := `
-		SELECT id, project_id, column_id, position, title, description, priority, due_at, labels_json, created_at, updated_at, archived_at
-		FROM tasks
+		SELECT
+			id, project_id, parent_id, kind, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
+			metadata_json, created_by_actor, updated_by_actor, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
+		FROM work_items
 		WHERE project_id = ?
 	`
 	if !includeArchived {
@@ -332,11 +587,303 @@ func (r *Repository) ListTasks(ctx context.Context, projectID string, includeArc
 
 // DeleteTask deletes task.
 func (r *Repository) DeleteTask(ctx context.Context, id string) error {
-	res, err := r.db.ExecContext(ctx, `DELETE FROM tasks WHERE id = ?`, id)
+	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	return translateNoRows(res)
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	task, err := getTaskByID(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+
+	res, err := tx.ExecContext(ctx, `DELETE FROM work_items WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	if err := translateNoRows(res); err != nil {
+		return err
+	}
+
+	err = insertTaskChangeEvent(ctx, tx, domain.ChangeEvent{
+		ProjectID:  task.ProjectID,
+		WorkItemID: task.ID,
+		Operation:  domain.ChangeOperationDelete,
+		ActorID:    chooseActorID(task.UpdatedByActor, task.CreatedByActor),
+		ActorType:  normalizeActorType(task.UpdatedByType),
+		Metadata: map[string]string{
+			"column_id": task.ColumnID,
+			"position":  strconv.Itoa(task.Position),
+			"title":     task.Title,
+		},
+		OccurredAt: time.Now().UTC(),
+	})
+	if err != nil {
+		return err
+	}
+
+	err = tx.Commit()
+	return err
+}
+
+// ListProjectChangeEvents lists recent project events for activity-log consumption.
+func (r *Repository) ListProjectChangeEvents(ctx context.Context, projectID string, limit int) ([]domain.ChangeEvent, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, project_id, work_item_id, operation, actor_id, actor_type, metadata_json, created_at
+		FROM change_events
+		WHERE project_id = ?
+		ORDER BY created_at DESC, id DESC
+		LIMIT ?
+	`, projectID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]domain.ChangeEvent, 0)
+	for rows.Next() {
+		var (
+			event       domain.ChangeEvent
+			opRaw       string
+			actorType   string
+			metadataRaw string
+			createdRaw  string
+		)
+		if err := rows.Scan(&event.ID, &event.ProjectID, &event.WorkItemID, &opRaw, &event.ActorID, &actorType, &metadataRaw, &createdRaw); err != nil {
+			return nil, err
+		}
+		event.Operation = normalizeChangeOperation(opRaw)
+		event.ActorType = normalizeActorType(domain.ActorType(actorType))
+		event.OccurredAt = parseTS(createdRaw)
+		if strings.TrimSpace(metadataRaw) == "" {
+			metadataRaw = "{}"
+		}
+		if err := json.Unmarshal([]byte(metadataRaw), &event.Metadata); err != nil {
+			return nil, fmt.Errorf("decode change_events.metadata_json: %w", err)
+		}
+		if event.Metadata == nil {
+			event.Metadata = map[string]string{}
+		}
+		out = append(out, event)
+	}
+	return out, rows.Err()
+}
+
+// queryRower represents a query-only DB contract used by DB and Tx implementations.
+type queryRower interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+// getTaskByID returns a task using the canonical work_items table.
+func getTaskByID(ctx context.Context, q queryRower, id string) (domain.Task, error) {
+	row := q.QueryRowContext(ctx, `
+		SELECT
+			id, project_id, parent_id, kind, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
+			metadata_json, created_by_actor, updated_by_actor, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
+		FROM work_items
+		WHERE id = ?
+	`, id)
+	return scanTask(row)
+}
+
+// execerContext represents a write-only DB contract used by DB and Tx implementations.
+type execerContext interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+// insertTaskChangeEvent inserts a change-event ledger record.
+func insertTaskChangeEvent(ctx context.Context, execer execerContext, event domain.ChangeEvent) error {
+	metadataJSON, err := json.Marshal(event.Metadata)
+	if err != nil {
+		return fmt.Errorf("encode change event metadata: %w", err)
+	}
+	_, err = execer.ExecContext(ctx, `
+		INSERT INTO change_events(project_id, work_item_id, operation, actor_id, actor_type, metadata_json, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`,
+		event.ProjectID,
+		event.WorkItemID,
+		string(event.Operation),
+		chooseActorID(event.ActorID, "kan-user"),
+		string(normalizeActorType(event.ActorType)),
+		string(metadataJSON),
+		ts(normalizeEventTS(event.OccurredAt)),
+	)
+	if err != nil {
+		return fmt.Errorf("insert change event: %w", err)
+	}
+	return nil
+}
+
+// classifyTaskTransition derives the best operation category and metadata for a task update.
+func classifyTaskTransition(prev, next domain.Task) (domain.ChangeOperation, map[string]string) {
+	if prev.ArchivedAt == nil && next.ArchivedAt != nil {
+		return domain.ChangeOperationArchive, map[string]string{
+			"from_state": string(prev.LifecycleState),
+			"to_state":   string(next.LifecycleState),
+		}
+	}
+	if prev.ArchivedAt != nil && next.ArchivedAt == nil {
+		return domain.ChangeOperationRestore, map[string]string{
+			"from_state": string(prev.LifecycleState),
+			"to_state":   string(next.LifecycleState),
+		}
+	}
+	if prev.ColumnID != next.ColumnID || prev.Position != next.Position {
+		return domain.ChangeOperationMove, map[string]string{
+			"from_column_id": prev.ColumnID,
+			"to_column_id":   next.ColumnID,
+			"from_position":  strconv.Itoa(prev.Position),
+			"to_position":    strconv.Itoa(next.Position),
+		}
+	}
+	fields := changedTaskFields(prev, next)
+	metadata := map[string]string{}
+	if len(fields) > 0 {
+		metadata["changed_fields"] = strings.Join(fields, ",")
+	}
+	return domain.ChangeOperationUpdate, metadata
+}
+
+// changedTaskFields identifies a deterministic set of meaningful changes for metadata.
+func changedTaskFields(prev, next domain.Task) []string {
+	changed := make([]string, 0)
+	if prev.ParentID != next.ParentID {
+		changed = append(changed, "parent_id")
+	}
+	if prev.Kind != next.Kind {
+		changed = append(changed, "kind")
+	}
+	if prev.LifecycleState != next.LifecycleState {
+		changed = append(changed, "lifecycle_state")
+	}
+	if prev.Title != next.Title {
+		changed = append(changed, "title")
+	}
+	if prev.Description != next.Description {
+		changed = append(changed, "description")
+	}
+	if prev.Priority != next.Priority {
+		changed = append(changed, "priority")
+	}
+	if !equalNullableTimes(prev.DueAt, next.DueAt) {
+		changed = append(changed, "due_at")
+	}
+	if !equalStringSlices(prev.Labels, next.Labels) {
+		changed = append(changed, "labels")
+	}
+	if !equalMetadata(prev.Metadata, next.Metadata) {
+		changed = append(changed, "metadata")
+	}
+	if prev.UpdatedByActor != next.UpdatedByActor {
+		changed = append(changed, "updated_by_actor")
+	}
+	if prev.UpdatedByType != next.UpdatedByType {
+		changed = append(changed, "updated_by_type")
+	}
+	if !equalNullableTimes(prev.StartedAt, next.StartedAt) {
+		changed = append(changed, "started_at")
+	}
+	if !equalNullableTimes(prev.CompletedAt, next.CompletedAt) {
+		changed = append(changed, "completed_at")
+	}
+	if !equalNullableTimes(prev.CanceledAt, next.CanceledAt) {
+		changed = append(changed, "canceled_at")
+	}
+	return changed
+}
+
+// equalStringSlices compares string slices by value and order.
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// equalNullableTimes compares nullable timestamps using UTC normalization.
+func equalNullableTimes(a, b *time.Time) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return a.UTC().Equal(b.UTC())
+}
+
+// equalMetadata compares normalized JSON representations of task metadata.
+func equalMetadata(a, b domain.TaskMetadata) bool {
+	aJSON, aErr := json.Marshal(a)
+	bJSON, bErr := json.Marshal(b)
+	if aErr != nil || bErr != nil {
+		return false
+	}
+	return string(aJSON) == string(bJSON)
+}
+
+// chooseActorID returns the first non-empty actor id or the default local actor.
+func chooseActorID(candidates ...string) string {
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate != "" {
+			return candidate
+		}
+	}
+	return "kan-user"
+}
+
+// normalizeActorType applies a default when actor type is unset or unsupported.
+func normalizeActorType(actorType domain.ActorType) domain.ActorType {
+	switch strings.TrimSpace(strings.ToLower(string(actorType))) {
+	case string(domain.ActorTypeUser):
+		return domain.ActorTypeUser
+	case string(domain.ActorTypeAgent):
+		return domain.ActorTypeAgent
+	case string(domain.ActorTypeSystem):
+		return domain.ActorTypeSystem
+	default:
+		return domain.ActorTypeUser
+	}
+}
+
+// normalizeChangeOperation canonicalizes persisted operation values.
+func normalizeChangeOperation(raw string) domain.ChangeOperation {
+	raw = strings.TrimSpace(strings.ToLower(raw))
+	switch raw {
+	case string(domain.ChangeOperationCreate):
+		return domain.ChangeOperationCreate
+	case string(domain.ChangeOperationUpdate):
+		return domain.ChangeOperationUpdate
+	case string(domain.ChangeOperationMove):
+		return domain.ChangeOperationMove
+	case string(domain.ChangeOperationArchive):
+		return domain.ChangeOperationArchive
+	case string(domain.ChangeOperationRestore):
+		return domain.ChangeOperationRestore
+	case string(domain.ChangeOperationDelete):
+		return domain.ChangeOperationDelete
+	default:
+		return domain.ChangeOperationUpdate
+	}
+}
+
+// normalizeEventTS ensures event timestamps are always populated and UTC-normalized.
+func normalizeEventTS(in time.Time) time.Time {
+	if in.IsZero() {
+		return time.Now().UTC()
+	}
+	return in.UTC()
 }
 
 // scanner represents scanner data used by this package.
@@ -374,27 +921,84 @@ func scanProject(s scanner) (domain.Project, error) {
 // scanTask handles scan task.
 func scanTask(s scanner) (domain.Task, error) {
 	var (
-		t          domain.Task
-		dueRaw     sql.NullString
-		labelsRaw  string
-		createdRaw string
-		updatedRaw string
-		archived   sql.NullString
-		priority   string
+		t            domain.Task
+		dueRaw       sql.NullString
+		labelsRaw    string
+		metadataRaw  string
+		createdRaw   string
+		updatedRaw   string
+		startedRaw   sql.NullString
+		completedRaw sql.NullString
+		archivedRaw  sql.NullString
+		canceledRaw  sql.NullString
+		priority     string
+		kind         string
+		state        string
+		updatedType  string
 	)
-	if err := s.Scan(&t.ID, &t.ProjectID, &t.ColumnID, &t.Position, &t.Title, &t.Description, &priority, &dueRaw, &labelsRaw, &createdRaw, &updatedRaw, &archived); err != nil {
+	if err := s.Scan(
+		&t.ID,
+		&t.ProjectID,
+		&t.ParentID,
+		&kind,
+		&state,
+		&t.ColumnID,
+		&t.Position,
+		&t.Title,
+		&t.Description,
+		&priority,
+		&dueRaw,
+		&labelsRaw,
+		&metadataRaw,
+		&t.CreatedByActor,
+		&t.UpdatedByActor,
+		&updatedType,
+		&createdRaw,
+		&updatedRaw,
+		&startedRaw,
+		&completedRaw,
+		&archivedRaw,
+		&canceledRaw,
+	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.Task{}, app.ErrNotFound
 		}
 		return domain.Task{}, err
 	}
 	t.Priority = domain.Priority(priority)
+	t.Kind = domain.WorkKind(kind)
+	t.LifecycleState = domain.LifecycleState(state)
+	t.UpdatedByType = domain.ActorType(updatedType)
 	t.CreatedAt = parseTS(createdRaw)
 	t.UpdatedAt = parseTS(updatedRaw)
-	t.ArchivedAt = parseNullTS(archived)
+	t.StartedAt = parseNullTS(startedRaw)
+	t.CompletedAt = parseNullTS(completedRaw)
+	t.ArchivedAt = parseNullTS(archivedRaw)
+	t.CanceledAt = parseNullTS(canceledRaw)
 	t.DueAt = parseNullTS(dueRaw)
+	if strings.TrimSpace(metadataRaw) == "" {
+		metadataRaw = "{}"
+	}
+	if err := json.Unmarshal([]byte(metadataRaw), &t.Metadata); err != nil {
+		return domain.Task{}, fmt.Errorf("decode metadata_json: %w", err)
+	}
 	if err := json.Unmarshal([]byte(labelsRaw), &t.Labels); err != nil {
 		return domain.Task{}, fmt.Errorf("decode labels_json: %w", err)
+	}
+	if strings.TrimSpace(string(t.Kind)) == "" {
+		t.Kind = domain.WorkKindTask
+	}
+	if t.LifecycleState == "" {
+		t.LifecycleState = domain.StateTodo
+	}
+	if strings.TrimSpace(t.CreatedByActor) == "" {
+		t.CreatedByActor = "kan-user"
+	}
+	if strings.TrimSpace(t.UpdatedByActor) == "" {
+		t.UpdatedByActor = t.CreatedByActor
+	}
+	if t.UpdatedByType == "" {
+		t.UpdatedByType = domain.ActorTypeUser
 	}
 	return t, nil
 }

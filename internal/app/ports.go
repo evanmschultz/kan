@@ -22,4 +22,5 @@ type Repository interface {
 	GetTask(context.Context, string) (domain.Task, error)
 	ListTasks(context.Context, string, bool) ([]domain.Task, error)
 	DeleteTask(context.Context, string) error
+	ListProjectChangeEvents(context.Context, string, int) ([]domain.ChangeEvent, error)
 }

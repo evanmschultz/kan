@@ -49,18 +49,28 @@ type SnapshotColumn struct {
 
 // SnapshotTask represents snapshot task data used by this package.
 type SnapshotTask struct {
-	ID          string          `json:"id"`
-	ProjectID   string          `json:"project_id"`
-	ColumnID    string          `json:"column_id"`
-	Position    int             `json:"position"`
-	Title       string          `json:"title"`
-	Description string          `json:"description"`
-	Priority    domain.Priority `json:"priority"`
-	DueAt       *time.Time      `json:"due_at,omitempty"`
-	Labels      []string        `json:"labels"`
-	CreatedAt   time.Time       `json:"created_at"`
-	UpdatedAt   time.Time       `json:"updated_at"`
-	ArchivedAt  *time.Time      `json:"archived_at,omitempty"`
+	ID             string                `json:"id"`
+	ProjectID      string                `json:"project_id"`
+	ParentID       string                `json:"parent_id,omitempty"`
+	Kind           domain.WorkKind       `json:"kind"`
+	LifecycleState domain.LifecycleState `json:"lifecycle_state"`
+	ColumnID       string                `json:"column_id"`
+	Position       int                   `json:"position"`
+	Title          string                `json:"title"`
+	Description    string                `json:"description"`
+	Priority       domain.Priority       `json:"priority"`
+	DueAt          *time.Time            `json:"due_at,omitempty"`
+	Labels         []string              `json:"labels"`
+	Metadata       domain.TaskMetadata   `json:"metadata"`
+	CreatedByActor string                `json:"created_by_actor"`
+	UpdatedByActor string                `json:"updated_by_actor"`
+	UpdatedByType  domain.ActorType      `json:"updated_by_type"`
+	CreatedAt      time.Time             `json:"created_at"`
+	UpdatedAt      time.Time             `json:"updated_at"`
+	StartedAt      *time.Time            `json:"started_at,omitempty"`
+	CompletedAt    *time.Time            `json:"completed_at,omitempty"`
+	ArchivedAt     *time.Time            `json:"archived_at,omitempty"`
+	CanceledAt     *time.Time            `json:"canceled_at,omitempty"`
 }
 
 // ExportSnapshot handles export snapshot.
@@ -233,6 +243,19 @@ func (s *Snapshot) Validate() error {
 		default:
 			return fmt.Errorf("tasks[%d].priority must be low|medium|high", i)
 		}
+		if strings.TrimSpace(string(t.Kind)) == "" {
+			t.Kind = domain.WorkKindTask
+			s.Tasks[i].Kind = t.Kind
+		}
+		if t.LifecycleState == "" {
+			t.LifecycleState = domain.StateTodo
+			s.Tasks[i].LifecycleState = t.LifecycleState
+		}
+		switch t.LifecycleState {
+		case domain.StateTodo, domain.StateProgress, domain.StateDone, domain.StateArchived:
+		default:
+			return fmt.Errorf("tasks[%d].lifecycle_state must be todo|progress|done|archived", i)
+		}
 		if t.CreatedAt.IsZero() || t.UpdatedAt.IsZero() {
 			return fmt.Errorf("tasks[%d] timestamps are required", i)
 		}
@@ -246,6 +269,17 @@ func (s *Snapshot) Validate() error {
 			return fmt.Errorf("duplicate task id: %q", t.ID)
 		}
 		taskIDs[t.ID] = struct{}{}
+	}
+	for i, t := range s.Tasks {
+		if strings.TrimSpace(t.ParentID) == "" {
+			continue
+		}
+		if t.ParentID == t.ID {
+			return fmt.Errorf("tasks[%d].parent_id cannot reference itself", i)
+		}
+		if _, exists := taskIDs[t.ParentID]; !exists {
+			return fmt.Errorf("tasks[%d] references unknown parent_id %q", i, t.ParentID)
+		}
 	}
 
 	return nil
@@ -324,18 +358,28 @@ func snapshotColumnFromDomain(c domain.Column) SnapshotColumn {
 // snapshotTaskFromDomain handles snapshot task from domain.
 func snapshotTaskFromDomain(t domain.Task) SnapshotTask {
 	return SnapshotTask{
-		ID:          t.ID,
-		ProjectID:   t.ProjectID,
-		ColumnID:    t.ColumnID,
-		Position:    t.Position,
-		Title:       t.Title,
-		Description: t.Description,
-		Priority:    t.Priority,
-		DueAt:       copyTimePtr(t.DueAt),
-		Labels:      append([]string(nil), t.Labels...),
-		CreatedAt:   t.CreatedAt.UTC(),
-		UpdatedAt:   t.UpdatedAt.UTC(),
-		ArchivedAt:  copyTimePtr(t.ArchivedAt),
+		ID:             t.ID,
+		ProjectID:      t.ProjectID,
+		ParentID:       t.ParentID,
+		Kind:           t.Kind,
+		LifecycleState: t.LifecycleState,
+		ColumnID:       t.ColumnID,
+		Position:       t.Position,
+		Title:          t.Title,
+		Description:    t.Description,
+		Priority:       t.Priority,
+		DueAt:          copyTimePtr(t.DueAt),
+		Labels:         append([]string(nil), t.Labels...),
+		Metadata:       t.Metadata,
+		CreatedByActor: t.CreatedByActor,
+		UpdatedByActor: t.UpdatedByActor,
+		UpdatedByType:  t.UpdatedByType,
+		CreatedAt:      t.CreatedAt.UTC(),
+		UpdatedAt:      t.UpdatedAt.UTC(),
+		StartedAt:      copyTimePtr(t.StartedAt),
+		CompletedAt:    copyTimePtr(t.CompletedAt),
+		ArchivedAt:     copyTimePtr(t.ArchivedAt),
+		CanceledAt:     copyTimePtr(t.CanceledAt),
 	}
 }
 
@@ -374,19 +418,49 @@ func (c SnapshotColumn) toDomain() domain.Column {
 // toDomain converts domain.
 func (t SnapshotTask) toDomain() domain.Task {
 	labels := append([]string(nil), t.Labels...)
+	state := t.LifecycleState
+	if state == "" {
+		state = domain.StateTodo
+	}
+	kind := t.Kind
+	if kind == "" {
+		kind = domain.WorkKindTask
+	}
+	updatedType := t.UpdatedByType
+	if updatedType == "" {
+		updatedType = domain.ActorTypeUser
+	}
+	createdBy := strings.TrimSpace(t.CreatedByActor)
+	if createdBy == "" {
+		createdBy = "kan-user"
+	}
+	updatedBy := strings.TrimSpace(t.UpdatedByActor)
+	if updatedBy == "" {
+		updatedBy = createdBy
+	}
 	return domain.Task{
-		ID:          strings.TrimSpace(t.ID),
-		ProjectID:   strings.TrimSpace(t.ProjectID),
-		ColumnID:    strings.TrimSpace(t.ColumnID),
-		Position:    t.Position,
-		Title:       strings.TrimSpace(t.Title),
-		Description: strings.TrimSpace(t.Description),
-		Priority:    t.Priority,
-		DueAt:       copyTimePtr(t.DueAt),
-		Labels:      labels,
-		CreatedAt:   t.CreatedAt.UTC(),
-		UpdatedAt:   t.UpdatedAt.UTC(),
-		ArchivedAt:  copyTimePtr(t.ArchivedAt),
+		ID:             strings.TrimSpace(t.ID),
+		ProjectID:      strings.TrimSpace(t.ProjectID),
+		ParentID:       strings.TrimSpace(t.ParentID),
+		Kind:           kind,
+		LifecycleState: state,
+		ColumnID:       strings.TrimSpace(t.ColumnID),
+		Position:       t.Position,
+		Title:          strings.TrimSpace(t.Title),
+		Description:    strings.TrimSpace(t.Description),
+		Priority:       t.Priority,
+		DueAt:          copyTimePtr(t.DueAt),
+		Labels:         labels,
+		Metadata:       t.Metadata,
+		CreatedByActor: createdBy,
+		UpdatedByActor: updatedBy,
+		UpdatedByType:  updatedType,
+		CreatedAt:      t.CreatedAt.UTC(),
+		UpdatedAt:      t.UpdatedAt.UTC(),
+		StartedAt:      copyTimePtr(t.StartedAt),
+		CompletedAt:    copyTimePtr(t.CompletedAt),
+		ArchivedAt:     copyTimePtr(t.ArchivedAt),
+		CanceledAt:     copyTimePtr(t.CanceledAt),
 	}
 }
 
