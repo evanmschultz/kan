@@ -168,7 +168,7 @@ func TestRunBootstrapModalPersistsMissingFields(t *testing.T) {
 				current = applyModelMsg(t, current, tea.KeyPressMsg{Code: 'l', Text: "l"})
 				current = applyModelMsg(t, current, tea.KeyPressMsg{Code: tea.KeyTab})
 				current = applyModelMsg(t, current, tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
-				current = applyModelMsg(t, current, tea.KeyPressMsg{Code: 'a', Text: "a"})
+				current = applyModelMsg(t, current, tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
 				current = applyModelMsg(t, current, tea.KeyPressMsg{Code: tea.KeyTab})
 				current = applyModelMsg(t, current, tea.KeyPressMsg{Code: tea.KeyEnter})
 				if rendered := fmt.Sprint(current.View().Content); !strings.Contains(rendered, "Projects") {

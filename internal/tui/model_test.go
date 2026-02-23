@@ -2114,12 +2114,25 @@ func TestModelBootstrapSettingsCommandPaletteRootsEditing(t *testing.T) {
 	if m.mode != modeResourcePicker {
 		t.Fatalf("expected resource picker for bootstrap root browse, got %v", m.mode)
 	}
-	m = applyMsg(t, m, keyRune('a'))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
 	if m.mode != modeBootstrapSettings {
 		t.Fatalf("expected return to bootstrap modal after root attach, got %v", m.mode)
 	}
 	if len(m.bootstrapRoots) != 1 || m.bootstrapRoots[0] != filepath.Clean(rootB) {
 		t.Fatalf("expected root picker add %q, got %#v", filepath.Clean(rootB), m.bootstrapRoots)
+	}
+	m = applyCmd(t, m, m.focusBootstrapField(2))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
+	if m.bootstrapFocus != 3 {
+		t.Fatalf("expected down arrow on roots to continue focus navigation, got %d", m.bootstrapFocus)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyUp})
+	if m.bootstrapFocus != 2 {
+		t.Fatalf("expected up arrow to return focus to roots, got %d", m.bootstrapFocus)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyUp})
+	if m.bootstrapFocus != 1 {
+		t.Fatalf("expected up arrow on first root row to move focus backward, got %d", m.bootstrapFocus)
 	}
 
 	m.bootstrapDisplayInput.SetValue("Lane Agent")
@@ -3809,8 +3822,8 @@ func TestModelResourcePickerAttachFromTaskInfoAndEdit(t *testing.T) {
 	if got := strings.TrimSpace(m.resourcePickerRoot); got != root {
 		t.Fatalf("expected resource root %q, got %q", root, got)
 	}
-	m = applyMsg(t, m, keyRune('j')) // first file after directory entry
-	m = applyMsg(t, m, keyRune('a'))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyDown}) // first file after directory entry
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if m.mode != modeTaskInfo {
 		t.Fatalf("expected return to task info mode after attach, got %v", m.mode)
 	}
@@ -4528,7 +4541,7 @@ func TestModelDependencyInspectorInputAndListKeyRouting(t *testing.T) {
 	}
 }
 
-// TestModelSearchFocusNavigationWithJK verifies search modal focus navigation with j/k and arrow keys.
+// TestModelSearchFocusNavigationWithJK verifies query typing and focus navigation in the search modal.
 func TestModelSearchFocusNavigationWithJK(t *testing.T) {
 	now := time.Date(2026, 2, 23, 16, 30, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -4553,19 +4566,19 @@ func TestModelSearchFocusNavigationWithJK(t *testing.T) {
 	}
 
 	m = applyMsg(t, m, keyRune('j'))
-	if m.searchFocus != 1 {
-		t.Fatalf("expected j to move search focus forward, got %d", m.searchFocus)
+	if m.searchFocus != 0 {
+		t.Fatalf("expected query focus to remain active while typing j, got %d", m.searchFocus)
 	}
-	if got := m.searchInput.Value(); got != "" {
-		t.Fatalf("expected j to navigate focus instead of typing, got %q", got)
+	if got := m.searchInput.Value(); got != "j" {
+		t.Fatalf("expected j to type in query input, got %q", got)
 	}
 
 	m = applyMsg(t, m, keyRune('k'))
 	if m.searchFocus != 0 {
-		t.Fatalf("expected k to move search focus backward, got %d", m.searchFocus)
+		t.Fatalf("expected query focus to remain active while typing k, got %d", m.searchFocus)
 	}
-	if got := m.searchInput.Value(); got != "" {
-		t.Fatalf("expected k to navigate focus instead of typing, got %q", got)
+	if got := m.searchInput.Value(); got != "jk" {
+		t.Fatalf("expected k to type in query input, got %q", got)
 	}
 
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyDown})

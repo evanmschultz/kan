@@ -2525,3 +2525,44 @@ Single-branch parallel execution is now bootstrapped. This section is the source
         - `just ci` -> pass
     - status:
         - complete; ready for user manual verification pass.
+- [x] 2026-02-23: Path-picker visibility + text-input key routing polish (post-user correction)
+    - objective:
+        - apply final UX fixes requested before manual pass:
+            1) make resource-picker `current` path highly visible using accent color while keeping `current:` label muted,
+            2) ensure text input typing is not hijacked by vim navigation keys in filter/query fields,
+            3) ensure arrow navigation does not dead-end on bootstrap global search roots.
+    - runtime/log inspection:
+        - `ls -1t .kan/log | head -n 5` -> pass (`kan-20260223.log` active)
+        - `tail -n 120 .kan/log/kan-20260223.log` -> pass; observed normal startup/bootstrap/project-root update lifecycle lines and no crash signatures.
+    - Context7 evidence (required pre-edit):
+        - `resolve-library-id` `charmbracelet/lipgloss` -> pass (`/charmbracelet/lipgloss`)
+        - `query-docs` `/charmbracelet/lipgloss` (split label/value style rendering with separate foreground styles) -> pass
+    - files updated:
+        - `internal/tui/model.go`
+        - `internal/tui/model_test.go`
+        - `cmd/kan/main_test.go`
+    - implementation notes:
+        - resource picker rendering:
+            - `current:` label restored to muted styling.
+            - current directory path value now renders in accent color for stronger visibility.
+        - text-input key routing:
+            - `modeSearch`: when query input is focused, `j/k` now type into input; arrow keys still navigate focus.
+            - search control hotkeys (`ctrl+p`, `ctrl+a`, `ctrl+u`, `ctrl+r`) now run only when focus is not on query input.
+            - `modeResourcePicker`: printable keys now update filter input first; arrow keys handle navigation.
+            - removed vim-letter navigation in resource picker (`h/j/k/l`) in favor of arrow navigation.
+            - `backspace` in resource picker now edits filter only (no implicit parent navigation).
+            - current-directory attach/select moved to `ctrl+a` in picker flows.
+        - bootstrap settings navigation:
+            - up/down arrows on global roots now continue focus traversal when list bounds are reached (no dead-end).
+            - same non-sticky behavior applied to `j/k` when not on text-input focus.
+    - test updates:
+        - adjusted scripted bootstrap picker tests to use `ctrl+a` selection.
+        - adjusted resource-picker attach test to use arrow + enter behavior.
+        - updated search focus test to assert `j/k` type in query input and arrows navigate focus.
+        - added bootstrap-root arrow traversal assertions to prevent regression.
+    - verification log:
+        - `just test-pkg ./cmd/kan` -> pass
+        - `just test-pkg ./internal/tui` -> pass
+        - `just ci` -> pass
+    - status:
+        - complete; requested final UI/key-routing behavior and gate verification finished.

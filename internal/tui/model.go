@@ -4148,20 +4148,36 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, m.focusBootstrapField(wrapIndex(m.bootstrapFocus, 1, 4))
 		case msg.String() == "shift+tab" || msg.String() == "backtab":
 			return m, m.focusBootstrapField(wrapIndex(m.bootstrapFocus, -1, 4))
-		case msg.String() == "j" || msg.String() == "down":
+		case msg.String() == "down":
 			if m.bootstrapFocus == 2 {
 				if m.bootstrapRootIndex < len(m.bootstrapRoots)-1 {
 					m.bootstrapRootIndex++
+					return m, nil
 				}
-				return m, nil
 			}
 			return m, m.focusBootstrapField(wrapIndex(m.bootstrapFocus, 1, 4))
-		case msg.String() == "k" || msg.String() == "up":
+		case msg.String() == "up":
 			if m.bootstrapFocus == 2 {
 				if m.bootstrapRootIndex > 0 {
 					m.bootstrapRootIndex--
+					return m, nil
 				}
-				return m, nil
+			}
+			return m, m.focusBootstrapField(wrapIndex(m.bootstrapFocus, -1, 4))
+		case (msg.String() == "j") && m.bootstrapFocus != 0:
+			if m.bootstrapFocus == 2 {
+				if m.bootstrapRootIndex < len(m.bootstrapRoots)-1 {
+					m.bootstrapRootIndex++
+					return m, nil
+				}
+			}
+			return m, m.focusBootstrapField(wrapIndex(m.bootstrapFocus, 1, 4))
+		case (msg.String() == "k") && m.bootstrapFocus != 0:
+			if m.bootstrapFocus == 2 {
+				if m.bootstrapRootIndex > 0 {
+					m.bootstrapRootIndex--
+					return m, nil
+				}
 			}
 			return m, m.focusBootstrapField(wrapIndex(m.bootstrapFocus, -1, 4))
 		case (msg.String() == "h" || msg.String() == "left") && m.bootstrapFocus == 1 && !m.bootstrapMandatory:
@@ -4262,29 +4278,43 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			m.searchInput.Blur()
 			return m, nil
-		case msg.String() == "j" || msg.String() == "down":
+		case msg.String() == "down":
 			m.searchFocus = wrapIndex(m.searchFocus, 1, 5)
 			if m.searchFocus == 0 {
 				return m, m.searchInput.Focus()
 			}
 			m.searchInput.Blur()
 			return m, nil
-		case msg.String() == "k" || msg.String() == "up":
+		case msg.String() == "up":
 			m.searchFocus = wrapIndex(m.searchFocus, -1, 5)
 			if m.searchFocus == 0 {
 				return m, m.searchInput.Focus()
 			}
 			m.searchInput.Blur()
 			return m, nil
-		case msg.String() == "ctrl+p":
+		case msg.String() == "j" && m.searchFocus != 0:
+			m.searchFocus = wrapIndex(m.searchFocus, 1, 5)
+			if m.searchFocus == 0 {
+				return m, m.searchInput.Focus()
+			}
+			m.searchInput.Blur()
+			return m, nil
+		case msg.String() == "k" && m.searchFocus != 0:
+			m.searchFocus = wrapIndex(m.searchFocus, -1, 5)
+			if m.searchFocus == 0 {
+				return m, m.searchInput.Focus()
+			}
+			m.searchInput.Blur()
+			return m, nil
+		case msg.String() == "ctrl+p" && m.searchFocus != 0:
 			m.searchCrossProject = !m.searchCrossProject
 			return m, nil
-		case msg.String() == "ctrl+a":
+		case msg.String() == "ctrl+a" && m.searchFocus != 0:
 			m.showArchived = !m.showArchived
 			return m, nil
-		case msg.String() == "ctrl+u":
+		case msg.String() == "ctrl+u" && m.searchFocus != 0:
 			return m, m.clearSearchQuery()
-		case msg.String() == "ctrl+r":
+		case msg.String() == "ctrl+r" && m.searchFocus != 0:
 			return m, m.resetSearchFilters()
 		case (msg.String() == "h" || msg.String() == "left") && m.searchFocus != 0:
 			switch m.searchFocus {
@@ -4524,6 +4554,15 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.mode == modeResourcePicker {
+		if msg.Text != "" && (msg.Mod&tea.ModCtrl) == 0 {
+			var cmd tea.Cmd
+			before := m.resourcePickerFilter.Value()
+			m.resourcePickerFilter, cmd = m.resourcePickerFilter.Update(msg)
+			if m.resourcePickerFilter.Value() != before {
+				m.resourcePickerIndex = 0
+			}
+			return m, cmd
+		}
 		items := m.visibleResourcePickerItems()
 		switch msg.String() {
 		case "esc":
@@ -4532,22 +4571,19 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.resourcePickerFilter.SetValue("")
 			m.status = "resource picker cancelled"
 			return m, nil
-		case "j", "down":
+		case "down":
 			if m.resourcePickerIndex < len(items)-1 {
 				m.resourcePickerIndex++
 			}
 			return m, nil
-		case "k", "up":
+		case "up":
 			if m.resourcePickerIndex > 0 {
 				m.resourcePickerIndex--
 			}
 			return m, nil
-		case "h", "left":
+		case "left":
 			return m, m.openResourcePickerParent()
 		case "backspace":
-			if strings.TrimSpace(m.resourcePickerFilter.Value()) == "" {
-				return m, m.openResourcePickerParent()
-			}
 			var cmd tea.Cmd
 			m.resourcePickerFilter, cmd = m.resourcePickerFilter.Update(msg)
 			m.resourcePickerIndex = 0
@@ -4557,13 +4593,13 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.resourcePickerFilter.CursorEnd()
 			m.resourcePickerIndex = 0
 			return m, nil
-		case "l", "right":
+		case "right":
 			entry, ok := m.selectedResourcePickerEntry()
 			if !ok || !entry.IsDir {
 				return m, nil
 			}
 			return m, m.openResourcePickerDir(entry.Path)
-		case "a":
+		case "ctrl+a":
 			if m.resourcePickerBack == modeAddProject || m.resourcePickerBack == modeEditProject || m.resourcePickerBack == modePathsRoots || m.resourcePickerBack == modeBootstrapSettings {
 				return m, m.attachCurrentResourcePickerDir()
 			}
@@ -7440,7 +7476,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		lines := []string{
 			titleStyle.Render(title),
 			hintStyle.Render("root: " + truncate(m.resourcePickerRoot, 72)),
-			hintStyle.Render("current: " + truncate(currentPath, 72)),
+			hintStyle.Render("current: ") + titleStyle.Render(truncate(currentPath, 72)),
 			hintStyle.Render("filter: ") + filterInput.View(),
 		}
 		items := m.visibleResourcePickerItems()
@@ -7465,9 +7501,9 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 			}
 		}
 		if m.resourcePickerBack == modeAddProject || m.resourcePickerBack == modeEditProject || m.resourcePickerBack == modePathsRoots || m.resourcePickerBack == modeBootstrapSettings {
-			lines = append(lines, hintStyle.Render("enter open dir (or choose file parent) • a choose dir • h parent • ctrl+u clear filter • esc close"))
+			lines = append(lines, hintStyle.Render("enter open dir (or choose file parent) • ctrl+a choose dir • arrows navigate • ctrl+u clear filter • esc close"))
 		} else {
-			lines = append(lines, hintStyle.Render("enter open dir • enter/a attach file • a attach dir • h parent • ctrl+u clear filter • esc close"))
+			lines = append(lines, hintStyle.Render("enter open dir/file attach • ctrl+a attach selected/current • arrows navigate • ctrl+u clear filter • esc close"))
 		}
 		return style.Render(strings.Join(lines, "\n"))
 
@@ -8244,7 +8280,7 @@ func (m Model) modePrompt() string {
 	case modeConfirmAction:
 		return "confirm action: enter confirm, esc cancel"
 	case modeResourcePicker:
-		return "resource picker: type fuzzy filter, j/k select, enter open, a choose/attach, esc cancel"
+		return "resource picker: type fuzzy filter, arrows navigate, enter open/select, ctrl+a choose/attach, esc cancel"
 	case modeLabelPicker:
 		return "label picker: j/k select, enter add label, esc cancel"
 	case modePathsRoots:
@@ -8254,7 +8290,7 @@ func (m Model) modePrompt() string {
 	case modeHighlightColor:
 		return "highlight color: enter save, esc cancel"
 	case modeBootstrapSettings:
-		return "bootstrap settings: tab focus, a browse/add root, d remove root, enter save"
+		return "bootstrap settings: tab focus, ctrl+r browse/add root, d remove root, enter save"
 	case modeDependencyInspector:
 		return "deps inspector: tab focus, d/b toggle, x switch active, enter jump, a apply, esc cancel"
 	case modeThread:
