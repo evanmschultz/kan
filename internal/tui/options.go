@@ -52,6 +52,12 @@ type KeyConfig struct {
 	Redo           string
 }
 
+// IdentityConfig holds identity defaults used for ownership-attributed actions.
+type IdentityConfig struct {
+	DisplayName      string
+	DefaultActorType string
+}
+
 // LabelConfig holds label suggestion and enforcement settings.
 type LabelConfig struct {
 	Global         []string
@@ -64,12 +70,14 @@ type RuntimeConfig struct {
 	DefaultDeleteMode app.DeleteMode
 	TaskFields        TaskFieldConfig
 	Search            SearchConfig
+	SearchRoots       []string
 	Confirm           ConfirmConfig
 	Board             BoardConfig
 	UI                UIConfig
 	Labels            LabelConfig
 	ProjectRoots      map[string]string
 	Keys              KeyConfig
+	Identity          IdentityConfig
 }
 
 // ReloadConfigFunc reloads runtime config values from disk or another source.
@@ -125,6 +133,20 @@ func WithSearchConfig(cfg SearchConfig) Option {
 			m.searchDefaultStates = []string{"todo", "progress", "done"}
 			m.searchStates = append([]string(nil), m.searchDefaultStates...)
 		}
+	}
+}
+
+// WithSearchRoots returns an option that sets global search-root directories.
+func WithSearchRoots(roots []string) Option {
+	return func(m *Model) {
+		m.searchRoots = normalizeSearchRoots(roots)
+	}
+}
+
+// WithLaunchProjectPicker returns an option that toggles opening project picker on initial launch.
+func WithLaunchProjectPicker(enabled bool) Option {
+	return func(m *Model) {
+		m.launchPicker = enabled
 	}
 }
 
@@ -195,18 +217,28 @@ func WithKeyConfig(cfg KeyConfig) Option {
 	}
 }
 
+// WithIdentityConfig returns an option that configures default identity attribution.
+func WithIdentityConfig(cfg IdentityConfig) Option {
+	return func(m *Model) {
+		m.identityDisplayName = strings.TrimSpace(cfg.DisplayName)
+		m.identityDefaultActorType = strings.TrimSpace(strings.ToLower(cfg.DefaultActorType))
+	}
+}
+
 // WithRuntimeConfig returns an option that applies all runtime-configurable settings.
 func WithRuntimeConfig(cfg RuntimeConfig) Option {
 	return func(m *Model) {
 		WithDefaultDeleteMode(cfg.DefaultDeleteMode)(m)
 		WithTaskFieldConfig(cfg.TaskFields)(m)
 		WithSearchConfig(cfg.Search)(m)
+		WithSearchRoots(cfg.SearchRoots)(m)
 		WithConfirmConfig(cfg.Confirm)(m)
 		WithBoardConfig(cfg.Board)(m)
 		WithUIConfig(cfg.UI)(m)
 		WithLabelConfig(cfg.Labels)(m)
 		WithProjectRoots(cfg.ProjectRoots)(m)
 		WithKeyConfig(cfg.Keys)(m)
+		WithIdentityConfig(cfg.Identity)(m)
 	}
 }
 

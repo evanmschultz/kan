@@ -19,13 +19,17 @@ import (
 
 // fakeService represents fake service data used by this package.
 type fakeService struct {
-	projects        []domain.Project
-	columns         map[string][]domain.Column
-	tasks           map[string][]domain.Task
-	err             error
-	rollups         map[string]domain.DependencyRollup
-	changeEvents    map[string][]domain.ChangeEvent
-	changeEventsErr error
+	projects         []domain.Project
+	columns          map[string][]domain.Column
+	tasks            map[string][]domain.Task
+	comments         map[string][]domain.Comment
+	err              error
+	rollups          map[string]domain.DependencyRollup
+	changeEvents     map[string][]domain.ChangeEvent
+	changeEventsErr  error
+	commentCreateErr error
+	commentListErr   error
+	commentSeq       int
 }
 
 // newFakeService constructs fake service.
@@ -42,6 +46,7 @@ func newFakeService(projects []domain.Project, columns []domain.Column, tasks []
 		projects:     projects,
 		columns:      colByProject,
 		tasks:        taskByProject,
+		comments:     map[string][]domain.Comment{},
 		rollups:      map[string]domain.DependencyRollup{},
 		changeEvents: map[string][]domain.ChangeEvent{},
 	}
@@ -86,6 +91,39 @@ func (f *fakeService) ListTasks(_ context.Context, projectID string, includeArch
 		}
 		out = append(out, task)
 	}
+	return out, nil
+}
+
+// CreateComment creates one ownership-attributed comment.
+func (f *fakeService) CreateComment(_ context.Context, in app.CreateCommentInput) (domain.Comment, error) {
+	if f.commentCreateErr != nil {
+		return domain.Comment{}, f.commentCreateErr
+	}
+	f.commentSeq++
+	comment, err := domain.NewComment(domain.CommentInput{
+		ID:           fmt.Sprintf("cm-%d", f.commentSeq),
+		ProjectID:    in.ProjectID,
+		TargetType:   in.TargetType,
+		TargetID:     in.TargetID,
+		BodyMarkdown: in.BodyMarkdown,
+		ActorType:    in.ActorType,
+		AuthorName:   in.AuthorName,
+	}, time.Now().UTC())
+	if err != nil {
+		return domain.Comment{}, err
+	}
+	key := commentThreadKey(comment.ProjectID, comment.TargetType, comment.TargetID)
+	f.comments[key] = append(f.comments[key], comment)
+	return comment, nil
+}
+
+// ListCommentsByTarget lists comments for one concrete comment target.
+func (f *fakeService) ListCommentsByTarget(_ context.Context, in app.ListCommentsByTargetInput) ([]domain.Comment, error) {
+	if f.commentListErr != nil {
+		return nil, f.commentListErr
+	}
+	key := commentThreadKey(in.ProjectID, in.TargetType, in.TargetID)
+	out := append([]domain.Comment(nil), f.comments[key]...)
 	return out, nil
 }
 
@@ -315,6 +353,24 @@ func (f *fakeService) MoveTask(_ context.Context, taskID, toColumnID string, pos
 			if f.tasks[projectID][idx].ID == taskID {
 				f.tasks[projectID][idx].ColumnID = toColumnID
 				f.tasks[projectID][idx].Position = position
+				for _, column := range f.columns[projectID] {
+					if column.ID != toColumnID {
+						continue
+					}
+					switch strings.ToLower(strings.TrimSpace(strings.ReplaceAll(column.Name, " ", "-"))) {
+					case "to-do", "todo":
+						f.tasks[projectID][idx].LifecycleState = domain.StateTodo
+					case "in-progress", "progress", "doing":
+						f.tasks[projectID][idx].LifecycleState = domain.StateProgress
+					case "done", "complete", "completed":
+						f.tasks[projectID][idx].LifecycleState = domain.StateDone
+					case "archived", "archive":
+						f.tasks[projectID][idx].LifecycleState = domain.StateArchived
+					default:
+						// Keep the prior state when the column name doesn't map to canonical lifecycle values.
+					}
+					break
+				}
 				return f.tasks[projectID][idx], nil
 			}
 		}
@@ -392,6 +448,11 @@ func (f *fakeService) taskByID(taskID string) (domain.Task, bool) {
 		}
 	}
 	return domain.Task{}, false
+}
+
+// commentThreadKey builds a deterministic key for one comment target.
+func commentThreadKey(projectID string, targetType domain.CommentTargetType, targetID string) string {
+	return strings.TrimSpace(projectID) + "|" + strings.TrimSpace(string(targetType)) + "|" + strings.TrimSpace(targetID)
 }
 
 // TestModelLoadAndNavigation verifies behavior for the covered scenario.
@@ -737,6 +798,183 @@ func TestModelCommandPaletteAndQuickActions(t *testing.T) {
 	}
 }
 
+// TestModelThreadModeProjectAndPostCommentUsesConfiguredIdentity verifies project-thread rendering and comment ownership attribution.
+func TestModelThreadModeProjectAndPostCommentUsesConfiguredIdentity(t *testing.T) {
+	now := time.Date(2026, 2, 23, 10, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "# Project Overview\n\n- keep momentum", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+
+	existing, err := domain.NewComment(domain.CommentInput{
+		ID:           "cm-existing",
+		ProjectID:    p.ID,
+		TargetType:   domain.CommentTargetTypeProject,
+		TargetID:     p.ID,
+		BodyMarkdown: "Initial **project** thread comment",
+		ActorType:    domain.ActorTypeSystem,
+		AuthorName:   "system-bot",
+	}, now)
+	if err != nil {
+		t.Fatalf("NewComment(existing) error = %v", err)
+	}
+	projectKey := commentThreadKey(p.ID, domain.CommentTargetTypeProject, p.ID)
+	svc.comments[projectKey] = append(svc.comments[projectKey], existing)
+
+	m := loadReadyModel(t, NewModel(
+		svc,
+		WithIdentityConfig(IdentityConfig{
+			DisplayName:      "Lane User",
+			DefaultActorType: "agent",
+		}),
+	))
+
+	updated, cmd := m.executeCommandPalette("thread-project")
+	m = applyResult(t, updated, cmd)
+	if m.mode != modeThread {
+		t.Fatalf("expected thread mode, got %v", m.mode)
+	}
+	if m.threadTarget.TargetType != domain.CommentTargetTypeProject || m.threadTarget.TargetID != p.ID {
+		t.Fatalf("unexpected project thread target %#v", m.threadTarget)
+	}
+
+	m.threadInput.SetValue("New _markdown_ project comment")
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	comments := svc.comments[projectKey]
+	if len(comments) != 2 {
+		t.Fatalf("expected 2 project comments after post, got %#v", comments)
+	}
+	last := comments[len(comments)-1]
+	if last.AuthorName != "Lane User" {
+		t.Fatalf("expected configured author name Lane User, got %q", last.AuthorName)
+	}
+	if last.ActorType != domain.ActorTypeAgent {
+		t.Fatalf("expected configured actor type agent, got %q", last.ActorType)
+	}
+	if len(m.threadComments) != 2 {
+		t.Fatalf("expected in-memory thread comments to append, got %#v", m.threadComments)
+	}
+	rendered := stripANSI(fmt.Sprint(m.View().Content))
+	if !strings.Contains(rendered, "Project Overview") {
+		t.Fatalf("expected markdown-rendered project description, got\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "[agent] Lane User") {
+		t.Fatalf("expected ownership metadata in thread view, got\n%s", rendered)
+	}
+}
+
+// TestModelThreadModeFromTaskInfoAndBack verifies task-info thread shortcut and back navigation.
+func TestModelThreadModeFromTaskInfoAndBack(t *testing.T) {
+	now := time.Date(2026, 2, 23, 10, 30, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	phase, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-phase",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Kind:      domain.WorkKindPhase,
+		Title:     "Phase 1",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{phase})
+	m := loadReadyModel(t, NewModel(svc))
+
+	m = applyMsg(t, m, keyRune('i'))
+	if m.mode != modeTaskInfo {
+		t.Fatalf("expected task info mode, got %v", m.mode)
+	}
+	m = applyMsg(t, m, keyRune('c'))
+	if m.mode != modeThread {
+		t.Fatalf("expected task-info shortcut to open thread mode, got %v", m.mode)
+	}
+	if m.threadTarget.TargetType != domain.CommentTargetTypePhase {
+		t.Fatalf("expected phase target type mapping, got %#v", m.threadTarget)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.mode != modeTaskInfo {
+		t.Fatalf("expected esc to return to task info from thread mode, got %v", m.mode)
+	}
+}
+
+// TestModelThreadCommentIdentityFallbacks verifies safe identity fallback behavior during comment creation.
+func TestModelThreadCommentIdentityFallbacks(t *testing.T) {
+	now := time.Date(2026, 2, 23, 11, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityLow,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	m := loadReadyModel(t, NewModel(
+		svc,
+		WithIdentityConfig(IdentityConfig{
+			DisplayName:      " ",
+			DefaultActorType: "robot",
+		}),
+	))
+
+	updated, cmd := m.executeCommandPalette("thread-item")
+	m = applyResult(t, updated, cmd)
+	if m.mode != modeThread {
+		t.Fatalf("expected work-item thread mode, got %v", m.mode)
+	}
+	m.threadInput.SetValue("fallback check")
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	itemKey := commentThreadKey(p.ID, domain.CommentTargetTypeTask, task.ID)
+	comments := svc.comments[itemKey]
+	if len(comments) != 1 {
+		t.Fatalf("expected one posted comment, got %#v", comments)
+	}
+	if comments[0].AuthorName != "kan-user" {
+		t.Fatalf("expected fallback author name kan-user, got %q", comments[0].AuthorName)
+	}
+	if comments[0].ActorType != domain.ActorTypeUser {
+		t.Fatalf("expected fallback actor type user, got %q", comments[0].ActorType)
+	}
+}
+
+// TestCommentTargetTypeForWorkKind verifies work-kind to comment-target mapping coverage.
+func TestCommentTargetTypeForWorkKind(t *testing.T) {
+	cases := []struct {
+		kind   domain.WorkKind
+		want   domain.CommentTargetType
+		wantOK bool
+	}{
+		{kind: domain.WorkKindTask, want: domain.CommentTargetTypeTask, wantOK: true},
+		{kind: domain.WorkKindSubtask, want: domain.CommentTargetTypeSubtask, wantOK: true},
+		{kind: domain.WorkKindPhase, want: domain.CommentTargetTypePhase, wantOK: true},
+		{kind: domain.WorkKindDecision, want: domain.CommentTargetTypeDecision, wantOK: true},
+		{kind: domain.WorkKindNote, want: domain.CommentTargetTypeNote, wantOK: true},
+		{kind: domain.WorkKind("unknown"), want: "", wantOK: false},
+	}
+
+	for _, tc := range cases {
+		got, ok := commentTargetTypeForWorkKind(tc.kind)
+		if ok != tc.wantOK {
+			t.Fatalf("commentTargetTypeForWorkKind(%q) ok=%t want=%t", tc.kind, ok, tc.wantOK)
+		}
+		if got != tc.want {
+			t.Fatalf("commentTargetTypeForWorkKind(%q) target=%q want=%q", tc.kind, got, tc.want)
+		}
+	}
+}
+
 // TestModelCommandPaletteFuzzyAbbreviationExecutesNewSubtask verifies fuzzy abbreviations can target commands like new-subtask.
 func TestModelCommandPaletteFuzzyAbbreviationExecutesNewSubtask(t *testing.T) {
 	now := time.Date(2026, 2, 23, 9, 0, 0, 0, time.UTC)
@@ -917,8 +1155,9 @@ func TestModelCommandPaletteWindowedRendering(t *testing.T) {
 	dim := lipgloss.Color("239")
 	helpStyle := lipgloss.NewStyle().Foreground(muted)
 	out := m.renderModeOverlay(accent, muted, dim, helpStyle, 96)
-	if !strings.Contains(out, "› focus-clear") {
-		t.Fatalf("expected selected command to remain visible in windowed list, got %q", out)
+	selected := m.commandMatches[m.commandIndex].Command
+	if !strings.Contains(out, "› "+selected) {
+		t.Fatalf("expected selected command %q to remain visible in windowed list, got %q", selected, out)
 	}
 }
 
@@ -1211,6 +1450,35 @@ func TestModelPathsRootsModalValidationAndSaveError(t *testing.T) {
 	}
 }
 
+// TestModelResourcePickerUsesSearchRootFallback verifies global search roots back resource picker defaults.
+func TestModelResourcePickerUsesSearchRootFallback(t *testing.T) {
+	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	root := t.TempDir()
+
+	m := loadReadyModel(t, NewModel(
+		newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task}),
+		WithSearchRoots([]string{root}),
+	))
+	got := m.resourcePickerRootForCurrentProject()
+	want, err := filepath.Abs(root)
+	if err != nil {
+		t.Fatalf("Abs() error = %v", err)
+	}
+	if got != want {
+		t.Fatalf("expected search-root fallback %q, got %q", want, got)
+	}
+}
+
 // TestModelMouseWheelAndClick verifies behavior for the covered scenario.
 func TestModelMouseWheelAndClick(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
@@ -1481,6 +1749,73 @@ func TestModelTaskInfoMovesCurrentTaskWithBrackets(t *testing.T) {
 	}
 }
 
+// TestModelTaskInfoSubtaskChecklistToggleCompletion verifies task-info checklist rendering and completion toggling.
+func TestModelTaskInfoSubtaskChecklistToggleCompletion(t *testing.T) {
+	now := time.Date(2026, 2, 23, 10, 20, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	cTodo, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	cProgress, _ := domain.NewColumn("c2", p.ID, "In Progress", 1, 0, now)
+	cDone, _ := domain.NewColumn("c3", p.ID, "Done", 2, 0, now)
+
+	parent, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-parent",
+		ProjectID: p.ID,
+		ColumnID:  cProgress.ID,
+		Position:  0,
+		Title:     "Parent",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	child, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-child",
+		ProjectID: p.ID,
+		ColumnID:  cTodo.ID,
+		Position:  0,
+		Title:     "Child",
+		Priority:  domain.PriorityLow,
+		Kind:      domain.WorkKindSubtask,
+		ParentID:  parent.ID,
+	}, now)
+
+	svc := newFakeService([]domain.Project{p}, []domain.Column{cTodo, cProgress, cDone}, []domain.Task{parent, child})
+	m := loadReadyModel(t, NewModel(svc))
+	m.focusTaskByID(parent.ID)
+	m = applyMsg(t, m, keyRune('i'))
+
+	rendered := stripANSI(fmt.Sprint(m.View().Content))
+	if !strings.Contains(rendered, "[ ] Child") {
+		t.Fatalf("expected unchecked checklist row for subtask, got\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "state:To Do") || !strings.Contains(rendered, "complete:no") {
+		t.Fatalf("expected subtask state metadata in task-info checklist, got\n%s", rendered)
+	}
+
+	m = applyMsg(t, m, keyRune(' '))
+	moved, ok := svc.taskByID(child.ID)
+	if !ok {
+		t.Fatalf("expected moved child task in fake service")
+	}
+	if moved.ColumnID != cDone.ID {
+		t.Fatalf("expected checklist toggle to move child to done column %q, got %q", cDone.ID, moved.ColumnID)
+	}
+
+	rendered = stripANSI(fmt.Sprint(m.View().Content))
+	if !strings.Contains(rendered, "[x] Child") {
+		t.Fatalf("expected checked checklist row after completion toggle, got\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "state:Done") || !strings.Contains(rendered, "complete:yes") {
+		t.Fatalf("expected done state metadata after completion toggle, got\n%s", rendered)
+	}
+
+	m = applyMsg(t, m, keyRune(' '))
+	moved, ok = svc.taskByID(child.ID)
+	if !ok {
+		t.Fatalf("expected moved child task in fake service")
+	}
+	if moved.ColumnID != cProgress.ID {
+		t.Fatalf("expected reopening toggle to move child to progress column %q, got %q", cProgress.ID, moved.ColumnID)
+	}
+}
+
 // TestModelBoardScrollKeepsSelectedRowVisible verifies dynamic list scrolling for long columns.
 func TestModelBoardScrollKeepsSelectedRowVisible(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
@@ -1641,16 +1976,38 @@ func TestModelViewStatesAndPrompts(t *testing.T) {
 	}
 }
 
-// TestModelNoProjectsBootstrapsProjectForm verifies first-run project creation flow.
-func TestModelNoProjectsBootstrapsProjectForm(t *testing.T) {
+// TestModelNoProjectsKeepsPickerAndCreationFlow verifies first-run picker flow remains usable for creation.
+func TestModelNoProjectsKeepsPickerAndCreationFlow(t *testing.T) {
 	m := loadReadyModel(t, NewModel(newFakeService(nil, nil, nil)))
-	if m.mode != modeAddProject {
-		t.Fatalf("expected add-project mode for empty workspace, got %v", m.mode)
+	if m.mode != modeProjectPicker {
+		t.Fatalf("expected project-picker mode for empty workspace, got %v", m.mode)
 	}
 	view := m.View()
 	rendered := fmt.Sprint(view.Content)
-	if !strings.Contains(rendered, "New Project") {
-		t.Fatalf("expected new-project modal overlay for first run, got\n%s", rendered)
+	if !strings.Contains(rendered, "Projects") || !strings.Contains(rendered, "N new project") {
+		t.Fatalf("expected project-picker overlay with create action, got\n%s", rendered)
+	}
+
+	m = applyMsg(t, m, keyRune('N'))
+	if m.mode != modeAddProject {
+		t.Fatalf("expected add-project mode after picker new-project action, got %v", m.mode)
+	}
+}
+
+// TestModelLaunchStartsInProjectPicker verifies first launch opens the project picker before normal mode.
+func TestModelLaunchStartsInProjectPicker(t *testing.T) {
+	now := time.Date(2026, 2, 23, 12, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, nil)
+
+	initial := NewModel(svc, WithLaunchProjectPicker(true))
+	ready := applyMsg(t, applyCmd(t, initial, initial.Init()), tea.WindowSizeMsg{Width: 120, Height: 40})
+	if ready.mode != modeProjectPicker {
+		t.Fatalf("expected launch picker mode, got %v", ready.mode)
+	}
+	if ready.projectPickerIndex != 0 {
+		t.Fatalf("expected picker index 0 on launch, got %d", ready.projectPickerIndex)
 	}
 }
 
@@ -1869,6 +2226,10 @@ func TestHelpersCoverage(t *testing.T) {
 	m.mode = modeQuickActions
 	if !strings.Contains(m.modePrompt(), "quick actions") {
 		t.Fatal("expected quick actions mode prompt")
+	}
+	m.mode = modeThread
+	if !strings.Contains(m.modePrompt(), "thread:") {
+		t.Fatal("expected thread mode prompt")
 	}
 
 	m.columns = []domain.Column{{ID: "c1"}}
@@ -2319,6 +2680,10 @@ func TestTaskFormDuePickerFlow(t *testing.T) {
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
 	if m.formFocus != 3 {
 		t.Fatalf("expected due field focus, got %d", m.formFocus)
+	}
+	dueOverlay := m.renderModeOverlay(lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), lipgloss.NewStyle(), 96)
+	if !strings.Contains(dueOverlay, "YYYY-MM-DD HH:MM") || !strings.Contains(dueOverlay, "RFC3339") || !strings.Contains(dueOverlay, "UTC") {
+		t.Fatalf("expected explicit due datetime format hints, got %q", dueOverlay)
 	}
 
 	m = applyMsg(t, m, keyRune('D'))
@@ -3515,6 +3880,559 @@ func TestModelDependencyRollupAndTaskInfoHints(t *testing.T) {
 	}
 }
 
+// TestModelDependencyInspectorPinsLinkedRefsAndAppliesEdits verifies dependency inspector linked-row pinning and task-info save/jump flows.
+func TestModelDependencyInspectorPinsLinkedRefsAndAppliesEdits(t *testing.T) {
+	now := time.Date(2026, 2, 23, 9, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	cTodo, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	cProgress, _ := domain.NewColumn("c2", p.ID, "In Progress", 1, 0, now)
+	cDone, _ := domain.NewColumn("c3", p.ID, "Done", 2, 0, now)
+
+	owner, _ := domain.NewTask(domain.TaskInput{
+		ID:             "t-owner",
+		ProjectID:      p.ID,
+		ColumnID:       cTodo.ID,
+		Position:       0,
+		Title:          "Owner",
+		Priority:       domain.PriorityMedium,
+		LifecycleState: domain.StateTodo,
+	}, now)
+	depDone, _ := domain.NewTask(domain.TaskInput{
+		ID:             "t-done",
+		ProjectID:      p.ID,
+		ColumnID:       cDone.ID,
+		Position:       0,
+		Title:          "Done dependency",
+		Priority:       domain.PriorityLow,
+		LifecycleState: domain.StateDone,
+	}, now.Add(time.Minute))
+	depArchived, _ := domain.NewTask(domain.TaskInput{
+		ID:             "t-archived",
+		ProjectID:      p.ID,
+		ColumnID:       cDone.ID,
+		Position:       1,
+		Title:          "Archived dependency",
+		Priority:       domain.PriorityLow,
+		LifecycleState: domain.StateArchived,
+	}, now.Add(2*time.Minute))
+	archivedAt := now.Add(-time.Minute)
+	depArchived.ArchivedAt = &archivedAt
+	blocker, _ := domain.NewTask(domain.TaskInput{
+		ID:             "t-blocker",
+		ProjectID:      p.ID,
+		ColumnID:       cProgress.ID,
+		Position:       0,
+		Title:          "Active blocker",
+		Priority:       domain.PriorityHigh,
+		LifecycleState: domain.StateProgress,
+	}, now.Add(3*time.Minute))
+	candidate, _ := domain.NewTask(domain.TaskInput{
+		ID:             "t-candidate",
+		ProjectID:      p.ID,
+		ColumnID:       cTodo.ID,
+		Position:       1,
+		Title:          "Candidate dependency",
+		Priority:       domain.PriorityLow,
+		LifecycleState: domain.StateTodo,
+	}, now.Add(4*time.Minute))
+
+	owner.Metadata = domain.TaskMetadata{
+		DependsOn: []string{owner.ID, depDone.ID, depArchived.ID},
+		BlockedBy: []string{blocker.ID},
+	}
+
+	svc := newFakeService(
+		[]domain.Project{p},
+		[]domain.Column{cTodo, cProgress, cDone},
+		[]domain.Task{owner, depDone, depArchived, blocker, candidate},
+	)
+	m := loadReadyModel(t, NewModel(svc))
+
+	m = applyMsg(t, m, keyRune('i'))
+	m = applyMsg(t, m, keyRune('b'))
+	m = applyMsg(t, m, m.loadDependencyMatches())
+	if m.mode != modeDependencyInspector {
+		t.Fatalf("expected dependency inspector mode, got %v", m.mode)
+	}
+	if len(m.dependencyMatches) < 3 {
+		t.Fatalf("expected linked rows loaded, got %d", len(m.dependencyMatches))
+	}
+	if idx := dependencyCandidateIndexByID(m.dependencyMatches, owner.ID); idx >= 0 {
+		t.Fatalf("expected owner task %q to be excluded from dependency candidates", owner.ID)
+	}
+	if got := m.dependencyMatches[0].Match.Task.ID; got != depDone.ID {
+		t.Fatalf("expected first pinned row %q, got %q", depDone.ID, got)
+	}
+	if got := m.dependencyMatches[1].Match.Task.ID; got != depArchived.ID {
+		t.Fatalf("expected second pinned row %q, got %q", depArchived.ID, got)
+	}
+	if got := m.dependencyMatches[2].Match.Task.ID; got != blocker.ID {
+		t.Fatalf("expected third pinned row %q, got %q", blocker.ID, got)
+	}
+
+	foundArchived := false
+	for _, candidateRow := range m.dependencyMatches {
+		if candidateRow.Match.Task.ID == depArchived.ID {
+			foundArchived = true
+			break
+		}
+	}
+	if !foundArchived {
+		t.Fatal("expected linked archived dependency to remain visible in inspector list")
+	}
+
+	for i := 0; i < 4; i++ {
+		m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	}
+	if m.dependencyFocus != 4 {
+		t.Fatalf("expected list focus, got %d", m.dependencyFocus)
+	}
+	addIdx := dependencyCandidateIndexByID(m.dependencyMatches, candidate.ID)
+	if addIdx < 0 {
+		t.Fatalf("expected candidate row %q", candidate.ID)
+	}
+	m.dependencyIndex = addIdx
+	m = applyMsg(t, m, keyRune('d'))
+	m = applyMsg(t, m, keyRune('a'))
+	if m.mode != modeTaskInfo {
+		t.Fatalf("expected return to task-info after apply, got %v", m.mode)
+	}
+	ownerAfter, ok := m.taskByID(owner.ID)
+	if !ok {
+		t.Fatalf("expected owner task %q after apply", owner.ID)
+	}
+	if !hasDependencyID(ownerAfter.Metadata.DependsOn, candidate.ID) {
+		t.Fatalf("expected candidate dependency %q saved, got %#v", candidate.ID, ownerAfter.Metadata.DependsOn)
+	}
+	if hasDependencyID(ownerAfter.Metadata.DependsOn, owner.ID) {
+		t.Fatalf("expected self dependency %q to be stripped on save, got %#v", owner.ID, ownerAfter.Metadata.DependsOn)
+	}
+
+	m = applyMsg(t, m, keyRune('b'))
+	m = applyMsg(t, m, m.loadDependencyMatches())
+	for i := 0; i < 4; i++ {
+		m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	}
+	jumpIdx := dependencyCandidateIndexByID(m.dependencyMatches, blocker.ID)
+	if jumpIdx < 0 {
+		t.Fatalf("expected blocker row %q for jump", blocker.ID)
+	}
+	m.dependencyIndex = jumpIdx
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeTaskInfo {
+		t.Fatalf("expected task-info mode after dependency jump, got %v", m.mode)
+	}
+	if m.taskInfoTaskID != blocker.ID {
+		t.Fatalf("expected jump to blocker %q, got %q", blocker.ID, m.taskInfoTaskID)
+	}
+}
+
+// TestModelDependencyInspectorCtrlOFromTaskForm verifies task-form dependency picker opens with ctrl+o and applies CSV field updates.
+func TestModelDependencyInspectorCtrlOFromTaskForm(t *testing.T) {
+	now := time.Date(2026, 2, 23, 11, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	owner, _ := domain.NewTask(domain.TaskInput{
+		ID:             "t-owner",
+		ProjectID:      p.ID,
+		ColumnID:       c.ID,
+		Position:       0,
+		Title:          "Owner",
+		Priority:       domain.PriorityMedium,
+		LifecycleState: domain.StateTodo,
+	}, now)
+	candidate, _ := domain.NewTask(domain.TaskInput{
+		ID:             "t-candidate",
+		ProjectID:      p.ID,
+		ColumnID:       c.ID,
+		Position:       1,
+		Title:          "Candidate",
+		Priority:       domain.PriorityLow,
+		LifecycleState: domain.StateTodo,
+	}, now.Add(time.Minute))
+
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{owner, candidate})))
+	m = applyMsg(t, m, keyRune('e'))
+	if m.mode != modeEditTask {
+		t.Fatalf("expected edit-task mode, got %v", m.mode)
+	}
+	m = applyCmd(t, m, m.focusTaskFormField(taskFieldDependsOn))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+	m = applyMsg(t, m, m.loadDependencyMatches())
+	if m.mode != modeDependencyInspector {
+		t.Fatalf("expected dependency inspector from ctrl+o, got %v", m.mode)
+	}
+
+	for i := 0; i < 4; i++ {
+		m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	}
+	addIdx := dependencyCandidateIndexByID(m.dependencyMatches, candidate.ID)
+	if addIdx < 0 {
+		t.Fatalf("expected candidate row %q", candidate.ID)
+	}
+	m.dependencyIndex = addIdx
+	m = applyMsg(t, m, keyRune('d'))
+	m = applyMsg(t, m, keyRune('a'))
+	if m.mode != modeEditTask {
+		t.Fatalf("expected return to edit-task mode after apply, got %v", m.mode)
+	}
+	if got := m.formInputs[taskFieldDependsOn].Value(); got != candidate.ID {
+		t.Fatalf("expected depends_on CSV %q, got %q", candidate.ID, got)
+	}
+}
+
+// TestModelDependencyInspectorOverlayRendersMissingLinkedRefs verifies missing linked references stay inspectable in the dependency modal.
+func TestModelDependencyInspectorOverlayRendersMissingLinkedRefs(t *testing.T) {
+	now := time.Date(2026, 2, 23, 12, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	owner, _ := domain.NewTask(domain.TaskInput{
+		ID:             "t-owner",
+		ProjectID:      p.ID,
+		ColumnID:       c.ID,
+		Position:       0,
+		Title:          "Owner",
+		Priority:       domain.PriorityMedium,
+		LifecycleState: domain.StateTodo,
+	}, now)
+	blocker, _ := domain.NewTask(domain.TaskInput{
+		ID:             "t-blocker",
+		ProjectID:      p.ID,
+		ColumnID:       c.ID,
+		Position:       1,
+		Title:          "Blocker",
+		Priority:       domain.PriorityLow,
+		LifecycleState: domain.StateTodo,
+	}, now.Add(time.Minute))
+	owner.Metadata = domain.TaskMetadata{
+		DependsOn: []string{"t-missing"},
+		BlockedBy: []string{blocker.ID},
+	}
+
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{owner, blocker})))
+	m = applyMsg(t, m, keyRune('i'))
+	m = applyMsg(t, m, keyRune('b'))
+	m = applyMsg(t, m, m.loadDependencyMatches())
+	if m.mode != modeDependencyInspector {
+		t.Fatalf("expected dependency inspector mode, got %v", m.mode)
+	}
+
+	out := stripANSI(m.renderModeOverlay(
+		lipgloss.Color("62"),
+		lipgloss.Color("241"),
+		lipgloss.Color("239"),
+		lipgloss.NewStyle(),
+		96,
+	))
+	if !strings.Contains(out, "linked refs are pinned at top") {
+		t.Fatalf("expected pinned-linked hint, got %q", out)
+	}
+	if !strings.Contains(out, "(missing task reference)") {
+		t.Fatalf("expected missing reference row, got %q", out)
+	}
+	if !strings.Contains(out, "state: missing") {
+		t.Fatalf("expected missing reference details state, got %q", out)
+	}
+}
+
+// TestModelDependencyInspectorFormEnterDoesNotJump verifies enter-jump is blocked when opened from task form context.
+func TestModelDependencyInspectorFormEnterDoesNotJump(t *testing.T) {
+	now := time.Date(2026, 2, 23, 13, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	owner, _ := domain.NewTask(domain.TaskInput{
+		ID:             "t-owner",
+		ProjectID:      p.ID,
+		ColumnID:       c.ID,
+		Position:       0,
+		Title:          "Owner",
+		Priority:       domain.PriorityMedium,
+		LifecycleState: domain.StateTodo,
+	}, now)
+	candidate, _ := domain.NewTask(domain.TaskInput{
+		ID:             "t-candidate",
+		ProjectID:      p.ID,
+		ColumnID:       c.ID,
+		Position:       1,
+		Title:          "Candidate",
+		Priority:       domain.PriorityLow,
+		LifecycleState: domain.StateTodo,
+	}, now.Add(time.Minute))
+
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{owner, candidate})))
+	m = applyMsg(t, m, keyRune('e'))
+	m = applyCmd(t, m, m.focusTaskFormField(taskFieldDependsOn))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+	m = applyMsg(t, m, m.loadDependencyMatches())
+	if m.mode != modeDependencyInspector {
+		t.Fatalf("expected dependency inspector mode, got %v", m.mode)
+	}
+	for i := 0; i < 4; i++ {
+		m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	}
+	m.dependencyIndex = dependencyCandidateIndexByID(m.dependencyMatches, candidate.ID)
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeDependencyInspector {
+		t.Fatalf("expected dependency inspector to stay open on enter from form mode, got %v", m.mode)
+	}
+	if !strings.Contains(m.status, "task-info inspector") {
+		t.Fatalf("expected non-task-info jump status, got %q", m.status)
+	}
+}
+
+// TestDependencyStateIDForTask verifies fallback state-id derivation for dependency rows.
+func TestDependencyStateIDForTask(t *testing.T) {
+	now := time.Date(2026, 2, 23, 14, 0, 0, 0, time.UTC)
+	archivedAt := now.Add(-time.Minute)
+	taskArchived := domain.Task{LifecycleState: domain.StateDone, ArchivedAt: &archivedAt}
+	taskProgress := domain.Task{LifecycleState: domain.StateProgress}
+	taskUnknown := domain.Task{LifecycleState: domain.LifecycleState("review")}
+	taskEmpty := domain.Task{}
+
+	if got := dependencyStateIDForTask(taskArchived); got != "archived" {
+		t.Fatalf("expected archived state id, got %q", got)
+	}
+	if got := dependencyStateIDForTask(taskProgress); got != "progress" {
+		t.Fatalf("expected progress state id, got %q", got)
+	}
+	if got := dependencyStateIDForTask(taskUnknown); got != "review" {
+		t.Fatalf("expected custom normalized state id, got %q", got)
+	}
+	if got := dependencyStateIDForTask(taskEmpty); got != "todo" {
+		t.Fatalf("expected todo fallback state id, got %q", got)
+	}
+}
+
+// TestModelDependencyInspectorFilterControls verifies dependency inspector control paths for query/filter toggles and cancel flow.
+func TestModelDependencyInspectorFilterControls(t *testing.T) {
+	now := time.Date(2026, 2, 23, 15, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	owner, _ := domain.NewTask(domain.TaskInput{
+		ID:             "t-owner",
+		ProjectID:      p.ID,
+		ColumnID:       c.ID,
+		Position:       0,
+		Title:          "Owner",
+		Priority:       domain.PriorityMedium,
+		LifecycleState: domain.StateTodo,
+	}, now)
+	candidate, _ := domain.NewTask(domain.TaskInput{
+		ID:             "t-candidate",
+		ProjectID:      p.ID,
+		ColumnID:       c.ID,
+		Position:       1,
+		Title:          "Candidate",
+		Priority:       domain.PriorityLow,
+		LifecycleState: domain.StateTodo,
+	}, now.Add(time.Minute))
+	owner.Metadata = domain.TaskMetadata{DependsOn: []string{candidate.ID}}
+
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{owner, candidate})))
+	m = applyMsg(t, m, keyRune('i'))
+	m = applyMsg(t, m, keyRune('b'))
+	m = applyMsg(t, m, m.loadDependencyMatches())
+	if m.mode != modeDependencyInspector {
+		t.Fatalf("expected dependency inspector mode, got %v", m.mode)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab}) // states focus
+	m = applyMsg(t, m, keyRune('x'))
+	if m.dependencyActiveField != taskFieldBlockedBy {
+		t.Fatalf("expected active field switch to blocked_by, got %d", m.dependencyActiveField)
+	}
+	m = applyMsg(t, m, keyRune('k')) // query focus
+	for _, r := range []rune("qq") {
+		m = applyMsg(t, m, keyRune(r))
+	}
+	if got := strings.TrimSpace(m.dependencyInput.Value()); got != "qq" {
+		t.Fatalf("expected typed dependency query, got %q", got)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
+	if got := strings.TrimSpace(m.dependencyInput.Value()); got != "" {
+		t.Fatalf("expected ctrl+u to clear dependency query, got %q", got)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab}) // states focus
+	m = applyMsg(t, m, keyRune(' '))
+	if m.isDependencyStateEnabled("todo") {
+		t.Fatalf("expected todo state disabled after toggle, got %#v", m.dependencyStates)
+	}
+	m = applyMsg(t, m, keyRune(' '))
+	if !m.isDependencyStateEnabled("todo") {
+		t.Fatalf("expected todo state restored for list actions, got %#v", m.dependencyStates)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab}) // scope focus
+	beforeScope := m.dependencyCrossProject
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.dependencyCrossProject == beforeScope {
+		t.Fatalf("expected scope toggle, got %t", m.dependencyCrossProject)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab}) // archived focus
+	beforeArchived := m.dependencyIncludeArchived
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.dependencyIncludeArchived == beforeArchived {
+		t.Fatalf("expected archived toggle, got %t", m.dependencyIncludeArchived)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab}) // list focus
+	if m.dependencyFocus != 4 {
+		t.Fatalf("expected list focus, got %d", m.dependencyFocus)
+	}
+	if m.dependencyActiveField != taskFieldBlockedBy {
+		t.Fatalf("expected blocked_by active field before list toggle, got %d", m.dependencyActiveField)
+	}
+	m = applyMsg(t, m, keyRune(' '))
+	if !hasDependencyID(m.dependencyBlockedBy, candidate.ID) {
+		t.Fatalf("expected space-toggle add into active blocked_by field, got %#v", m.dependencyBlockedBy)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+	if m.dependencyCrossProject != m.searchDefaultCrossProject {
+		t.Fatalf("expected ctrl+r reset scope to default, got %t", m.dependencyCrossProject)
+	}
+	if m.dependencyIncludeArchived != m.searchDefaultIncludeArchive {
+		t.Fatalf("expected ctrl+r reset archived flag, got %t", m.dependencyIncludeArchived)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.mode != modeTaskInfo {
+		t.Fatalf("expected esc to return task-info mode, got %v", m.mode)
+	}
+}
+
+// TestModelDependencyInspectorInputAndListKeyRouting verifies that query input keeps text keys while list actions stay list-scoped.
+func TestModelDependencyInspectorInputAndListKeyRouting(t *testing.T) {
+	now := time.Date(2026, 2, 23, 16, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	owner, _ := domain.NewTask(domain.TaskInput{
+		ID:             "t-owner",
+		ProjectID:      p.ID,
+		ColumnID:       c.ID,
+		Position:       0,
+		Title:          "Owner",
+		Priority:       domain.PriorityMedium,
+		LifecycleState: domain.StateTodo,
+	}, now)
+	candidate, _ := domain.NewTask(domain.TaskInput{
+		ID:             "t-candidate",
+		ProjectID:      p.ID,
+		ColumnID:       c.ID,
+		Position:       1,
+		Title:          "Candidate",
+		Priority:       domain.PriorityLow,
+		LifecycleState: domain.StateTodo,
+	}, now.Add(time.Minute))
+
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{owner, candidate})))
+	m = applyMsg(t, m, keyRune('i'))
+	m = applyMsg(t, m, keyRune('b'))
+	m = applyMsg(t, m, m.loadDependencyMatches())
+	if m.mode != modeDependencyInspector {
+		t.Fatalf("expected dependency inspector mode, got %v", m.mode)
+	}
+	if m.dependencyFocus != 0 {
+		t.Fatalf("expected query focus, got %d", m.dependencyFocus)
+	}
+	initialField := m.dependencyActiveField
+
+	m = applyMsg(t, m, keyRune('x'))
+	m = applyMsg(t, m, keyRune('a'))
+	m = applyMsg(t, m, keyRune('d'))
+	if got := m.dependencyInput.Value(); got != "xad" {
+		t.Fatalf("expected action keys to type in query input, got %q", got)
+	}
+	if m.dependencyActiveField != initialField {
+		t.Fatalf("expected active field unchanged while typing query, got %d", m.dependencyActiveField)
+	}
+	if len(m.dependencyDependsOn) != 0 || len(m.dependencyBlockedBy) != 0 {
+		t.Fatalf("expected no dependency toggles while query focused, got depends=%#v blocked=%#v", m.dependencyDependsOn, m.dependencyBlockedBy)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
+	if got := m.dependencyInput.Value(); got != "" {
+		t.Fatalf("expected ctrl+u to clear query before list assertions, got %q", got)
+	}
+
+	m = applyMsg(t, m, keyRune('j'))
+	if m.dependencyFocus != 1 {
+		t.Fatalf("expected j to move focus from query to states, got %d", m.dependencyFocus)
+	}
+	m = applyMsg(t, m, keyRune('d'))
+	m = applyMsg(t, m, keyRune('b'))
+	if len(m.dependencyDependsOn) != 0 || len(m.dependencyBlockedBy) != 0 {
+		t.Fatalf("expected d/b to be ignored outside list focus, got depends=%#v blocked=%#v", m.dependencyDependsOn, m.dependencyBlockedBy)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
+	if m.dependencyFocus != 4 {
+		t.Fatalf("expected down navigation to reach list focus, got %d", m.dependencyFocus)
+	}
+	idx := dependencyCandidateIndexByID(m.dependencyMatches, candidate.ID)
+	if idx < 0 {
+		t.Fatalf("expected candidate row %q", candidate.ID)
+	}
+	m.dependencyIndex = idx
+	m = applyMsg(t, m, keyRune('d'))
+	m = applyMsg(t, m, keyRune('b'))
+	if !hasDependencyID(m.dependencyDependsOn, candidate.ID) {
+		t.Fatalf("expected list-focused d to toggle depends_on, got %#v", m.dependencyDependsOn)
+	}
+	if !hasDependencyID(m.dependencyBlockedBy, candidate.ID) {
+		t.Fatalf("expected list-focused b to toggle blocked_by, got %#v", m.dependencyBlockedBy)
+	}
+}
+
+// TestModelSearchFocusNavigationWithJK verifies search modal focus navigation with j/k and arrow keys.
+func TestModelSearchFocusNavigationWithJK(t *testing.T) {
+	now := time.Date(2026, 2, 23, 16, 30, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:             "t1",
+		ProjectID:      p.ID,
+		ColumnID:       c.ID,
+		Position:       0,
+		Title:          "Task",
+		Priority:       domain.PriorityLow,
+		LifecycleState: domain.StateTodo,
+	}, now)
+
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})))
+	m = applyMsg(t, m, keyRune('/'))
+	if m.mode != modeSearch {
+		t.Fatalf("expected search mode, got %v", m.mode)
+	}
+	if m.searchFocus != 0 {
+		t.Fatalf("expected initial search focus on query, got %d", m.searchFocus)
+	}
+
+	m = applyMsg(t, m, keyRune('j'))
+	if m.searchFocus != 1 {
+		t.Fatalf("expected j to move search focus forward, got %d", m.searchFocus)
+	}
+	if got := m.searchInput.Value(); got != "" {
+		t.Fatalf("expected j to navigate focus instead of typing, got %q", got)
+	}
+
+	m = applyMsg(t, m, keyRune('k'))
+	if m.searchFocus != 0 {
+		t.Fatalf("expected k to move search focus backward, got %d", m.searchFocus)
+	}
+	if got := m.searchInput.Value(); got != "" {
+		t.Fatalf("expected k to navigate focus instead of typing, got %q", got)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
+	if m.searchFocus != 1 {
+		t.Fatalf("expected down arrow to move search focus forward, got %d", m.searchFocus)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyUp})
+	if m.searchFocus != 0 {
+		t.Fatalf("expected up arrow to move search focus backward, got %d", m.searchFocus)
+	}
+}
+
 // TestSortTaskSlicePrefersCreationTime verifies oldest-first ordering regardless of move position churn.
 func TestSortTaskSlicePrefersCreationTime(t *testing.T) {
 	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
@@ -3542,6 +4460,20 @@ func TestSortTaskSlicePrefersCreationTime(t *testing.T) {
 	}
 }
 
+// dependencyCandidateIndexByID finds one dependency-candidate index by task id.
+func dependencyCandidateIndexByID(candidates []dependencyCandidate, taskID string) int {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return -1
+	}
+	for idx, candidate := range candidates {
+		if strings.TrimSpace(candidate.Match.Task.ID) == taskID {
+			return idx
+		}
+	}
+	return -1
+}
+
 // ansiEscapePattern matches terminal color/style escape sequences for text assertions.
 var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
@@ -3560,10 +4492,14 @@ func applyResult(t *testing.T, updated tea.Model, cmd tea.Cmd) Model {
 	return applyCmd(t, out, cmd)
 }
 
-// loadReadyModel loads required data for the current operation.
+// loadReadyModel loads data and accepts the initial launch picker when projects already exist.
 func loadReadyModel(t *testing.T, m Model) Model {
 	t.Helper()
-	return applyMsg(t, applyCmd(t, m, m.Init()), tea.WindowSizeMsg{Width: 120, Height: 40})
+	ready := applyMsg(t, applyCmd(t, m, m.Init()), tea.WindowSizeMsg{Width: 120, Height: 40})
+	if ready.mode == modeProjectPicker && len(ready.projects) > 0 {
+		ready = applyMsg(t, ready, tea.KeyPressMsg{Code: tea.KeyEnter})
+	}
+	return ready
 }
 
 // applyMsg applies msg.

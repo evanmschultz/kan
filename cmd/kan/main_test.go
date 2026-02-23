@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -32,6 +34,22 @@ func (f fakeProgram) Run() (tea.Model, error) {
 	return nil, f.runErr
 }
 
+// writeBootstrapReadyConfig writes the minimum startup fields required to bypass bootstrap prompts.
+func writeBootstrapReadyConfig(t *testing.T, path, searchRoot string) {
+	t.Helper()
+	content := fmt.Sprintf(`
+[identity]
+display_name = "Test User"
+default_actor_type = "user"
+
+[paths]
+search_roots = [%q]
+`, searchRoot)
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+}
+
 // TestRunVersion verifies behavior for the covered scenario.
 func TestRunVersion(t *testing.T) {
 	var out strings.Builder
@@ -54,7 +72,9 @@ func TestRunStartsProgram(t *testing.T) {
 	}
 
 	dbPath := filepath.Join(t.TempDir(), "kan.db")
-	err := run(context.Background(), []string{"--db", dbPath, "--config", filepath.Join(t.TempDir(), "missing.toml")}, io.Discard, io.Discard)
+	cfgPath := filepath.Join(t.TempDir(), "config.toml")
+	writeBootstrapReadyConfig(t, cfgPath, t.TempDir())
+	err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath}, io.Discard, io.Discard)
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
@@ -68,7 +88,8 @@ func TestRunTUIStartupDoesNotCreateDefaultProject(t *testing.T) {
 
 	tmp := t.TempDir()
 	dbPath := filepath.Join(tmp, "kan.db")
-	cfgPath := filepath.Join(tmp, "missing.toml")
+	cfgPath := filepath.Join(tmp, "config.toml")
+	writeBootstrapReadyConfig(t, cfgPath, t.TempDir())
 	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath}, io.Discard, io.Discard); err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
@@ -88,6 +109,49 @@ func TestRunTUIStartupDoesNotCreateDefaultProject(t *testing.T) {
 	}
 	if len(snap.Projects) != 0 {
 		t.Fatalf("expected no auto-created startup projects, got %d", len(snap.Projects))
+	}
+}
+
+// TestRunBootstrapPromptsAndPersistsMissingFields verifies startup bootstrap prompts and persistence.
+func TestRunBootstrapPromptsAndPersistsMissingFields(t *testing.T) {
+	origFactory := programFactory
+	t.Cleanup(func() { programFactory = origFactory })
+	programFactory = func(_ tea.Model) program { return fakeProgram{} }
+
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "kan.db")
+	cfgPath := filepath.Join(tmp, "config.toml")
+	searchRoot := t.TempDir()
+
+	oldStdin := os.Stdin
+	readEnd, writeEnd, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("Pipe() error = %v", err)
+	}
+	if _, err := io.WriteString(writeEnd, "Lane User\n"+searchRoot+"\n\n"); err != nil {
+		t.Fatalf("WriteString() error = %v", err)
+	}
+	if err := writeEnd.Close(); err != nil {
+		t.Fatalf("Close(writeEnd) error = %v", err)
+	}
+	os.Stdin = readEnd
+	t.Cleanup(func() {
+		os.Stdin = oldStdin
+		_ = readEnd.Close()
+	})
+
+	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath}, io.Discard, io.Discard); err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+	cfg, err := config.Load(cfgPath, config.Default(dbPath))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got := cfg.Identity.DisplayName; got != "Lane User" {
+		t.Fatalf("expected persisted display name Lane User, got %q", got)
+	}
+	if len(cfg.Paths.SearchRoots) != 1 || cfg.Paths.SearchRoots[0] != filepath.Clean(searchRoot) {
+		t.Fatalf("expected persisted search root %q, got %#v", filepath.Clean(searchRoot), cfg.Paths.SearchRoots)
 	}
 }
 
@@ -229,7 +293,8 @@ func TestRunExportToStdoutAndImportErrors(t *testing.T) {
 
 	tmp := t.TempDir()
 	dbPath := filepath.Join(tmp, "kan.db")
-	cfgPath := filepath.Join(tmp, "missing.toml")
+	cfgPath := filepath.Join(tmp, "config.toml")
+	writeBootstrapReadyConfig(t, cfgPath, t.TempDir())
 	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath}, io.Discard, io.Discard); err != nil {
 		t.Fatalf("initial run() error = %v", err)
 	}
@@ -318,7 +383,8 @@ func TestRunDevModeCreatesWorkspaceLogFile(t *testing.T) {
 	t.Chdir(workspace)
 
 	dbPath := filepath.Join(workspace, "kan.db")
-	cfgPath := filepath.Join(workspace, "missing.toml")
+	cfgPath := filepath.Join(workspace, "config.toml")
+	writeBootstrapReadyConfig(t, cfgPath, workspace)
 	if err := run(context.Background(), []string{"--dev", "--db", dbPath, "--config", cfgPath}, io.Discard, io.Discard); err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
@@ -340,6 +406,55 @@ func TestRunDevModeCreatesWorkspaceLogFile(t *testing.T) {
 	}
 	if !foundLog {
 		t.Fatalf("expected at least one .log file in %s, got %v", logDir, entries)
+	}
+}
+
+// TestRunTUIModeWritesRuntimeLogsToFileOnly verifies TUI runtime logs stay out of stderr and persist to the dev log file.
+func TestRunTUIModeWritesRuntimeLogsToFileOnly(t *testing.T) {
+	origFactory := programFactory
+	t.Cleanup(func() { programFactory = origFactory })
+	programFactory = func(_ tea.Model) program { return fakeProgram{} }
+
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+
+	dbPath := filepath.Join(workspace, "kan.db")
+	cfgPath := filepath.Join(workspace, "config.toml")
+	writeBootstrapReadyConfig(t, cfgPath, workspace)
+	var stderr bytes.Buffer
+	if err := run(context.Background(), []string{"--dev", "--db", dbPath, "--config", cfgPath}, io.Discard, &stderr); err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+
+	if got := strings.TrimSpace(stderr.String()); got != "" {
+		t.Fatalf("expected no runtime stderr output in TUI mode, got %q", got)
+	}
+
+	logDir := filepath.Join(workspace, ".kan", "log")
+	entries, err := os.ReadDir(logDir)
+	if err != nil {
+		t.Fatalf("ReadDir() error = %v", err)
+	}
+
+	var logPath string
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".log") {
+			continue
+		}
+		logPath = filepath.Join(logDir, entry.Name())
+		break
+	}
+	if logPath == "" {
+		t.Fatalf("expected a .log file in %s", logDir)
+	}
+
+	content, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	logOutput := string(content)
+	if !strings.Contains(logOutput, "starting tui program loop") {
+		t.Fatalf("expected runtime log file to include TUI lifecycle entries, got %q", logOutput)
 	}
 }
 
@@ -443,6 +558,13 @@ cross_project = true
 include_archived = true
 states = ["todo", "archived"]
 
+[identity]
+display_name = "Lane User"
+default_actor_type = "agent"
+
+[paths]
+search_roots = ["/tmp/code", "/tmp/docs"]
+
 [ui]
 due_soon_windows = ["6h"]
 show_due_summary = false
@@ -491,6 +613,9 @@ redo = "U"
 	if len(runtimeCfg.UI.DueSoonWindows) != 1 || runtimeCfg.UI.DueSoonWindows[0] != 6*time.Hour || runtimeCfg.UI.ShowDueSummary {
 		t.Fatalf("unexpected ui runtime config %#v", runtimeCfg.UI)
 	}
+	if len(runtimeCfg.SearchRoots) != 2 || runtimeCfg.SearchRoots[0] != "/tmp/code" || runtimeCfg.SearchRoots[1] != "/tmp/docs" {
+		t.Fatalf("unexpected search roots runtime config %#v", runtimeCfg.SearchRoots)
+	}
 	if got := runtimeCfg.Keys.CommandPalette; got != ";" {
 		t.Fatalf("expected command palette key override ';', got %q", got)
 	}
@@ -502,6 +627,12 @@ redo = "U"
 	}
 	if got := runtimeCfg.Labels.Projects["inbox"]; len(got) != 1 || got[0] != "roadmap" {
 		t.Fatalf("unexpected project labels runtime config %#v", runtimeCfg.Labels.Projects)
+	}
+	if got := runtimeCfg.Identity.DisplayName; got != "Lane User" {
+		t.Fatalf("expected identity display name Lane User, got %q", got)
+	}
+	if got := runtimeCfg.Identity.DefaultActorType; got != "agent" {
+		t.Fatalf("expected identity actor type agent, got %q", got)
 	}
 }
 
@@ -529,6 +660,41 @@ func TestPersistProjectRootRoundTrip(t *testing.T) {
 	}
 	if _, ok := cfg.ProjectRoots["inbox"]; ok {
 		t.Fatalf("expected project root cleared, got %#v", cfg.ProjectRoots)
+	}
+}
+
+// TestPersistIdentityRoundTrip verifies behavior for the covered scenario.
+func TestPersistIdentityRoundTrip(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "kan.toml")
+
+	if err := persistIdentity(cfgPath, "Lane User", "agent"); err != nil {
+		t.Fatalf("persistIdentity() error = %v", err)
+	}
+	cfg, err := config.Load(cfgPath, config.Default("/tmp/default.db"))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got := cfg.Identity.DisplayName; got != "Lane User" {
+		t.Fatalf("expected persisted identity display name Lane User, got %q", got)
+	}
+	if got := cfg.Identity.DefaultActorType; got != "agent" {
+		t.Fatalf("expected persisted identity actor type agent, got %q", got)
+	}
+}
+
+// TestPersistSearchRootsRoundTrip verifies behavior for the covered scenario.
+func TestPersistSearchRootsRoundTrip(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "kan.toml")
+
+	if err := persistSearchRoots(cfgPath, []string{"/tmp/code", "/tmp/docs", "/tmp/code"}); err != nil {
+		t.Fatalf("persistSearchRoots() error = %v", err)
+	}
+	cfg, err := config.Load(cfgPath, config.Default("/tmp/default.db"))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(cfg.Paths.SearchRoots) != 2 || cfg.Paths.SearchRoots[0] != "/tmp/code" || cfg.Paths.SearchRoots[1] != "/tmp/docs" {
+		t.Fatalf("unexpected persisted search roots %#v", cfg.Paths.SearchRoots)
 	}
 }
 
@@ -575,5 +741,35 @@ func TestPersistAllowedLabelsRoundTrip(t *testing.T) {
 	}
 	if len(cfg.Labels.Global) != 1 || cfg.Labels.Global[0] != "bug" {
 		t.Fatalf("expected global labels to remain bug, got %#v", cfg.Labels.Global)
+	}
+}
+
+// TestRuntimeLoggerCanMuteConsoleSink verifies console output can be suppressed while other sinks remain active.
+func TestRuntimeLoggerCanMuteConsoleSink(t *testing.T) {
+	var console bytes.Buffer
+	cfg := config.Default("/tmp/kan.db").Logging
+
+	logger, err := newRuntimeLogger(&console, "kan", false, cfg, func() time.Time {
+		return time.Date(2026, 2, 23, 12, 0, 0, 0, time.UTC)
+	})
+	if err != nil {
+		t.Fatalf("newRuntimeLogger() error = %v", err)
+	}
+
+	logger.Info("before")
+	logger.SetConsoleEnabled(false)
+	logger.Info("during")
+	logger.SetConsoleEnabled(true)
+	logger.Info("after")
+
+	out := console.String()
+	if !strings.Contains(out, "before") {
+		t.Fatalf("expected console log to include 'before', got %q", out)
+	}
+	if strings.Contains(out, "during") {
+		t.Fatalf("expected muted console log to omit 'during', got %q", out)
+	}
+	if !strings.Contains(out, "after") {
+		t.Fatalf("expected console log to include 'after', got %q", out)
 	}
 }

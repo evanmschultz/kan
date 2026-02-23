@@ -26,6 +26,8 @@ type Service interface {
 	ListProjects(context.Context, bool) ([]domain.Project, error)
 	ListColumns(context.Context, string, bool) ([]domain.Column, error)
 	ListTasks(context.Context, string, bool) ([]domain.Task, error)
+	CreateComment(context.Context, app.CreateCommentInput) (domain.Comment, error)
+	ListCommentsByTarget(context.Context, app.ListCommentsByTargetInput) ([]domain.Comment, error)
 	ListProjectChangeEvents(context.Context, string, int) ([]domain.ChangeEvent, error)
 	GetProjectDependencyRollup(context.Context, string) (domain.DependencyRollup, error)
 	SearchTaskMatches(context.Context, app.SearchTasksFilter) ([]app.TaskMatch, error)
@@ -64,6 +66,8 @@ const (
 	modePathsRoots
 	modeLabelsConfig
 	modeHighlightColor
+	modeDependencyInspector
+	modeThread
 )
 
 // taskFormFields stores task-form field keys in display/update order.
@@ -183,6 +187,12 @@ type labelInheritanceSources struct {
 	Phase   []string
 }
 
+// dependencyCandidate describes one dependency-picker result row.
+type dependencyCandidate struct {
+	Match app.TaskMatch
+	Path  string
+}
+
 // confirmAction describes a pending confirmation action.
 type confirmAction struct {
 	Kind    string
@@ -254,6 +264,7 @@ type Model struct {
 	tasks           []domain.Task
 	selectedColumn  int
 	selectedTask    int
+	launchPicker    bool
 
 	mode          inputMode
 	input         string
@@ -265,6 +276,8 @@ type Model struct {
 	commandInput                textinput.Model
 	pathsRootInput              textinput.Model
 	highlightColorInput         textinput.Model
+	dependencyInput             textinput.Model
+	threadInput                 textinput.Model
 	searchFocus                 int
 	searchStateCursor           int
 	searchCrossProject          bool
@@ -277,6 +290,13 @@ type Model struct {
 	quickActionIndex            int
 	commandMatches              []commandPaletteItem
 	commandIndex                int
+	dependencyFocus             int
+	dependencyStateCursor       int
+	dependencyCrossProject      bool
+	dependencyIncludeArchived   bool
+	dependencyStates            []string
+	dependencyMatches           []dependencyCandidate
+	dependencyIndex             int
 
 	formInputs  []textinput.Model
 	formFocus   int
@@ -314,6 +334,7 @@ type Model struct {
 	showWIPWarnings bool
 	dueSoonWindows  []time.Duration
 	showDueSummary  bool
+	searchRoots     []string
 	projectRoots    map[string]string
 	defaultRootDir  string
 	highlightColor  string
@@ -339,6 +360,13 @@ type Model struct {
 	labelPickerIndex int
 	labelPickerItems []labelPickerItem
 
+	dependencyBack        inputMode
+	dependencyOwnerTaskID string
+	dependencyDependsOn   []string
+	dependencyBlockedBy   []string
+	dependencyActiveField int
+	dependencyDirty       bool
+
 	allowedLabelGlobal   []string
 	allowedLabelProject  map[string][]string
 	enforceAllowedLabels bool
@@ -346,6 +374,18 @@ type Model struct {
 	reloadConfig    ReloadConfigFunc
 	saveProjectRoot SaveProjectRootFunc
 	saveLabels      SaveLabelsConfigFunc
+
+	identityDisplayName      string
+	identityDefaultActorType string
+
+	threadBackMode            inputMode
+	threadTarget              domain.CommentTarget
+	threadTitle               string
+	threadDescriptionMarkdown string
+	threadComments            []domain.Comment
+	threadScroll              int
+	threadPendingCommentBody  string
+	threadMarkdown            markdownRenderer
 }
 
 // loadedMsg carries message data through update handling.
@@ -387,6 +427,12 @@ type searchResultsMsg struct {
 	err     error
 }
 
+// dependencyMatchesMsg carries dependency-candidate matches for the inspector modal.
+type dependencyMatchesMsg struct {
+	candidates []dependencyCandidate
+	err        error
+}
+
 // activityLogLoadedMsg carries persisted activity entries for the active project.
 type activityLogLoadedMsg struct {
 	entries []activityEntry
@@ -404,6 +450,21 @@ type projectRootSavedMsg struct {
 	projectSlug string
 	rootPath    string
 	err         error
+}
+
+// threadLoadedMsg carries comments loaded for one thread target.
+type threadLoadedMsg struct {
+	target   domain.CommentTarget
+	comments []domain.Comment
+	err      error
+}
+
+// threadCommentCreatedMsg carries one persisted comment result for the active thread.
+type threadCommentCreatedMsg struct {
+	target domain.CommentTarget
+	body   string
+	value  domain.Comment
+	err    error
 }
 
 // NewModel constructs a new value for this package.
@@ -426,38 +487,53 @@ func NewModel(svc Service, opts ...Option) Model {
 	highlightColorInput.Prompt = "color: "
 	highlightColorInput.Placeholder = "ansi index (e.g. 212) or #RRGGBB"
 	highlightColorInput.CharLimit = 32
+	dependencyInput := textinput.New()
+	dependencyInput.Prompt = "query: "
+	dependencyInput.Placeholder = "search title, description, labels"
+	dependencyInput.CharLimit = 120
+	threadInput := textinput.New()
+	threadInput.Prompt = "comment: "
+	threadInput.Placeholder = "write markdown and press enter"
+	threadInput.CharLimit = 4000
 	resourcePickerFilter := textinput.New()
 	resourcePickerFilter.Prompt = "filter: "
 	resourcePickerFilter.Placeholder = "type to fuzzy-filter files/dirs"
 	resourcePickerFilter.CharLimit = 120
 	m := Model{
-		svc:                  svc,
-		status:               "loading...",
-		help:                 h,
-		keys:                 newKeyMap(),
-		taskFields:           DefaultTaskFieldConfig(),
-		defaultDeleteMode:    app.DeleteModeArchive,
-		searchInput:          searchInput,
-		commandInput:         commandInput,
-		pathsRootInput:       pathsRootInput,
-		highlightColorInput:  highlightColorInput,
-		resourcePickerFilter: resourcePickerFilter,
-		searchStates:         []string{"todo", "progress", "done"},
-		searchDefaultStates:  []string{"todo", "progress", "done"},
-		boardGroupBy:         "none",
-		showWIPWarnings:      true,
-		dueSoonWindows:       []time.Duration{24 * time.Hour, time.Hour},
-		showDueSummary:       true,
-		highlightColor:       defaultHighlightColor,
-		selectedTaskIDs:      map[string]struct{}{},
-		activityLog:          []activityEntry{},
-		confirmDelete:        true,
-		confirmArchive:       true,
-		confirmHardDelete:    true,
-		confirmRestore:       false,
-		taskFormKind:         domain.WorkKindTask,
-		allowedLabelProject:  map[string][]string{},
-		projectRoots:         map[string]string{},
+		svc:                      svc,
+		status:                   "loading...",
+		help:                     h,
+		keys:                     newKeyMap(),
+		taskFields:               DefaultTaskFieldConfig(),
+		defaultDeleteMode:        app.DeleteModeArchive,
+		searchInput:              searchInput,
+		commandInput:             commandInput,
+		pathsRootInput:           pathsRootInput,
+		highlightColorInput:      highlightColorInput,
+		dependencyInput:          dependencyInput,
+		threadInput:              threadInput,
+		resourcePickerFilter:     resourcePickerFilter,
+		searchStates:             []string{"todo", "progress", "done"},
+		searchDefaultStates:      []string{"todo", "progress", "done"},
+		dependencyStates:         []string{"todo", "progress", "done"},
+		launchPicker:             false,
+		boardGroupBy:             "none",
+		showWIPWarnings:          true,
+		dueSoonWindows:           []time.Duration{24 * time.Hour, time.Hour},
+		showDueSummary:           true,
+		highlightColor:           defaultHighlightColor,
+		selectedTaskIDs:          map[string]struct{}{},
+		activityLog:              []activityEntry{},
+		confirmDelete:            true,
+		confirmArchive:           true,
+		confirmHardDelete:        true,
+		confirmRestore:           false,
+		taskFormKind:             domain.WorkKindTask,
+		allowedLabelProject:      map[string][]string{},
+		searchRoots:              []string{},
+		projectRoots:             map[string]string{},
+		identityDisplayName:      "kan-user",
+		identityDefaultActorType: string(domain.ActorTypeUser),
 	}
 	if cwd, err := os.Getwd(); err == nil {
 		m.defaultRootDir = cwd
@@ -501,12 +577,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.selectedProject = 0
 			m.selectedColumn = 0
 			m.selectedTask = 0
+			m.projectPickerIndex = 0
 			m.columns = nil
 			m.tasks = nil
-			if m.mode == modeNone {
-				m.status = "create your first project"
-				return m, m.startProjectForm(nil)
+			if m.mode != modeAddProject && m.mode != modeEditProject {
+				m.mode = modeProjectPicker
+				m.status = "project picker"
 			}
+			m.launchPicker = false
 			return m, nil
 		}
 		if m.pendingProjectID != "" {
@@ -530,6 +608,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.focusTaskByID(m.pendingFocusTaskID)
 			m.pendingFocusTaskID = ""
 		}
+		if m.launchPicker && m.mode == modeNone {
+			m.mode = modeProjectPicker
+			m.projectPickerIndex = m.selectedProject
+			m.status = "project picker"
+			m.launchPicker = false
+			return m, nil
+		}
+		m.launchPicker = false
 		if m.status == "" || m.status == "loading..." {
 			m.status = "ready"
 		}
@@ -600,6 +686,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case dependencyMatchesMsg:
+		if msg.err != nil {
+			m.err = msg.err
+			return m, nil
+		}
+		m.dependencyMatches = msg.candidates
+		m.dependencyIndex = clamp(m.dependencyIndex, 0, len(m.dependencyMatches)-1)
+		return m, nil
+
 	case activityLogLoadedMsg:
 		if msg.err != nil {
 			// Keep the app usable when persisted activity fetch fails; fall back to current in-memory log.
@@ -640,6 +735,37 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = "project root saved"
 		return m, nil
 
+	case threadLoadedMsg:
+		if !sameCommentTarget(m.threadTarget, msg.target) {
+			return m, nil
+		}
+		if msg.err != nil {
+			m.status = "thread load failed: " + msg.err.Error()
+			return m, nil
+		}
+		m.threadComments = append([]domain.Comment(nil), msg.comments...)
+		m.threadScroll = 0
+		m.status = "thread loaded"
+		return m, nil
+
+	case threadCommentCreatedMsg:
+		if !sameCommentTarget(m.threadTarget, msg.target) {
+			return m, nil
+		}
+		if msg.err != nil {
+			if strings.TrimSpace(msg.body) != "" {
+				m.threadInput.SetValue(msg.body)
+				m.threadInput.CursorEnd()
+			}
+			m.threadPendingCommentBody = ""
+			m.status = "post comment failed: " + msg.err.Error()
+			return m, nil
+		}
+		m.threadPendingCommentBody = ""
+		m.threadComments = append(m.threadComments, msg.value)
+		m.status = "comment posted"
+		return m, nil
+
 	case tea.KeyPressMsg:
 		if m.mode != modeNone {
 			return m.handleInputModeKey(msg)
@@ -670,6 +796,9 @@ func (m Model) View() tea.View {
 		v.MouseMode = tea.MouseModeCellMotion
 		v.AltScreen = true
 		return v
+	}
+	if m.mode == modeThread {
+		return m.renderThreadModeView()
 	}
 	if len(m.projects) == 0 {
 		accent := lipgloss.Color("62")
@@ -1768,6 +1897,25 @@ func normalizeProjectRootPathInput(raw string) (string, error) {
 	return rootPath, nil
 }
 
+// normalizeSearchRoots trims, deduplicates, and cleans global search root paths.
+func normalizeSearchRoots(roots []string) []string {
+	out := make([]string, 0, len(roots))
+	seen := map[string]struct{}{}
+	for _, raw := range roots {
+		root := strings.TrimSpace(raw)
+		if root == "" {
+			continue
+		}
+		root = filepath.Clean(root)
+		if _, ok := seen[root]; ok {
+			continue
+		}
+		seen[root] = struct{}{}
+		out = append(out, root)
+	}
+	return out
+}
+
 // saveProjectRootCmd persists one project-root mapping through the callback surface.
 func (m Model) saveProjectRootCmd(projectSlug, rootPath string) tea.Cmd {
 	return func() tea.Msg {
@@ -1787,8 +1935,10 @@ func commandPaletteItems() []commandPaletteItem {
 		{Command: "new-task", Aliases: []string{"task-new"}, Description: "create a new task"},
 		{Command: "new-subtask", Aliases: []string{"task-subtask"}, Description: "create subtask for selected item"},
 		{Command: "edit-task", Aliases: []string{"task-edit"}, Description: "edit selected task"},
+		{Command: "thread-item", Aliases: []string{"item-thread", "task-thread"}, Description: "open selected work-item thread"},
 		{Command: "new-project", Aliases: []string{"project-new"}, Description: "create a new project"},
 		{Command: "edit-project", Aliases: []string{"project-edit"}, Description: "edit selected project"},
+		{Command: "thread-project", Aliases: []string{"project-thread"}, Description: "open current project thread"},
 		{Command: "search", Aliases: []string{}, Description: "open search modal"},
 		{Command: "search-all", Aliases: []string{}, Description: "set search scope to all projects"},
 		{Command: "search-project", Aliases: []string{}, Description: "set search scope to current project"},
@@ -2010,6 +2160,483 @@ func (m *Model) startLabelPicker() tea.Cmd {
 		m.status = "label inheritance picker"
 	}
 	return nil
+}
+
+// startDependencyInspectorFromTaskInfo opens dependency inspector for one existing task.
+func (m *Model) startDependencyInspectorFromTaskInfo(task domain.Task) tea.Cmd {
+	return m.startDependencyInspector(
+		modeTaskInfo,
+		task.ID,
+		task.Metadata.DependsOn,
+		task.Metadata.BlockedBy,
+		taskFieldDependsOn,
+	)
+}
+
+// startDependencyInspectorFromForm opens dependency inspector for task-form dependency fields.
+func (m *Model) startDependencyInspectorFromForm(activeField int) tea.Cmd {
+	if activeField != taskFieldDependsOn && activeField != taskFieldBlockedBy {
+		activeField = taskFieldDependsOn
+	}
+	back := m.mode
+	ownerTaskID := strings.TrimSpace(m.editingTaskID)
+	dependsOn := []string{}
+	blockedBy := []string{}
+	if len(m.formInputs) > taskFieldDependsOn {
+		dependsOn = parseTaskRefIDsInput(m.formInputs[taskFieldDependsOn].Value(), nil)
+	}
+	if len(m.formInputs) > taskFieldBlockedBy {
+		blockedBy = parseTaskRefIDsInput(m.formInputs[taskFieldBlockedBy].Value(), nil)
+	}
+	return m.startDependencyInspector(back, ownerTaskID, dependsOn, blockedBy, activeField)
+}
+
+// startDependencyInspector initializes the dependency inspector modal state.
+func (m *Model) startDependencyInspector(back inputMode, ownerTaskID string, dependsOn, blockedBy []string, activeField int) tea.Cmd {
+	if activeField != taskFieldDependsOn && activeField != taskFieldBlockedBy {
+		activeField = taskFieldDependsOn
+	}
+	m.dependencyBack = back
+	m.dependencyOwnerTaskID = strings.TrimSpace(ownerTaskID)
+	m.dependencyDependsOn = sanitizeDependencyIDs(dependsOn, m.dependencyOwnerTaskID)
+	m.dependencyBlockedBy = sanitizeDependencyIDs(blockedBy, m.dependencyOwnerTaskID)
+	m.dependencyActiveField = activeField
+	m.dependencyDirty = false
+	m.dependencyFocus = 0
+	m.dependencyStateCursor = 0
+	m.dependencyCrossProject = m.searchCrossProject
+	m.dependencyIncludeArchived = m.showArchived
+	m.dependencyStates = canonicalSearchStates(m.searchStates)
+	m.dependencyMatches = nil
+	m.dependencyIndex = 0
+	m.dependencyInput.SetValue("")
+	m.dependencyInput.CursorEnd()
+	m.mode = modeDependencyInspector
+	m.status = "dependencies inspector"
+	return tea.Batch(m.dependencyInput.Focus(), m.loadDependencyMatches)
+}
+
+// loadDependencyMatches loads filterable dependency candidates with hierarchy path context.
+func (m Model) loadDependencyMatches() tea.Msg {
+	ctx := context.Background()
+	projectID, _ := m.currentProjectID()
+	matches, err := m.svc.SearchTaskMatches(ctx, app.SearchTasksFilter{
+		ProjectID:       projectID,
+		Query:           strings.TrimSpace(m.dependencyInput.Value()),
+		CrossProject:    m.dependencyCrossProject,
+		IncludeArchived: m.dependencyIncludeArchived,
+		States:          append([]string(nil), m.dependencyStates...),
+	})
+	if err != nil {
+		return dependencyMatchesMsg{err: err}
+	}
+
+	knownByProject := map[string]map[string]domain.Task{}
+	loadTasksByProject := func(projectID string) (map[string]domain.Task, error) {
+		if existing, ok := knownByProject[projectID]; ok {
+			return existing, nil
+		}
+		tasks, listErr := m.svc.ListTasks(ctx, projectID, true)
+		if listErr != nil {
+			return nil, listErr
+		}
+		byID := make(map[string]domain.Task, len(tasks))
+		for _, task := range tasks {
+			byID[task.ID] = task
+		}
+		knownByProject[projectID] = byID
+		return byID, nil
+	}
+
+	candidateByID := map[string]dependencyCandidate{}
+	searchOrder := make([]string, 0, len(matches))
+	ownerTaskID := strings.TrimSpace(m.dependencyOwnerTaskID)
+	for _, match := range matches {
+		taskID := strings.TrimSpace(match.Task.ID)
+		if taskID == "" {
+			continue
+		}
+		if ownerTaskID != "" && taskID == ownerTaskID {
+			continue
+		}
+		if _, ok := candidateByID[taskID]; ok {
+			continue
+		}
+		tasksByID, listErr := loadTasksByProject(match.Project.ID)
+		if listErr != nil {
+			return dependencyMatchesMsg{err: listErr}
+		}
+		candidateByID[taskID] = dependencyCandidate{
+			Match: match,
+			Path:  buildDependencyTaskPath(match, tasksByID),
+		}
+		searchOrder = append(searchOrder, taskID)
+	}
+
+	linkedIDs := append([]string(nil), m.dependencyDependsOn...)
+	linkedIDs = append(linkedIDs, m.dependencyBlockedBy...)
+	linkedIDs = sanitizeDependencyIDs(linkedIDs, ownerTaskID)
+	if len(linkedIDs) > 0 {
+		projects, listErr := m.svc.ListProjects(ctx, true)
+		if listErr != nil {
+			return dependencyMatchesMsg{err: listErr}
+		}
+		projectByID := make(map[string]domain.Project, len(projects))
+		for _, project := range projects {
+			projectByID[project.ID] = project
+		}
+		for _, project := range m.projects {
+			if _, ok := projectByID[project.ID]; !ok {
+				projectByID[project.ID] = project
+			}
+		}
+		for _, linkedID := range linkedIDs {
+			if _, ok := candidateByID[linkedID]; ok {
+				continue
+			}
+			found := false
+			for projectID, project := range projectByID {
+				tasksByID, taskErr := loadTasksByProject(projectID)
+				if taskErr != nil {
+					return dependencyMatchesMsg{err: taskErr}
+				}
+				task, ok := tasksByID[linkedID]
+				if !ok {
+					continue
+				}
+				match := app.TaskMatch{
+					Project: project,
+					Task:    task,
+					StateID: dependencyStateIDForTask(task),
+				}
+				candidateByID[linkedID] = dependencyCandidate{
+					Match: match,
+					Path:  buildDependencyTaskPath(match, tasksByID),
+				}
+				found = true
+				break
+			}
+			if found {
+				continue
+			}
+			candidateByID[linkedID] = dependencyCandidate{
+				Match: app.TaskMatch{
+					Project: domain.Project{ID: "missing", Name: "(missing)"},
+					Task: domain.Task{
+						ID:    linkedID,
+						Title: "(missing task reference)",
+						Kind:  domain.WorkKindTask,
+					},
+					StateID: "missing",
+				},
+				Path: "(missing task reference)",
+			}
+		}
+	}
+
+	candidates := make([]dependencyCandidate, 0, len(candidateByID))
+	linkedSet := map[string]struct{}{}
+	for _, linkedID := range linkedIDs {
+		if _, ok := linkedSet[linkedID]; ok {
+			continue
+		}
+		linkedSet[linkedID] = struct{}{}
+		if candidate, ok := candidateByID[linkedID]; ok {
+			candidates = append(candidates, candidate)
+		}
+	}
+	for _, taskID := range searchOrder {
+		if _, ok := linkedSet[taskID]; ok {
+			continue
+		}
+		if candidate, ok := candidateByID[taskID]; ok {
+			candidates = append(candidates, candidate)
+		}
+	}
+	return dependencyMatchesMsg{candidates: candidates}
+}
+
+// buildDependencyTaskPath formats project + hierarchy path context for one dependency candidate.
+func buildDependencyTaskPath(match app.TaskMatch, tasksByID map[string]domain.Task) string {
+	pathParts := []string{}
+	current := match.Task
+	visited := map[string]struct{}{}
+	for {
+		label := strings.TrimSpace(current.Title)
+		if label == "" {
+			label = current.ID
+		}
+		pathParts = append(pathParts, fmt.Sprintf("%s:%s", current.Kind, label))
+		parentID := strings.TrimSpace(current.ParentID)
+		if parentID == "" {
+			break
+		}
+		if _, ok := visited[parentID]; ok {
+			break
+		}
+		visited[parentID] = struct{}{}
+		parent, ok := tasksByID[parentID]
+		if !ok {
+			break
+		}
+		current = parent
+	}
+	slices.Reverse(pathParts)
+	if len(pathParts) == 0 {
+		pathParts = append(pathParts, fmt.Sprintf("%s:%s", match.Task.Kind, match.Task.Title))
+	}
+	projectName := strings.TrimSpace(match.Project.Name)
+	if projectName == "" {
+		projectName = match.Project.ID
+	}
+	return projectName + " | " + strings.Join(pathParts, " | ")
+}
+
+// dependencyStateIDForTask resolves one canonical state identifier for dependency rows.
+func dependencyStateIDForTask(task domain.Task) string {
+	if task.ArchivedAt != nil {
+		return "archived"
+	}
+	if stateID := normalizeColumnStateID(string(task.LifecycleState)); stateID != "" {
+		return stateID
+	}
+	return "todo"
+}
+
+// toggleDependencyState toggles one dependency inspector lifecycle-state filter.
+func (m *Model) toggleDependencyState(state string) {
+	state = strings.TrimSpace(strings.ToLower(state))
+	if state == "" {
+		return
+	}
+	states := canonicalSearchStates(m.dependencyStates)
+	next := make([]string, 0, len(states))
+	removed := false
+	for _, item := range states {
+		if item == state {
+			removed = true
+			continue
+		}
+		next = append(next, item)
+	}
+	if !removed {
+		next = append(next, state)
+	}
+	m.dependencyStates = canonicalSearchStates(next)
+}
+
+// isDependencyStateEnabled reports whether one dependency inspector state filter is enabled.
+func (m Model) isDependencyStateEnabled(state string) bool {
+	state = strings.TrimSpace(strings.ToLower(state))
+	for _, item := range m.dependencyStates {
+		if strings.TrimSpace(strings.ToLower(item)) == state {
+			return true
+		}
+	}
+	return false
+}
+
+// selectedDependencyCandidate returns the currently highlighted dependency candidate row.
+func (m Model) selectedDependencyCandidate() (dependencyCandidate, bool) {
+	if len(m.dependencyMatches) == 0 {
+		return dependencyCandidate{}, false
+	}
+	idx := clamp(m.dependencyIndex, 0, len(m.dependencyMatches)-1)
+	return m.dependencyMatches[idx], true
+}
+
+// hasDependencyID reports whether one id exists in a dependency-id slice.
+func hasDependencyID(ids []string, taskID string) bool {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return false
+	}
+	for _, id := range ids {
+		if strings.TrimSpace(id) == taskID {
+			return true
+		}
+	}
+	return false
+}
+
+// toggleDependencyID adds/removes one id from a dependency-id slice.
+func toggleDependencyID(ids []string, taskID string) ([]string, bool) {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return uniqueTrimmed(ids), false
+	}
+	out := make([]string, 0, len(ids))
+	removed := false
+	for _, id := range uniqueTrimmed(ids) {
+		if id == taskID {
+			removed = true
+			continue
+		}
+		out = append(out, id)
+	}
+	if removed {
+		return out, false
+	}
+	out = append(out, taskID)
+	return uniqueTrimmed(out), true
+}
+
+// sanitizeDependencyIDs canonicalizes ids and removes any self-reference entry.
+func sanitizeDependencyIDs(ids []string, ownerTaskID string) []string {
+	ownerTaskID = strings.TrimSpace(ownerTaskID)
+	cleaned := make([]string, 0, len(ids))
+	for _, id := range uniqueTrimmed(ids) {
+		if id == "" {
+			continue
+		}
+		if ownerTaskID != "" && id == ownerTaskID {
+			continue
+		}
+		cleaned = append(cleaned, id)
+	}
+	return cleaned
+}
+
+// dependencyActiveFieldLabel returns the dependency field label currently targeted by space-toggle actions.
+func (m Model) dependencyActiveFieldLabel() string {
+	if m.dependencyActiveField == taskFieldBlockedBy {
+		return "blocked_by"
+	}
+	return "depends_on"
+}
+
+// toggleDependencyCandidateInActiveField toggles highlighted task id in the active dependency field.
+func (m *Model) toggleDependencyCandidateInActiveField(taskID string) {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return
+	}
+	if ownerTaskID := strings.TrimSpace(m.dependencyOwnerTaskID); ownerTaskID != "" && taskID == ownerTaskID {
+		m.status = "task cannot depend on itself"
+		return
+	}
+	if m.dependencyActiveField == taskFieldBlockedBy {
+		var added bool
+		m.dependencyBlockedBy, added = toggleDependencyID(m.dependencyBlockedBy, taskID)
+		m.dependencyDirty = true
+		if added {
+			m.status = "added blocker"
+		} else {
+			m.status = "removed blocker"
+		}
+		return
+	}
+	var added bool
+	m.dependencyDependsOn, added = toggleDependencyID(m.dependencyDependsOn, taskID)
+	m.dependencyDirty = true
+	if added {
+		m.status = "added dependency"
+	} else {
+		m.status = "removed dependency"
+	}
+}
+
+// applyDependencyInspector commits dependency selections and returns to the originating mode.
+func (m Model) applyDependencyInspector() (tea.Model, tea.Cmd) {
+	dependsOn := sanitizeDependencyIDs(m.dependencyDependsOn, m.dependencyOwnerTaskID)
+	blockedBy := sanitizeDependencyIDs(m.dependencyBlockedBy, m.dependencyOwnerTaskID)
+	back := m.dependencyBack
+	activeField := m.dependencyActiveField
+	if activeField != taskFieldDependsOn && activeField != taskFieldBlockedBy {
+		activeField = taskFieldDependsOn
+	}
+
+	m.dependencyInput.Blur()
+	m.dependencyDirty = false
+
+	switch back {
+	case modeAddTask, modeEditTask:
+		if len(m.formInputs) > taskFieldDependsOn {
+			m.formInputs[taskFieldDependsOn].SetValue(strings.Join(dependsOn, ","))
+		}
+		if len(m.formInputs) > taskFieldBlockedBy {
+			m.formInputs[taskFieldBlockedBy].SetValue(strings.Join(blockedBy, ","))
+		}
+		m.mode = back
+		m.status = "dependencies updated"
+		if activeField == taskFieldBlockedBy {
+			return m, m.focusTaskFormField(taskFieldBlockedBy)
+		}
+		return m, m.focusTaskFormField(taskFieldDependsOn)
+	case modeTaskInfo:
+		taskID := strings.TrimSpace(m.dependencyOwnerTaskID)
+		task, ok := m.taskByID(taskID)
+		if !ok {
+			m.mode = modeTaskInfo
+			m.taskInfoTaskID = taskID
+			m.status = "task not found"
+			return m, nil
+		}
+		meta := task.Metadata
+		meta.DependsOn = dependsOn
+		meta.BlockedBy = blockedBy
+		m.mode = modeTaskInfo
+		m.taskInfoTaskID = taskID
+		m.status = "saving dependencies..."
+		return m, m.updateTaskMetadataCmd(task, meta, "dependencies updated")
+	default:
+		m.mode = modeNone
+		m.status = "dependencies updated"
+		return m, nil
+	}
+}
+
+// jumpToDependencyCandidateTask closes dependency inspector and opens task-info for the highlighted candidate.
+func (m Model) jumpToDependencyCandidateTask() (tea.Model, tea.Cmd) {
+	if m.dependencyBack != modeTaskInfo {
+		m.status = "jump to task is available from task-info inspector"
+		return m, nil
+	}
+	candidate, ok := m.selectedDependencyCandidate()
+	if !ok {
+		m.status = "no dependency selected"
+		return m, nil
+	}
+	taskID := strings.TrimSpace(candidate.Match.Task.ID)
+	if taskID == "" {
+		m.status = "no dependency selected"
+		return m, nil
+	}
+	for idx, project := range m.projects {
+		if project.ID == candidate.Match.Project.ID {
+			m.selectedProject = idx
+			break
+		}
+	}
+	m.pendingFocusTaskID = taskID
+	m.mode = modeTaskInfo
+	m.taskInfoTaskID = taskID
+	m.dependencyInput.Blur()
+	m.status = "jumping to dependency"
+	return m, m.loadData
+}
+
+// updateTaskMetadataCmd persists one metadata update for the provided task fields.
+func (m Model) updateTaskMetadataCmd(task domain.Task, metadata domain.TaskMetadata, status string) tea.Cmd {
+	return func() tea.Msg {
+		_, err := m.svc.UpdateTask(context.Background(), app.UpdateTaskInput{
+			TaskID:      task.ID,
+			Title:       task.Title,
+			Description: task.Description,
+			Priority:    task.Priority,
+			DueAt:       task.DueAt,
+			Labels:      append([]string(nil), task.Labels...),
+			Metadata:    &metadata,
+		})
+		if err != nil {
+			return actionMsg{err: err}
+		}
+		return actionMsg{
+			status:      status,
+			reload:      true,
+			focusTaskID: task.ID,
+		}
+	}
 }
 
 // refreshTaskFormLabelSuggestions refreshes task-form label suggestions from inherited sources.
@@ -2417,6 +3044,16 @@ func (m Model) resourcePickerRootForCurrentProject() string {
 			return root
 		}
 	}
+	for _, root := range m.searchRoots {
+		root = strings.TrimSpace(root)
+		if root == "" {
+			continue
+		}
+		if abs, err := filepath.Abs(root); err == nil {
+			return abs
+		}
+		return root
+	}
 	if strings.TrimSpace(m.defaultRootDir) != "" {
 		if abs, err := filepath.Abs(m.defaultRootDir); err == nil {
 			return abs
@@ -2822,13 +3459,14 @@ func (m Model) handleNormalModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		project := m.projects[clamp(m.selectedProject, 0, len(m.projects)-1)]
 		return m, m.startProjectForm(&project)
 	case key.Matches(msg, m.keys.projects):
-		if len(m.projects) > 0 {
-			m.help.ShowAll = false
-			m.mode = modeProjectPicker
-			m.projectPickerIndex = m.selectedProject
-			m.status = "project picker"
-			return m, nil
+		m.help.ShowAll = false
+		m.mode = modeProjectPicker
+		if len(m.projects) == 0 {
+			m.projectPickerIndex = 0
+		} else {
+			m.projectPickerIndex = clamp(m.selectedProject, 0, len(m.projects)-1)
 		}
+		m.status = "project picker"
 		return m, nil
 	case key.Matches(msg, m.keys.focusSubtree):
 		task, ok := m.selectedTaskInCurrentColumn()
@@ -2898,6 +3536,52 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	if m.mode == modeThread {
+		switch {
+		case msg.Code == tea.KeyEscape || msg.String() == "esc":
+			m.threadInput.Blur()
+			m.threadPendingCommentBody = ""
+			if m.threadBackMode == modeTaskInfo {
+				m.mode = modeTaskInfo
+				m.status = "task info"
+				return m, nil
+			}
+			m.mode = modeNone
+			m.status = "ready"
+			return m, nil
+		case msg.String() == "ctrl+r":
+			m.status = "reloading thread..."
+			return m, m.loadThreadCommentsCmd(m.threadTarget)
+		case msg.Code == tea.KeyPgUp || msg.String() == "pgup":
+			m.threadScroll = max(0, m.threadScroll-max(1, m.threadViewportStep()))
+			return m, nil
+		case msg.Code == tea.KeyPgDown || msg.String() == "pgdown":
+			m.threadScroll += max(1, m.threadViewportStep())
+			return m, nil
+		case msg.String() == "home":
+			m.threadScroll = 0
+			return m, nil
+		case msg.String() == "end":
+			m.threadScroll += 1000
+			return m, nil
+		case msg.Code == tea.KeyEnter || msg.String() == "enter":
+			body := strings.TrimSpace(m.threadInput.Value())
+			if body == "" {
+				m.status = "comment body required"
+				return m, nil
+			}
+			m.threadPendingCommentBody = body
+			m.threadInput.SetValue("")
+			m.threadInput.CursorEnd()
+			m.status = "posting comment..."
+			return m, m.createThreadCommentCmd(body)
+		default:
+			var cmd tea.Cmd
+			m.threadInput, cmd = m.threadInput.Update(msg)
+			return m, cmd
+		}
+	}
+
 	if m.mode == modeTaskInfo {
 		task, ok := m.taskInfoTask()
 		if !ok {
@@ -2960,11 +3644,13 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case "s":
 			return m, m.startSubtaskForm(task)
 		case "b":
-			_ = m.startTaskForm(&task)
-			m.status = "edit dependencies"
-			return m, m.focusTaskFormField(taskFieldDependsOn)
+			return m, m.startDependencyInspectorFromTaskInfo(task)
+		case "c":
+			return m.startTaskThread(task, modeTaskInfo)
 		case "r", "R":
 			return m, m.startResourcePicker(task.ID, modeTaskInfo)
+		case " ", "space":
+			return m.toggleFocusedSubtaskCompletion(task)
 		case "[":
 			return m.moveTaskIDs([]string{task.ID}, -1, "move task", task.Title, false)
 		case "]":
@@ -2981,26 +3667,230 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	if m.mode == modeDependencyInspector {
+		switch {
+		case msg.Code == tea.KeyEscape || msg.String() == "esc":
+			m.mode = m.dependencyBack
+			m.dependencyInput.Blur()
+			if m.mode == modeTaskInfo {
+				m.taskInfoTaskID = strings.TrimSpace(m.dependencyOwnerTaskID)
+			}
+			m.status = "dependency inspector cancelled"
+			if m.mode == modeAddTask || m.mode == modeEditTask {
+				return m, m.focusTaskFormField(m.dependencyActiveField)
+			}
+			return m, nil
+		case msg.Code == tea.KeyTab || msg.String() == "tab" || msg.String() == "ctrl+i":
+			m.dependencyFocus = wrapIndex(m.dependencyFocus, 1, 5)
+			if m.dependencyFocus == 0 {
+				return m, m.dependencyInput.Focus()
+			}
+			m.dependencyInput.Blur()
+			return m, nil
+		case msg.String() == "shift+tab" || msg.String() == "backtab":
+			m.dependencyFocus = wrapIndex(m.dependencyFocus, -1, 5)
+			if m.dependencyFocus == 0 {
+				return m, m.dependencyInput.Focus()
+			}
+			m.dependencyInput.Blur()
+			return m, nil
+		case msg.String() == "j" || msg.String() == "down":
+			if m.dependencyFocus == 4 {
+				if m.dependencyIndex < len(m.dependencyMatches)-1 {
+					m.dependencyIndex++
+				}
+				return m, nil
+			}
+			m.dependencyFocus = wrapIndex(m.dependencyFocus, 1, 5)
+			if m.dependencyFocus == 0 {
+				return m, m.dependencyInput.Focus()
+			}
+			m.dependencyInput.Blur()
+			return m, nil
+		case msg.String() == "k" || msg.String() == "up":
+			if m.dependencyFocus == 4 {
+				if m.dependencyIndex > 0 {
+					m.dependencyIndex--
+				}
+				return m, nil
+			}
+			m.dependencyFocus = wrapIndex(m.dependencyFocus, -1, 5)
+			if m.dependencyFocus == 0 {
+				return m, m.dependencyInput.Focus()
+			}
+			m.dependencyInput.Blur()
+			return m, nil
+		case msg.String() == "ctrl+u":
+			m.dependencyInput.SetValue("")
+			m.dependencyInput.CursorEnd()
+			m.dependencyIndex = 0
+			return m, m.loadDependencyMatches
+		case msg.String() == "ctrl+r":
+			m.dependencyCrossProject = m.searchDefaultCrossProject
+			m.dependencyIncludeArchived = m.searchDefaultIncludeArchive
+			m.dependencyStates = canonicalSearchStates(m.searchDefaultStates)
+			m.dependencyStateCursor = 0
+			m.dependencyIndex = 0
+			return m, m.loadDependencyMatches
+		case (msg.String() == "h" || msg.String() == "left") && m.dependencyFocus != 0:
+			switch m.dependencyFocus {
+			case 1:
+				m.dependencyStateCursor = wrapIndex(m.dependencyStateCursor, -1, len(canonicalSearchStatesOrdered))
+			case 2:
+				m.dependencyCrossProject = !m.dependencyCrossProject
+				return m, m.loadDependencyMatches
+			case 3:
+				m.dependencyIncludeArchived = !m.dependencyIncludeArchived
+				return m, m.loadDependencyMatches
+			case 4:
+				if m.dependencyIndex > 0 {
+					m.dependencyIndex--
+				}
+			}
+			return m, nil
+		case (msg.String() == "l" || msg.String() == "right") && m.dependencyFocus != 0:
+			switch m.dependencyFocus {
+			case 1:
+				m.dependencyStateCursor = wrapIndex(m.dependencyStateCursor, 1, len(canonicalSearchStatesOrdered))
+			case 2:
+				m.dependencyCrossProject = !m.dependencyCrossProject
+				return m, m.loadDependencyMatches
+			case 3:
+				m.dependencyIncludeArchived = !m.dependencyIncludeArchived
+				return m, m.loadDependencyMatches
+			case 4:
+				if m.dependencyIndex < len(m.dependencyMatches)-1 {
+					m.dependencyIndex++
+				}
+			}
+			return m, nil
+		case (msg.String() == " " || msg.String() == "space") && m.dependencyFocus != 0:
+			switch m.dependencyFocus {
+			case 1:
+				if len(canonicalSearchStatesOrdered) > 0 {
+					idx := clamp(m.dependencyStateCursor, 0, len(canonicalSearchStatesOrdered)-1)
+					m.toggleDependencyState(canonicalSearchStatesOrdered[idx])
+					return m, m.loadDependencyMatches
+				}
+				return m, nil
+			case 2:
+				m.dependencyCrossProject = !m.dependencyCrossProject
+				return m, m.loadDependencyMatches
+			case 3:
+				m.dependencyIncludeArchived = !m.dependencyIncludeArchived
+				return m, m.loadDependencyMatches
+			case 4:
+				candidate, ok := m.selectedDependencyCandidate()
+				if !ok {
+					return m, nil
+				}
+				m.toggleDependencyCandidateInActiveField(candidate.Match.Task.ID)
+				return m, nil
+			default:
+				return m, nil
+			}
+		case msg.String() == "x" && m.dependencyFocus != 0:
+			if m.dependencyActiveField == taskFieldDependsOn {
+				m.dependencyActiveField = taskFieldBlockedBy
+			} else {
+				m.dependencyActiveField = taskFieldDependsOn
+			}
+			m.status = "active field: " + m.dependencyActiveFieldLabel()
+			return m, nil
+		case msg.String() == "d" && m.dependencyFocus == 4:
+			candidate, ok := m.selectedDependencyCandidate()
+			if !ok {
+				return m, nil
+			}
+			if ownerTaskID := strings.TrimSpace(m.dependencyOwnerTaskID); ownerTaskID != "" && strings.TrimSpace(candidate.Match.Task.ID) == ownerTaskID {
+				m.status = "task cannot depend on itself"
+				return m, nil
+			}
+			var added bool
+			m.dependencyDependsOn, added = toggleDependencyID(m.dependencyDependsOn, candidate.Match.Task.ID)
+			m.dependencyDirty = true
+			if added {
+				m.status = "added dependency"
+			} else {
+				m.status = "removed dependency"
+			}
+			return m, nil
+		case msg.String() == "b" && m.dependencyFocus == 4:
+			candidate, ok := m.selectedDependencyCandidate()
+			if !ok {
+				return m, nil
+			}
+			if ownerTaskID := strings.TrimSpace(m.dependencyOwnerTaskID); ownerTaskID != "" && strings.TrimSpace(candidate.Match.Task.ID) == ownerTaskID {
+				m.status = "task cannot depend on itself"
+				return m, nil
+			}
+			var added bool
+			m.dependencyBlockedBy, added = toggleDependencyID(m.dependencyBlockedBy, candidate.Match.Task.ID)
+			m.dependencyDirty = true
+			if added {
+				m.status = "added blocker"
+			} else {
+				m.status = "removed blocker"
+			}
+			return m, nil
+		case msg.String() == "a" && m.dependencyFocus != 0:
+			return m.applyDependencyInspector()
+		case msg.Code == tea.KeyEnter || msg.String() == "enter":
+			switch m.dependencyFocus {
+			case 1:
+				if len(canonicalSearchStatesOrdered) > 0 {
+					idx := clamp(m.dependencyStateCursor, 0, len(canonicalSearchStatesOrdered)-1)
+					m.toggleDependencyState(canonicalSearchStatesOrdered[idx])
+					return m, m.loadDependencyMatches
+				}
+				return m, nil
+			case 2:
+				m.dependencyCrossProject = !m.dependencyCrossProject
+				return m, m.loadDependencyMatches
+			case 3:
+				m.dependencyIncludeArchived = !m.dependencyIncludeArchived
+				return m, m.loadDependencyMatches
+			case 4:
+				return m.jumpToDependencyCandidateTask()
+			default:
+				return m, nil
+			}
+		default:
+			if m.dependencyFocus != 0 {
+				return m, nil
+			}
+			var cmd tea.Cmd
+			before := m.dependencyInput.Value()
+			m.dependencyInput, cmd = m.dependencyInput.Update(msg)
+			if m.dependencyInput.Value() != before {
+				m.dependencyIndex = 0
+				return m, m.loadDependencyMatches
+			}
+			return m, cmd
+		}
+	}
+
 	if m.mode == modeProjectPicker {
-		switch msg.String() {
-		case "esc":
+		switch {
+		case msg.String() == "esc":
 			m.mode = modeNone
 			m.status = "cancelled"
 			return m, nil
-		case "j", "down":
+		case key.Matches(msg, m.keys.newProject):
+			return m, m.startProjectForm(nil)
+		case msg.String() == "j" || msg.String() == "down":
 			if m.projectPickerIndex < len(m.projects)-1 {
 				m.projectPickerIndex++
 			}
 			return m, nil
-		case "k", "up":
+		case msg.String() == "k" || msg.String() == "up":
 			if m.projectPickerIndex > 0 {
 				m.projectPickerIndex--
 			}
 			return m, nil
-		case "enter":
+		case msg.Code == tea.KeyEnter || msg.String() == "enter":
 			if len(m.projects) == 0 {
-				m.mode = modeNone
-				return m, nil
+				return m, m.startProjectForm(nil)
 			}
 			m.selectedProject = clamp(m.projectPickerIndex, 0, len(m.projects)-1)
 			m.selectedColumn = 0
@@ -3028,6 +3918,20 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.searchInput.Blur()
 			return m, nil
 		case msg.String() == "shift+tab" || msg.String() == "backtab":
+			m.searchFocus = wrapIndex(m.searchFocus, -1, 5)
+			if m.searchFocus == 0 {
+				return m, m.searchInput.Focus()
+			}
+			m.searchInput.Blur()
+			return m, nil
+		case msg.String() == "j" || msg.String() == "down":
+			m.searchFocus = wrapIndex(m.searchFocus, 1, 5)
+			if m.searchFocus == 0 {
+				return m, m.searchInput.Focus()
+			}
+			m.searchInput.Blur()
+			return m, nil
+		case msg.String() == "k" || msg.String() == "up":
 			m.searchFocus = wrapIndex(m.searchFocus, -1, 5)
 			if m.searchFocus == 0 {
 				return m, m.searchInput.Focus()
@@ -3414,6 +4318,11 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case msg.String() == "ctrl+l":
 			if m.formFocus == taskFieldLabels {
 				return m, m.startLabelPicker()
+			}
+			return m, nil
+		case msg.String() == "ctrl+o":
+			if m.formFocus == taskFieldDependsOn || m.formFocus == taskFieldBlockedBy {
+				return m, m.startDependencyInspectorFromForm(m.formFocus)
 			}
 			return m, nil
 		case isCtrlY(msg):
@@ -3881,6 +4790,8 @@ func (m Model) executeCommandPalette(command string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.startTaskForm(&task)
+	case "thread-item", "item-thread", "task-thread":
+		return m.startSelectedWorkItemThread(modeNone)
 	case "new-project", "project-new":
 		return m, m.startProjectForm(nil)
 	case "edit-project", "project-edit":
@@ -3890,6 +4801,8 @@ func (m Model) executeCommandPalette(command string) (tea.Model, tea.Cmd) {
 		}
 		project := m.projects[clamp(m.selectedProject, 0, len(m.projects)-1)]
 		return m, m.startProjectForm(&project)
+	case "thread-project", "project-thread":
+		return m.startProjectThread(modeNone)
 	case "search":
 		return m, m.startSearchMode()
 	case "search-all":
@@ -4516,6 +5429,15 @@ func (m Model) applyConfirmedAction(action confirmAction) (tea.Model, tea.Cmd) {
 // handleMouseWheel handles mouse wheel.
 func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 	if m.help.ShowAll {
+		return m, nil
+	}
+	if m.mode == modeThread {
+		switch msg.Button {
+		case tea.MouseWheelUp:
+			m.threadScroll = max(0, m.threadScroll-3)
+		case tea.MouseWheelDown:
+			m.threadScroll += 3
+		}
 		return m, nil
 	}
 	if m.mode == modeProjectPicker {
@@ -5420,14 +6342,14 @@ func (m Model) renderHelpOverlay(accent, muted, dim color.Color, _ lipgloss.Styl
 		lipgloss.NewStyle().Bold(true).Foreground(accent).Render("Workflows"),
 		"1. n add task  •  s add subtask  •  i/enter view task  •  e edit task",
 		"2. space toggle select  •  . quick actions / : command palette for bulk actions",
-		"3. [ ] move task across states  •  d/a/D/u actions use confirmations",
+		"3. [ / ] move task across states  •  d/a/D/u actions use confirmations",
 		"4. f focus selected subtree  •  F return full board  •  breadcrumb shows active focus",
 		"5. z undo  •  Z redo  •  g activity log",
 		"6. N new project  •  M edit project  •  p switch project",
 		"7. / search: query -> states -> scope -> archived -> apply",
 		"8. search hotkeys: ctrl+u clear query • ctrl+r reset filters",
-		"9. task form: h/l priority  •  ctrl+d due picker  •  ctrl+l labels  •  ctrl+r resources",
-		"10. task info: b edit dependencies  •  r attach file/dir from project root (or cwd fallback)",
+		"9. task form: h/l priority  •  ctrl+d due picker  •  ctrl+l labels  •  ctrl+o deps  •  ctrl+r resources",
+		"10. task info: b dependency inspector  •  r attach file/dir from project root (or cwd fallback)",
 	}
 	lines := []string{
 		title,
@@ -5592,6 +6514,200 @@ func (m Model) subtasksForParent(parentID string) []domain.Task {
 	return out
 }
 
+// normalizeColumnStateID canonicalizes column names into lifecycle-state identifiers.
+func normalizeColumnStateID(name string) string {
+	name = strings.TrimSpace(strings.ToLower(name))
+	if name == "" {
+		return ""
+	}
+	var b strings.Builder
+	lastDash := false
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+			lastDash = false
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+			lastDash = false
+		default:
+			if !lastDash {
+				b.WriteByte('-')
+				lastDash = true
+			}
+		}
+	}
+	switch strings.Trim(b.String(), "-") {
+	case "to-do", "todo":
+		return "todo"
+	case "in-progress", "progress", "doing":
+		return "progress"
+	case "done", "complete", "completed":
+		return "done"
+	case "archived", "archive":
+		return "archived"
+	default:
+		return strings.Trim(b.String(), "-")
+	}
+}
+
+// lifecycleStateForColumnName resolves lifecycle state from one board column name.
+func lifecycleStateForColumnName(name string) domain.LifecycleState {
+	switch normalizeColumnStateID(name) {
+	case "todo":
+		return domain.StateTodo
+	case "progress":
+		return domain.StateProgress
+	case "done":
+		return domain.StateDone
+	case "archived":
+		return domain.StateArchived
+	default:
+		return domain.StateTodo
+	}
+}
+
+// lifecycleStateForColumnID resolves lifecycle state for one column id in the active board.
+func (m Model) lifecycleStateForColumnID(columnID string) (domain.LifecycleState, bool) {
+	columnID = strings.TrimSpace(columnID)
+	if columnID == "" {
+		return "", false
+	}
+	for _, column := range m.columns {
+		if column.ID == columnID {
+			return lifecycleStateForColumnName(column.Name), true
+		}
+	}
+	return "", false
+}
+
+// lifecycleStateForTask resolves lifecycle state using current board columns with task fallback.
+func (m Model) lifecycleStateForTask(task domain.Task) domain.LifecycleState {
+	if task.LifecycleState != "" {
+		return task.LifecycleState
+	}
+	if state, ok := m.lifecycleStateForColumnID(task.ColumnID); ok && state != "" {
+		return state
+	}
+	return domain.StateTodo
+}
+
+// lifecycleStateLabel renders one lifecycle state with human-readable display text.
+func lifecycleStateLabel(state domain.LifecycleState) string {
+	switch state {
+	case domain.StateTodo:
+		return canonicalSearchStateLabels["todo"]
+	case domain.StateProgress:
+		return canonicalSearchStateLabels["progress"]
+	case domain.StateDone:
+		return canonicalSearchStateLabels["done"]
+	case domain.StateArchived:
+		return "Archived"
+	default:
+		stateText := strings.TrimSpace(string(state))
+		if stateText == "" {
+			return "-"
+		}
+		return stateText
+	}
+}
+
+// completionLabel renders a compact yes/no completion flag.
+func completionLabel(done bool) string {
+	if done {
+		return "yes"
+	}
+	return "no"
+}
+
+// columnIndexByID finds one column index by id.
+func (m Model) columnIndexByID(columnID string) (int, bool) {
+	columnID = strings.TrimSpace(columnID)
+	if columnID == "" {
+		return 0, false
+	}
+	for idx, column := range m.columns {
+		if column.ID == columnID {
+			return idx, true
+		}
+	}
+	return 0, false
+}
+
+// firstColumnIndexForState finds the first column index matching one lifecycle state.
+func (m Model) firstColumnIndexForState(state domain.LifecycleState) (int, bool) {
+	for idx, column := range m.columns {
+		if lifecycleStateForColumnName(column.Name) == state {
+			return idx, true
+		}
+	}
+	return 0, false
+}
+
+// firstIncompleteColumnIndex finds the preferred destination for reopening a completed subtask.
+func (m Model) firstIncompleteColumnIndex() (int, bool) {
+	if idx, ok := m.firstColumnIndexForState(domain.StateProgress); ok {
+		return idx, true
+	}
+	if idx, ok := m.firstColumnIndexForState(domain.StateTodo); ok {
+		return idx, true
+	}
+	for idx, column := range m.columns {
+		state := lifecycleStateForColumnName(column.Name)
+		if state != domain.StateDone && state != domain.StateArchived {
+			return idx, true
+		}
+	}
+	return 0, false
+}
+
+// toggleFocusedSubtaskCompletion toggles done/non-done state for the focused subtask in task-info mode.
+func (m Model) toggleFocusedSubtaskCompletion(parent domain.Task) (tea.Model, tea.Cmd) {
+	subtasks := m.subtasksForParent(parent.ID)
+	if len(subtasks) == 0 {
+		m.status = "no subtasks"
+		return m, nil
+	}
+	subtaskIdx := clamp(m.taskInfoSubtaskIdx, 0, len(subtasks)-1)
+	subtask := subtasks[subtaskIdx]
+
+	fromIdx, ok := m.columnIndexByID(subtask.ColumnID)
+	if !ok {
+		m.status = "subtask column unavailable"
+		return m, nil
+	}
+
+	status := "subtask marked complete"
+	toIdx, ok := m.firstColumnIndexForState(domain.StateDone)
+	if m.lifecycleStateForTask(subtask) == domain.StateDone {
+		status = "subtask marked incomplete"
+		toIdx, ok = m.firstIncompleteColumnIndex()
+	}
+	if !ok {
+		if status == "subtask marked complete" {
+			m.status = "no done column configured"
+		} else {
+			m.status = "no active column for reopening"
+		}
+		return m, nil
+	}
+	if toIdx == fromIdx {
+		m.status = status
+		return m, nil
+	}
+
+	updated, cmd := m.moveTaskIDs([]string{subtask.ID}, toIdx-fromIdx, "toggle subtask completion", subtask.Title, false)
+	next, ok := updated.(Model)
+	if !ok {
+		return updated, cmd
+	}
+	next.status = status
+	next.mode = modeTaskInfo
+	next.taskInfoTaskID = parent.ID
+	next.taskInfoSubtaskIdx = subtaskIdx
+	return next, cmd
+}
+
 // subtaskProgress returns completed/total direct subtasks for a parent task.
 func (m Model) subtaskProgress(parentID string) (int, int) {
 	subtasks := m.subtasksForParent(parentID)
@@ -5600,7 +6716,7 @@ func (m Model) subtaskProgress(parentID string) (int, int) {
 	}
 	done := 0
 	for _, task := range subtasks {
-		if task.LifecycleState == domain.StateDone {
+		if m.lifecycleStateForTask(task) == domain.StateDone {
 			done++
 		}
 	}
@@ -5649,6 +6765,7 @@ func (m Model) renderTaskDetails(accent, muted, dim color.Color) string {
 	}
 
 	meta := make([]string, 0, 3)
+	meta = append(meta, "state: "+lifecycleStateLabel(m.lifecycleStateForTask(task)))
 	if m.taskFields.ShowPriority {
 		meta = append(meta, "priority: "+string(task.Priority))
 	}
@@ -5736,6 +6853,8 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		if task.DueAt != nil {
 			due = formatDueValue(task.DueAt)
 		}
+		taskState := m.lifecycleStateForTask(task)
+		isComplete := taskState == domain.StateDone
 		labels := "-"
 		if len(task.Labels) > 0 {
 			labels = strings.Join(task.Labels, ", ")
@@ -5743,35 +6862,49 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		lines := []string{
 			titleStyle.Render("Task Info"),
 			task.Title,
-			hintStyle.Render("kind: " + string(task.Kind) + " • state: " + string(task.LifecycleState)),
+			hintStyle.Render("kind: " + string(task.Kind) + " • state: " + lifecycleStateLabel(taskState) + " • complete: " + completionLabel(isComplete)),
 			hintStyle.Render("priority: " + string(task.Priority) + " • due: " + due),
 			hintStyle.Render("labels: " + labels),
 		}
 		if warning := m.taskDueWarning(task, time.Now().UTC()); warning != "" {
 			lines = append(lines, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("203")).Render(warning))
 		}
+		lines = append(lines, hintStyle.Render("due entry supports time: YYYY-MM-DD HH:MM, YYYY-MM-DDTHH:MM, RFC3339 (UTC default)"))
 		subtasks := m.subtasksForParent(task.ID)
 		if len(subtasks) > 0 {
 			lines = append(lines, "")
 			done, total := m.subtaskProgress(task.ID)
 			lines = append(lines, hintStyle.Render(fmt.Sprintf("subtasks (%d/%d done)", done, total)))
 			subtaskIdx := clamp(m.taskInfoSubtaskIdx, 0, len(subtasks)-1)
+			checkedStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("42"))
+			uncheckedStyle := lipgloss.NewStyle().Foreground(muted)
+			focusStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
 			for idx, subtask := range subtasks {
+				subtaskState := m.lifecycleStateForTask(subtask)
+				subtaskDone := subtaskState == domain.StateDone
 				prefix := "  "
 				if idx == subtaskIdx {
 					prefix = "│ "
 				}
-				line := prefix + truncate(subtask.Title, 42)
-				meta := m.cardMeta(subtask)
-				if meta != "" {
-					line += " " + meta
+				check := uncheckedStyle.Render("[ ]")
+				if subtaskDone {
+					check = checkedStyle.Render("[x]")
 				}
-				if subtask.LifecycleState == domain.StateDone {
-					line = lipgloss.NewStyle().Foreground(muted).Render(line)
+				title := truncate(subtask.Title, 34)
+				if idx == subtaskIdx {
+					title = focusStyle.Render(title)
 				}
+				metaParts := []string{
+					"state:" + lifecycleStateLabel(subtaskState),
+					"complete:" + completionLabel(subtaskDone),
+				}
+				if subtask.DueAt != nil {
+					metaParts = append(metaParts, "due:"+formatDueValue(subtask.DueAt))
+				}
+				line := fmt.Sprintf("%s%s %s %s", prefix, check, title, hintStyle.Render(strings.Join(metaParts, " • ")))
 				lines = append(lines, line)
 			}
-			lines = append(lines, hintStyle.Render("j/k choose • enter open subtask • backspace parent"))
+			lines = append(lines, hintStyle.Render("j/k choose • space toggle complete • enter open subtask • backspace parent"))
 		}
 		inherited := m.labelSourcesForTask(task)
 		lines = append(lines, "")
@@ -5832,7 +6965,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		if desc := strings.TrimSpace(task.Description); desc != "" {
 			lines = append(lines, "", desc)
 		}
-		lines = append(lines, "", hintStyle.Render("e edit • s subtask • [/] move • b dependencies • r attach resource • f focus subtree • esc back/close"))
+		lines = append(lines, "", hintStyle.Render("e edit • s subtask • c thread • [ / ] move • b deps inspector • r attach resource • f focus subtree • esc back/close"))
 		return boxStyle.Render(strings.Join(lines, "\n"))
 
 	case modeResourcePicker:
@@ -5958,14 +7091,23 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 
 		title := lipgloss.NewStyle().Bold(true).Foreground(accent).Render("Projects")
 		lines := []string{title}
-		for idx, p := range m.projects {
-			cursor := "  "
-			if idx == m.projectPickerIndex {
-				cursor = "> "
+		if len(m.projects) == 0 {
+			lines = append(lines, helpStyle.Render("(no projects yet)"))
+		} else {
+			for idx, p := range m.projects {
+				cursor := "  "
+				if idx == m.projectPickerIndex {
+					cursor = "> "
+				}
+				lines = append(lines, cursor+p.Name)
 			}
-			lines = append(lines, cursor+p.Name)
 		}
-		lines = append(lines, helpStyle.Render("j/k or wheel • enter choose • esc cancel"))
+		lines = append(lines, helpStyle.Render("N new project"))
+		if len(m.projects) == 0 {
+			lines = append(lines, helpStyle.Render("enter/N create • esc close"))
+		} else {
+			lines = append(lines, helpStyle.Render("j/k or wheel • enter choose • N new • esc cancel"))
+		}
 		return pickerStyle.Render(strings.Join(lines, "\n"))
 
 	case modeSearchResults:
@@ -5993,6 +7135,147 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		}
 		lines = append(lines, hintStyle.Render("j/k navigate • enter open • esc close"))
 		return resultsStyle.Render(strings.Join(lines, "\n"))
+
+	case modeDependencyInspector:
+		style := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(accent).
+			Padding(0, 1)
+		if maxWidth > 0 {
+			style = style.Width(clamp(maxWidth, 44, 118))
+		}
+		titleStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
+		hintStyle := lipgloss.NewStyle().Foreground(muted)
+		in := m.dependencyInput
+		in.SetWidth(max(20, maxWidth-22))
+		ownerLabel := "(new task)"
+		if task, ok := m.taskByID(strings.TrimSpace(m.dependencyOwnerTaskID)); ok {
+			ownerLabel = task.Title
+		}
+		activeFieldLabel := m.dependencyActiveFieldLabel()
+		lines := []string{
+			titleStyle.Render("Dependencies & Blockers"),
+			hintStyle.Render("task: " + truncate(ownerLabel, 56)),
+			hintStyle.Render("active: " + activeFieldLabel),
+			in.View(),
+		}
+
+		stateLabel := lipgloss.NewStyle().Foreground(muted)
+		if m.dependencyFocus == 1 {
+			stateLabel = lipgloss.NewStyle().Bold(true).Foreground(accent)
+		}
+		stateParts := make([]string, 0, len(canonicalSearchStatesOrdered))
+		for idx, state := range canonicalSearchStatesOrdered {
+			check := " "
+			if m.isDependencyStateEnabled(state) {
+				check = "x"
+			}
+			name := canonicalSearchStateLabels[state]
+			if name == "" {
+				name = state
+			}
+			item := fmt.Sprintf("[%s] %s", check, name)
+			if idx == clamp(m.dependencyStateCursor, 0, len(canonicalSearchStatesOrdered)-1) && m.dependencyFocus == 1 {
+				item = lipgloss.NewStyle().Bold(true).Foreground(accent).Render(item)
+			}
+			stateParts = append(stateParts, item)
+		}
+		lines = append(lines, stateLabel.Render("states:")+" "+strings.Join(stateParts, "   "))
+
+		scopeLabel := lipgloss.NewStyle().Foreground(muted)
+		if m.dependencyFocus == 2 {
+			scopeLabel = lipgloss.NewStyle().Bold(true).Foreground(accent)
+		}
+		scopeText := "scope: current project"
+		if m.dependencyCrossProject {
+			scopeText = "scope: all projects"
+		}
+		lines = append(lines, scopeLabel.Render(scopeText))
+
+		archivedLabel := lipgloss.NewStyle().Foreground(muted)
+		if m.dependencyFocus == 3 {
+			archivedLabel = lipgloss.NewStyle().Bold(true).Foreground(accent)
+		}
+		archivedText := "archived: hidden"
+		if m.dependencyIncludeArchived {
+			archivedText = "archived: included"
+		}
+		lines = append(lines, archivedLabel.Render(archivedText))
+
+		countLine := fmt.Sprintf("depends_on: %d • blocked_by: %d", len(m.dependencyDependsOn), len(m.dependencyBlockedBy))
+		if m.dependencyDirty {
+			countLine += " • unsaved changes"
+		}
+		lines = append(lines, hintStyle.Render(countLine))
+		if len(m.dependencyDependsOn) > 0 || len(m.dependencyBlockedBy) > 0 {
+			lines = append(lines, hintStyle.Render("linked refs are pinned at top"))
+		}
+		lines = append(lines, "")
+
+		if len(m.dependencyMatches) == 0 {
+			lines = append(lines, hintStyle.Render("(no matching tasks)"))
+		} else {
+			const dependencyWindowSize = 8
+			start, end := windowBounds(len(m.dependencyMatches), m.dependencyIndex, dependencyWindowSize)
+			activeRowStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
+			for idx := start; idx < end; idx++ {
+				candidate := m.dependencyMatches[idx]
+				taskID := strings.TrimSpace(candidate.Match.Task.ID)
+				cursor := "  "
+				if idx == m.dependencyIndex {
+					cursor = "> "
+				}
+				depMark := " "
+				if hasDependencyID(m.dependencyDependsOn, taskID) {
+					depMark = "D"
+				}
+				blockMark := " "
+				if hasDependencyID(m.dependencyBlockedBy, taskID) {
+					blockMark = "B"
+				}
+				stateName := candidate.Match.StateID
+				if label, ok := canonicalSearchStateLabels[strings.TrimSpace(strings.ToLower(candidate.Match.StateID))]; ok {
+					stateName = label
+				}
+				row := fmt.Sprintf("%s[%s%s] %s • %s", cursor, depMark, blockMark, truncate(candidate.Match.Task.Title, 32), truncate(candidate.Path, 52))
+				if idx == m.dependencyIndex && m.dependencyFocus == 4 {
+					row = activeRowStyle.Render(row)
+				}
+				lines = append(lines, row)
+				lines = append(lines, hintStyle.Render("    "+stateName+" • "+string(candidate.Match.Task.Kind)+" • id:"+taskID))
+			}
+			if len(m.dependencyMatches) > dependencyWindowSize {
+				lines = append(lines, hintStyle.Render(fmt.Sprintf("showing %d-%d of %d", start+1, end, len(m.dependencyMatches))))
+			}
+		}
+
+		if candidate, ok := m.selectedDependencyCandidate(); ok {
+			details := candidate.Match.Task
+			description := strings.TrimSpace(details.Description)
+			if description == "" {
+				description = "-"
+			}
+			stateText := lifecycleStateLabel(details.LifecycleState)
+			if stateText == "-" {
+				stateID := strings.TrimSpace(strings.ToLower(candidate.Match.StateID))
+				if label, ok := canonicalSearchStateLabels[stateID]; ok {
+					stateText = label
+				} else if stateID != "" {
+					stateText = stateID
+				}
+			}
+			lines = append(lines, "")
+			lines = append(lines, hintStyle.Render("details"))
+			lines = append(lines, hintStyle.Render("id: "+details.ID))
+			lines = append(lines, hintStyle.Render("path: "+truncate(candidate.Path, 86)))
+			lines = append(lines, hintStyle.Render("state: "+stateText+" • kind: "+string(details.Kind)))
+			lines = append(lines, hintStyle.Render("description: "+truncate(description, 86)))
+		}
+
+		lines = append(lines, "")
+		lines = append(lines, hintStyle.Render("tab focus • j/k list • d toggle depends_on • b toggle blocked_by • space toggle active field value"))
+		lines = append(lines, hintStyle.Render("x switch active field • enter jump to task • a apply changes • esc cancel"))
+		return style.Render(strings.Join(lines, "\n"))
 
 	case modeCommandPalette:
 		style := lipgloss.NewStyle().
@@ -6157,7 +7440,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		switch m.mode {
 		case modeAddTask:
 			title = "New Task"
-			hint = "enter save • esc cancel • tab next field • ctrl+r attach resource • ctrl+y accept label suggestion"
+			hint = "enter save • esc cancel • tab next field • ctrl+o deps picker • ctrl+r attach resource • ctrl+y label suggestion"
 		case modeSearch:
 			title = "Search"
 			hint = "tab focus • space/enter toggle • ctrl+u clear query • ctrl+r reset filters"
@@ -6165,7 +7448,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 			title = "Rename Task"
 		case modeEditTask:
 			title = "Edit Task"
-			hint = "enter save • esc cancel • tab next field • ctrl+r attach resource • ctrl+y accept label suggestion"
+			hint = "enter save • esc cancel • tab next field • ctrl+o deps picker • ctrl+r attach resource • ctrl+y label suggestion"
 		case modeAddProject:
 			title = "New Project"
 		case modeEditProject:
@@ -6256,13 +7539,15 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 				lines = append(lines, labelStyle.Render(fmt.Sprintf("%-12s", label+":"))+" "+in.View())
 			}
 			if m.formFocus == taskFieldDue {
-				lines = append(lines, hintStyle.Render("ctrl+d or D open due-date picker"))
+				lines = append(lines, hintStyle.Render("ctrl+d or D open due-date picker (includes timed presets)"))
+				lines = append(lines, hintStyle.Render("type: YYYY-MM-DD | YYYY-MM-DD HH:MM | YYYY-MM-DDTHH:MM | RFC3339 | -"))
+				lines = append(lines, hintStyle.Render("time without timezone is treated as UTC"))
 			}
 			if m.formFocus == taskFieldLabels {
 				lines = append(lines, hintStyle.Render("ctrl+l inherited label picker • ctrl+y accept autocomplete"))
 			}
 			if m.formFocus == taskFieldDependsOn || m.formFocus == taskFieldBlockedBy {
-				lines = append(lines, hintStyle.Render("dependency fields accept task IDs as csv (use task info/search for IDs)"))
+				lines = append(lines, hintStyle.Render("ctrl+o open dependency picker • csv task IDs still supported"))
 			}
 			if len(m.taskFormResourceRefs) > 0 {
 				lines = append(lines, hintStyle.Render(fmt.Sprintf("staged resources: %d", len(m.taskFormResourceRefs))))
@@ -6471,6 +7756,10 @@ func (m Model) modeLabel() string {
 		return "labels-config"
 	case modeHighlightColor:
 		return "highlight-color"
+	case modeDependencyInspector:
+		return "deps"
+	case modeThread:
+		return "thread"
 	default:
 		return "normal"
 	}
@@ -6486,13 +7775,13 @@ func (m Model) modePrompt() string {
 	case modeRenameTask:
 		return "rename task: " + m.input + " (enter save, esc cancel)"
 	case modeEditTask:
-		return "edit task: " + m.input + " (title | description | priority(low|medium|high) | due(YYYY-MM-DD[THH:MM] or -) | labels(csv))"
+		return "edit task: " + m.input + " (title | description | priority(low|medium|high) | due(YYYY-MM-DD | YYYY-MM-DD HH:MM | YYYY-MM-DDTHH:MM | RFC3339 | -) | labels(csv))"
 	case modeDuePicker:
 		return "due picker: j/k select, enter apply, esc cancel"
 	case modeProjectPicker:
-		return "project picker: j/k select, enter choose, esc cancel"
+		return "project picker: j/k select, enter choose, N new project, esc cancel"
 	case modeTaskInfo:
-		return "task info: e edit, s subtask, [/] move, b deps, r attach, esc back/close"
+		return "task info: e edit, s subtask, c thread, [ / ] move, space toggle subtask complete, b deps inspector, r attach, esc back/close"
 	case modeAddProject:
 		return "new project: enter save, esc cancel"
 	case modeEditProject:
@@ -6517,6 +7806,10 @@ func (m Model) modePrompt() string {
 		return "labels config: enter save, esc cancel"
 	case modeHighlightColor:
 		return "highlight color: enter save, esc cancel"
+	case modeDependencyInspector:
+		return "deps inspector: tab focus, d/b toggle, x switch active, enter jump, a apply, esc cancel"
+	case modeThread:
+		return "thread: enter post comment, pgup/pgdown scroll, ctrl+r reload, esc back"
 	default:
 		return ""
 	}

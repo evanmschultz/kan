@@ -28,9 +28,9 @@ Expected:
 
 ### USER NOTES S0.1-N1
 
-- Pass/Fail:
+- Pass/Fail: pass
 - Evidence:
-- Notes:
+- Notes: on start up the project picker should show up so the user picks the project and an option to make a new on form that picker. the project picker should allow for making a new one always.///:
 
 ---
 
@@ -57,7 +57,7 @@ Expected:
 
 ### USER NOTES S0.2-N1
 
-- Pass/Fail:
+- Pass/Fail: pass
 - Evidence:
 - Notes:
 
@@ -79,7 +79,7 @@ Expected:
 
 ### USER NOTES S1.1-N1
 
-- Pass/Fail:
+- Pass/Fail: pass
 - Evidence:
 - Notes:
 
@@ -105,7 +105,7 @@ Expected:
 
 ### USER NOTES S1.2-N1
 
-- Pass/Fail:
+- Pass/Fail: pass
 - Evidence:
 - Notes:
 
@@ -128,7 +128,7 @@ Expected:
 
 ### USER NOTES S1.3-N1
 
-- Pass/Fail:
+- Pass/Fail: pass
 - Evidence:
 - Notes:
 
@@ -145,7 +145,9 @@ Actions:
 3. In labels field, use `ctrl+l` and `ctrl+y` suggestion acceptance.
 4. Use `ctrl+d` due picker.
 5. Use `ctrl+r` to stage resource refs.
-6. Fill dependency fields (`depends_on`, `blocked_by`, `blocked_reason`).
+6. In `depends_on` or `blocked_by`, press `ctrl+o` to open dependency inspector.
+7. In dependency inspector, use `tab` to focus list, `j/k` to navigate, review details panel, `d`/`b` to add or remove refs, and `a` to apply.
+8. Also verify raw CSV entry still works for `depends_on` and `blocked_by` when typed manually.
 
 Expected:
 
@@ -153,13 +155,14 @@ Expected:
 - Tab order is deterministic.
 - Label suggestion and picker are usable.
 - Resource attach from create flow works.
-- Dependency values are accepted in add flow.
+- Dependency inspector supports list navigation, detail inspection, add/remove toggles, and apply.
+- Dependency values are accepted in add flow through both picker and raw CSV input.
 
 ### USER NOTES S2.1-N1
 
 - Pass/Fail:
 - Evidence:
-- Notes:
+- Notes: date and time should be two steps. so you pick the date and have the option to save or add a time and then there you have a picker or can type it in which as you type it would narrow the amount of options in the picker.
 
 ---
 
@@ -179,9 +182,9 @@ Expected:
 
 ### USER NOTES S2.2-N1
 
-- Pass/Fail:
+- Pass/Fail: pass
 - Evidence:
-- Notes:
+- Notes: delete from file
 
 ---
 
@@ -193,19 +196,21 @@ Actions:
 2. Enter due date only (`YYYY-MM-DD`).
 3. Enter due datetime (`YYYY-MM-DD HH:MM` and `YYYY-MM-DDTHH:MM`).
 4. Enter past due datetime.
+5. Focus the due field and verify inline hint text shows all accepted formats (`YYYY-MM-DD`, `YYYY-MM-DD HH:MM`, `YYYY-MM-DDTHH:MM`, `RFC3339`, `-`) and UTC default note.
 
 Expected:
 
 - Priority picker remains keyboard-friendly.
 - Date and datetime inputs are accepted.
 - Past due warning appears before save.
+- Due field hint explicitly documents typed time support and UTC default behavior.
 - Due warnings surface in board/task-info context after save.
 
 ### USER NOTES S2.3-N1
 
 - Pass/Fail:
 - Evidence:
-- Notes:
+- Notes: see above about edit and create task date picker and time information
 
 ---
 
@@ -223,13 +228,14 @@ Expected:
 
 - Both `i` and `enter` open task info.
 - Modal remains centered.
-- Task-info hints include edit, dependency edit, resource attach, subtask, and move shortcuts.
+- Task-info hints include edit, dependency inspector, resource attach, subtask, move (`[ / ]`), and checklist toggle (`space`) shortcuts.
+- Pressing `b` opens dependency inspector with linked deps/blockers pinned at the top, list navigation, detail panel, add/remove, and `enter` jump-to-task behavior.
 
 ### USER NOTES S3.1-N1
 
 - Pass/Fail:
 - Evidence:
-- Notes:
+- Notes: esc should take you to the next higher when in subtask create or edit modal esc takes you all the way back instead of back to the task that is its parent.
 
 ---
 
@@ -243,13 +249,16 @@ Actions:
 
 1. Observe parent row on board.
 2. Open parent task info.
-3. Use `enter` on a subtask to drill in.
-4. Use `[` / `]` in task-info to move subtask state.
+3. Confirm each subtask renders as checklist row (`[ ]` incomplete, `[x]` complete).
+4. Press `space` on focused subtask to mark complete, then press `space` again to reopen.
+5. Use `enter` on a subtask to drill in.
+6. Use `[` / `]` in task-info to move subtask state directly.
 
 Expected:
 
 - Board row hides inline subtasks and shows compact progress (`done/total`).
-- Task info shows subtasks list.
+- Task info shows checklist-style subtasks list with clear state/complete metadata.
+- `space` toggles focused subtask completion between done and active columns.
 - Subtasks can be progressed/completed from task-info context.
 - Parent move to `done` is blocked while any subtask remains incomplete.
 
@@ -257,7 +266,7 @@ Expected:
 
 - Pass/Fail:
 - Evidence:
-- Notes:
+- Notes: need to show that 'space' is how you mark a subtask as complete. also, `?` should work on any menu aside from a text input field and show up only with the hotkeys for that menu!
 
 ---
 
@@ -275,12 +284,13 @@ Expected:
 - Drill-in works.
 - `backspace` and `esc` behave as one-step-back navigation.
 - Subtasks remain visible/accessible regardless of parent column/state.
+- Task-info header metadata clearly shows state + complete status for the focused task/subtask.
 
 ### USER NOTES S3.3-N1
 
 - Pass/Fail:
 - Evidence:
-- Notes:
+- Notes: adding a new subtask should take you back to its parent not take you back to the main menu when pressing enter to save it!
 
 ---
 
@@ -304,9 +314,9 @@ Expected:
 
 ### USER NOTES S4.1-N1
 
-- Pass/Fail:
+- Pass/Fail: pass
 - Evidence:
-- Notes:
+- Notes: when using the filter the hotkeys will do their thing instead of typing into the text field. we need to fix this on ALL text-input fields!
 
 ---
 
@@ -325,7 +335,7 @@ Expected:
 
 ### USER NOTES S4.2-N1
 
-- Pass/Fail:
+- Pass/Fail: pass
 - Evidence:
 - Notes:
 
@@ -349,7 +359,7 @@ Expected:
 
 ### USER NOTES S5.1-N1
 
-- Pass/Fail:
+- Pass/Fail: pass
 - Evidence:
 - Notes:
 
@@ -375,7 +385,7 @@ Expected:
 
 ### USER NOTES S5.2-N1
 
-- Pass/Fail:
+- Pass/Fail: pass
 - Evidence:
 - Notes:
 
@@ -399,7 +409,7 @@ Expected:
 
 ### USER NOTES S5.3-N1
 
-- Pass/Fail:
+- Pass/Fail: pass
 - Evidence:
 - Notes:
 
@@ -421,7 +431,7 @@ Expected:
 
 ### USER NOTES S6.1-N1
 
-- Pass/Fail:
+- Pass/Fail: pass
 - Evidence:
 - Notes:
 
@@ -443,7 +453,7 @@ Expected:
 
 ### USER NOTES S6.2-N1
 
-- Pass/Fail:
+- Pass/Fail: pass
 - Evidence:
 - Notes:
 
@@ -466,7 +476,7 @@ Expected:
 
 ### USER NOTES S7.1-N1
 
-- Pass/Fail:
+- Pass/Fail: pass
 - Evidence:
 - Notes:
 
@@ -486,7 +496,7 @@ Expected:
 
 ### USER NOTES S7.2-N1
 
-- Pass/Fail:
+- Pass/Fail: pass
 - Evidence:
 - Notes:
 
@@ -514,7 +524,7 @@ Expected:
 
 - Pass/Fail:
 - Evidence:
-- Notes:
+- Notes: color picker works, but it is border not 'accent', but we should make it possible to control the three colors, the border, the accent (highlights), and the main text color which would be. the white text for a normal unfocused task
 
 ---
 
@@ -532,7 +542,7 @@ Expected:
 
 ### USER NOTES S8.2-N1
 
-- Pass/Fail:
+- Pass/Fail: pass
 - Evidence:
 - Notes:
 
@@ -557,6 +567,32 @@ Expected:
 
 - Pass/Fail:
 - Evidence:
+- Notes: this needs to be fixed and redone, label config was supposed to be project specific, not across all projects.
+
+---
+
+### 8.4 Full-screen thread markdown + comments
+
+Actions:
+
+1. Open command palette (`:`) and run `thread-project`.
+2. Verify full-screen thread shows project description rendered as markdown.
+3. Run `thread-item` from command palette for the selected work item, then open task info (`i`) and press `c` to open the same item thread via shortcut.
+4. In thread mode, enter markdown in the composer input and press `enter` to post.
+5. Confirm posted comment metadata shows actor type, author name, and timestamp.
+6. Resize terminal width and verify description/comment wrapping updates cleanly.
+
+Expected:
+
+- Thread mode is full-screen and non-destructive (`esc` returns to prior context).
+- Description and comment bodies render via markdown styles (headings/lists/emphasis readable).
+- New comment persists and appears with ownership attribution from identity defaults.
+- Thread view remains readable after terminal resize.
+
+### USER NOTES S8.4-N1
+
+- Pass/Fail:
+- Evidence:
 - Notes:
 
 ---
@@ -573,11 +609,11 @@ Actions:
 Expected:
 
 - Help renders as centered overlay.
-- Key hints match actual behavior (including task-info/subtask/dependency/resource flows).
+- Key hints match actual behavior (including `space` subtask checklist toggle and `[ / ]` move wording).
 
 ### USER NOTES S9.1-N1
 
-- Pass/Fail:
+- Pass/Fail: pass
 - Evidence:
 - Notes:
 
@@ -590,7 +626,7 @@ Expected:
 Actions:
 
 1. Create project and set root path.
-2. Create parent task and subtasks.
+2. Create parent task and subtasks, then toggle completion from task-info checklist (`space`).
 3. Edit dependencies and labels defaults.
 4. Move tasks across columns and verify completion rules.
 5. Attach resources from create/edit/info flows.
@@ -603,10 +639,11 @@ Expected:
 - No crashes.
 - No data loss.
 - Behavior matches sections above.
+- Dependency/blocker modal supports inspect + navigate + jump + add workflows without leaving inconsistent state.
 
 ### USER NOTES S10.1-N1
 
-- Pass/Fail:
+- Pass/Fail: pass
 - Evidence:
 - Notes:
 
@@ -620,3 +657,8 @@ Expected:
 - Suggested next priorities:
 - Tester:
 - Date:
+
+### USER NOTES ADDITIONAL
+
+1. We don't have phase and sub-phase logic and capabilities. a phase should appear in the list with tasks but say they are a phase and pressing enter would change the view to the same kind of project view with tasks that are in to do in progress and done. there should be a phase info section and a way to edit add phase data with sensible good fields like tasks but better for phases. this would be separate from tasks of course. and phases can be nested. in the top near where the project's are listed like `[project 1] project 2` there should be a 'path' of where the phase is, meaning `Project | Phase | Sub-phase` and so on. phases can't be marked as complete until all their tasks are marked done, so no open todo or in progress tasks can be there to mark a phase as done. note that the phase at the project level would move like a task through the 4 'states'
+2. project root_path logic. we need a way to make the path much easier and user friendly. we need a "picker" type system with a kind of fzf fuzzy path finder or something. the path can be a file. but it should be a user friendly search thing where config.toml could allow user's to set where path searching should start, for instance `.../documents/code` so the system would be faster.

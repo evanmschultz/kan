@@ -22,6 +22,7 @@ const (
 	DeleteModeHard    DeleteMode = "hard"
 	defaultLogLevel              = "info"
 	defaultDevLogDir             = ".kan/log"
+	defaultActorType             = "user"
 )
 
 // Config holds package configuration.
@@ -32,6 +33,8 @@ type Config struct {
 	TaskFields   TaskFieldsConfig  `toml:"task_fields"`
 	Board        BoardConfig       `toml:"board"`
 	Search       SearchConfig      `toml:"search"`
+	Identity     IdentityConfig    `toml:"identity"`
+	Paths        PathsConfig       `toml:"paths"`
 	UI           UIConfig          `toml:"ui"`
 	Logging      LoggingConfig     `toml:"logging"`
 	ProjectRoots map[string]string `toml:"project_roots"`
@@ -76,6 +79,17 @@ type SearchConfig struct {
 	CrossProject    bool     `toml:"cross_project"`
 	IncludeArchived bool     `toml:"include_archived"`
 	States          []string `toml:"states"`
+}
+
+// IdentityConfig holds configuration for operator identity defaults.
+type IdentityConfig struct {
+	DisplayName      string `toml:"display_name"`
+	DefaultActorType string `toml:"default_actor_type"`
+}
+
+// PathsConfig holds filesystem root-path configuration.
+type PathsConfig struct {
+	SearchRoots []string `toml:"search_roots"`
 }
 
 // UIConfig holds configuration for UI behavior.
@@ -142,6 +156,13 @@ func Default(dbPath string) Config {
 			CrossProject:    false,
 			IncludeArchived: false,
 			States:          []string{"todo", "progress", "done"},
+		},
+		Identity: IdentityConfig{
+			DisplayName:      "",
+			DefaultActorType: defaultActorType,
+		},
+		Paths: PathsConfig{
+			SearchRoots: []string{},
 		},
 		UI: UIConfig{
 			DueSoonWindows: []string{"24h", "1h"},
@@ -229,6 +250,16 @@ func (c *Config) Validate() error {
 	for i, state := range c.Search.States {
 		if !isKnownLifecycleState(state) {
 			return fmt.Errorf("search.states[%d] references unknown state %q", i, state)
+		}
+	}
+	switch c.Identity.DefaultActorType {
+	case "user", "agent", "system":
+	default:
+		return fmt.Errorf("invalid identity.default_actor_type: %q", c.Identity.DefaultActorType)
+	}
+	for i, searchRoot := range c.Paths.SearchRoots {
+		if strings.TrimSpace(searchRoot) == "" {
+			return fmt.Errorf("paths.search_roots[%d] is empty", i)
 		}
 	}
 
@@ -350,6 +381,9 @@ func (c *Config) normalize() {
 		states = []string{"todo", "progress", "done"}
 	}
 	c.Search.States = states
+	c.Identity.DisplayName = strings.TrimSpace(c.Identity.DisplayName)
+	c.Identity.DefaultActorType = normalizeActorType(c.Identity.DefaultActorType)
+	c.Paths.SearchRoots = normalizeSearchRoots(c.Paths.SearchRoots)
 
 	windows := make([]string, 0, len(c.UI.DueSoonWindows))
 	seenWindows := map[string]struct{}{}
@@ -426,6 +460,34 @@ func normalizeLabelConfigList(in []string) []string {
 	return out
 }
 
+// normalizeActorType canonicalizes configured default actor types.
+func normalizeActorType(raw string) string {
+	actorType := strings.TrimSpace(strings.ToLower(raw))
+	if actorType == "" {
+		return defaultActorType
+	}
+	return actorType
+}
+
+// normalizeSearchRoots trims, deduplicates, and cleans root path entries.
+func normalizeSearchRoots(in []string) []string {
+	out := make([]string, 0, len(in))
+	seen := map[string]struct{}{}
+	for _, raw := range in {
+		root := strings.TrimSpace(raw)
+		if root == "" {
+			continue
+		}
+		root = filepath.Clean(root)
+		if _, ok := seen[root]; ok {
+			continue
+		}
+		seen[root] = struct{}{}
+		out = append(out, root)
+	}
+	return out
+}
+
 // EnsureConfigDir ensures config dir.
 func EnsureConfigDir(path string) error {
 	dir := filepath.Dir(path)
@@ -433,6 +495,138 @@ func EnsureConfigDir(path string) error {
 		return nil
 	}
 	return os.MkdirAll(dir, 0o755)
+}
+
+// UpsertIdentity writes identity defaults to the config file.
+func UpsertIdentity(path, displayName, rawActorType string) error {
+	configPath := strings.TrimSpace(path)
+	if configPath == "" {
+		return errors.New("config path is required")
+	}
+	displayName = strings.TrimSpace(displayName)
+	actorType := normalizeActorType(rawActorType)
+	switch actorType {
+	case "user", "agent", "system":
+	default:
+		return fmt.Errorf("invalid identity.default_actor_type: %q", actorType)
+	}
+
+	raw := map[string]any{}
+	missing := false
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("read config: %w", err)
+		}
+		missing = true
+	} else if len(content) > 0 {
+		if err := toml.Unmarshal(content, &raw); err != nil {
+			return fmt.Errorf("decode toml: %w", err)
+		}
+	}
+	if missing && displayName == "" && actorType == defaultActorType {
+		return nil
+	}
+
+	identity := map[string]any{}
+	if tableValue, ok := raw["identity"]; ok {
+		table, ok := tableValue.(map[string]any)
+		if !ok {
+			return errors.New("identity must be a table")
+		}
+		for key, value := range table {
+			identity[key] = value
+		}
+	}
+
+	if displayName == "" {
+		delete(identity, "display_name")
+	} else {
+		identity["display_name"] = displayName
+	}
+	identity["default_actor_type"] = actorType
+	if len(identity) == 0 {
+		delete(raw, "identity")
+	} else {
+		raw["identity"] = identity
+	}
+
+	encoded, err := toml.Marshal(raw)
+	if err != nil {
+		return fmt.Errorf("encode toml: %w", err)
+	}
+	if err := EnsureConfigDir(configPath); err != nil {
+		return fmt.Errorf("ensure config dir: %w", err)
+	}
+	if err := os.WriteFile(configPath, encoded, 0o644); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+	return nil
+}
+
+// UpsertSearchRoots writes paths.search_roots to the config file.
+func UpsertSearchRoots(path string, searchRoots []string) error {
+	configPath := strings.TrimSpace(path)
+	if configPath == "" {
+		return errors.New("config path is required")
+	}
+	searchRoots = normalizeSearchRoots(searchRoots)
+
+	raw := map[string]any{}
+	missing := false
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("read config: %w", err)
+		}
+		missing = true
+	} else if len(content) > 0 {
+		if err := toml.Unmarshal(content, &raw); err != nil {
+			return fmt.Errorf("decode toml: %w", err)
+		}
+	}
+	if missing && len(searchRoots) == 0 {
+		return nil
+	}
+
+	paths := map[string]any{}
+	if tableValue, ok := raw["paths"]; ok {
+		table, ok := tableValue.(map[string]any)
+		if !ok {
+			return errors.New("paths must be a table")
+		}
+		for key, value := range table {
+			paths[key] = value
+		}
+		if existing, ok := paths["search_roots"]; ok {
+			if _, err := decodeTrimmedStringList(existing, "paths.search_roots"); err != nil {
+				return err
+			}
+		}
+	}
+
+	if len(searchRoots) == 0 {
+		delete(paths, "search_roots")
+	} else {
+		paths["search_roots"] = append([]string(nil), searchRoots...)
+	}
+	if len(paths) == 0 {
+		delete(raw, "paths")
+	} else {
+		raw["paths"] = paths
+	}
+
+	encoded, err := toml.Marshal(raw)
+	if err != nil {
+		return fmt.Errorf("encode toml: %w", err)
+	}
+	if err := EnsureConfigDir(configPath); err != nil {
+		return fmt.Errorf("ensure config dir: %w", err)
+	}
+	if err := os.WriteFile(configPath, encoded, 0o644); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+	return nil
 }
 
 // UpsertProjectRoot writes one project_roots mapping update to the config file.
@@ -623,6 +817,38 @@ func decodeStringList(value any, field string) ([]string, error) {
 			out = append(out, text)
 		}
 		return normalizeLabelConfigList(out), nil
+	default:
+		return nil, fmt.Errorf("%s must be an array of strings", field)
+	}
+}
+
+// decodeTrimmedStringList coerces TOML list values into trimmed string slices.
+func decodeTrimmedStringList(value any, field string) ([]string, error) {
+	switch list := value.(type) {
+	case []string:
+		out := make([]string, 0, len(list))
+		for _, item := range list {
+			item = strings.TrimSpace(item)
+			if item == "" {
+				continue
+			}
+			out = append(out, item)
+		}
+		return out, nil
+	case []any:
+		out := make([]string, 0, len(list))
+		for idx, raw := range list {
+			text, ok := raw.(string)
+			if !ok {
+				return nil, fmt.Errorf("%s[%d] must be a string", field, idx)
+			}
+			text = strings.TrimSpace(text)
+			if text == "" {
+				continue
+			}
+			out = append(out, text)
+		}
+		return out, nil
 	default:
 		return nil, fmt.Errorf("%s must be an array of strings", field)
 	}

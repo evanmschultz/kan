@@ -107,6 +107,104 @@ func TestRepository_ProjectColumnTaskLifecycle(t *testing.T) {
 	}
 }
 
+// TestRepository_CreateAndListCommentsByTarget verifies behavior for the covered scenario.
+func TestRepository_CreateAndListCommentsByTarget(t *testing.T) {
+	ctx := context.Background()
+	repo, err := OpenInMemory()
+	if err != nil {
+		t.Fatalf("OpenInMemory() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	now := time.Date(2026, 2, 23, 9, 0, 0, 0, time.UTC)
+	project, err := domain.NewProject("p1", "Example", "", now)
+	if err != nil {
+		t.Fatalf("NewProject() error = %v", err)
+	}
+	if err := repo.CreateProject(ctx, project); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+
+	comment2, err := domain.NewComment(domain.CommentInput{
+		ID:           "c2",
+		ProjectID:    project.ID,
+		TargetType:   domain.CommentTargetTypeTask,
+		TargetID:     "t1",
+		BodyMarkdown: "second",
+		ActorType:    domain.ActorType("AGENT"),
+		AuthorName:   "agent-1",
+	}, now)
+	if err != nil {
+		t.Fatalf("NewComment(c2) error = %v", err)
+	}
+	comment1, err := domain.NewComment(domain.CommentInput{
+		ID:           "c1",
+		ProjectID:    project.ID,
+		TargetType:   domain.CommentTargetTypeTask,
+		TargetID:     "t1",
+		BodyMarkdown: "first",
+		ActorType:    domain.ActorTypeUser,
+		AuthorName:   "user-1",
+	}, now)
+	if err != nil {
+		t.Fatalf("NewComment(c1) error = %v", err)
+	}
+	projectComment, err := domain.NewComment(domain.CommentInput{
+		ID:           "c3",
+		ProjectID:    project.ID,
+		TargetType:   domain.CommentTargetTypeProject,
+		TargetID:     project.ID,
+		BodyMarkdown: "project note",
+		ActorType:    domain.ActorTypeSystem,
+		AuthorName:   "kan",
+	}, now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("NewComment(c3) error = %v", err)
+	}
+
+	if err := repo.CreateComment(ctx, comment2); err != nil {
+		t.Fatalf("CreateComment(c2) error = %v", err)
+	}
+	if err := repo.CreateComment(ctx, comment1); err != nil {
+		t.Fatalf("CreateComment(c1) error = %v", err)
+	}
+	if err := repo.CreateComment(ctx, projectComment); err != nil {
+		t.Fatalf("CreateComment(c3) error = %v", err)
+	}
+
+	taskComments, err := repo.ListCommentsByTarget(ctx, domain.CommentTarget{
+		ProjectID:  project.ID,
+		TargetType: domain.CommentTargetTypeTask,
+		TargetID:   "t1",
+	})
+	if err != nil {
+		t.Fatalf("ListCommentsByTarget(task) error = %v", err)
+	}
+	if len(taskComments) != 2 {
+		t.Fatalf("expected 2 task comments, got %d", len(taskComments))
+	}
+	if taskComments[0].ID != "c1" || taskComments[1].ID != "c2" {
+		t.Fatalf("expected deterministic created_at/id ordering, got %#v", taskComments)
+	}
+	if taskComments[1].ActorType != domain.ActorTypeAgent {
+		t.Fatalf("expected normalized actor type agent, got %q", taskComments[1].ActorType)
+	}
+
+	comments, err := repo.ListCommentsByTarget(ctx, domain.CommentTarget{
+		ProjectID:  project.ID,
+		TargetType: domain.CommentTargetTypeProject,
+		TargetID:   project.ID,
+	})
+	if err != nil {
+		t.Fatalf("ListCommentsByTarget(project) error = %v", err)
+	}
+	if len(comments) != 1 || comments[0].ID != "c3" {
+		t.Fatalf("unexpected project comments %#v", comments)
+	}
+}
+
 // TestRepository_NotFoundCases verifies behavior for the covered scenario.
 func TestRepository_NotFoundCases(t *testing.T) {
 	repo, err := OpenInMemory()
@@ -409,6 +507,20 @@ func TestRepository_MigratesLegacyTasksTable(t *testing.T) {
 	}
 	if tableCount != 1 {
 		t.Fatalf("expected change_events table to exist after migration, got %d", tableCount)
+	}
+	if err := repo.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='comments'`).Scan(&tableCount); err != nil {
+		t.Fatalf("count comments table error = %v", err)
+	}
+	if tableCount != 1 {
+		t.Fatalf("expected comments table to exist after migration, got %d", tableCount)
+	}
+
+	var indexCount int
+	if err := repo.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_comments_project_target_created_at'`).Scan(&indexCount); err != nil {
+		t.Fatalf("count comments index error = %v", err)
+	}
+	if indexCount != 1 {
+		t.Fatalf("expected comments target index to exist after migration, got %d", indexCount)
 	}
 }
 

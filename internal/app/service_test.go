@@ -15,6 +15,7 @@ type fakeRepo struct {
 	projects     map[string]domain.Project
 	columns      map[string]domain.Column
 	tasks        map[string]domain.Task
+	comments     map[string][]domain.Comment
 	changeEvents map[string][]domain.ChangeEvent
 }
 
@@ -24,6 +25,7 @@ func newFakeRepo() *fakeRepo {
 		projects:     map[string]domain.Project{},
 		columns:      map[string]domain.Column{},
 		tasks:        map[string]domain.Task{},
+		comments:     map[string][]domain.Comment{},
 		changeEvents: map[string][]domain.ChangeEvent{},
 	}
 }
@@ -134,6 +136,19 @@ func (f *fakeRepo) DeleteTask(_ context.Context, id string) error {
 	}
 	delete(f.tasks, id)
 	return nil
+}
+
+// CreateComment creates comment.
+func (f *fakeRepo) CreateComment(_ context.Context, comment domain.Comment) error {
+	key := comment.ProjectID + "|" + string(comment.TargetType) + "|" + comment.TargetID
+	f.comments[key] = append(f.comments[key], comment)
+	return nil
+}
+
+// ListCommentsByTarget lists comments for a target.
+func (f *fakeRepo) ListCommentsByTarget(_ context.Context, target domain.CommentTarget) ([]domain.Comment, error) {
+	key := target.ProjectID + "|" + string(target.TargetType) + "|" + target.TargetID
+	return append([]domain.Comment(nil), f.comments[key]...), nil
 }
 
 // ListProjectChangeEvents lists change events.
@@ -874,5 +889,98 @@ func TestListProjectChangeEvents(t *testing.T) {
 	}
 	if len(events) != 1 || events[0].Operation != domain.ChangeOperationUpdate {
 		t.Fatalf("unexpected events %#v", events)
+	}
+}
+
+// TestCreateAndListCommentsByTarget verifies behavior for the covered scenario.
+func TestCreateAndListCommentsByTarget(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 2, 23, 9, 0, 0, 0, time.UTC)
+	ids := []string{"comment-2", "comment-1"}
+	nextID := 0
+
+	svc := NewService(repo, func() string {
+		id := ids[nextID]
+		nextID++
+		return id
+	}, func() time.Time {
+		// Fixed clock intentionally forces tie timestamps so ID ordering is tested.
+		return now
+	}, ServiceConfig{})
+
+	if _, err := svc.CreateComment(context.Background(), CreateCommentInput{
+		ProjectID:    "p1",
+		TargetType:   domain.CommentTargetTypeTask,
+		TargetID:     "t1",
+		BodyMarkdown: "first",
+		ActorType:    domain.ActorType("AGENT"),
+		AuthorName:   "agent-1",
+	}); err != nil {
+		t.Fatalf("CreateComment(first) error = %v", err)
+	}
+	second, err := svc.CreateComment(context.Background(), CreateCommentInput{
+		ProjectID:    "p1",
+		TargetType:   domain.CommentTargetTypeTask,
+		TargetID:     "t1",
+		BodyMarkdown: "second",
+	})
+	if err != nil {
+		t.Fatalf("CreateComment(second) error = %v", err)
+	}
+	if second.ActorType != domain.ActorTypeUser {
+		t.Fatalf("expected default actor type user, got %q", second.ActorType)
+	}
+	if second.AuthorName != "kan-user" {
+		t.Fatalf("expected default author name kan-user, got %q", second.AuthorName)
+	}
+
+	comments, err := svc.ListCommentsByTarget(context.Background(), ListCommentsByTargetInput{
+		ProjectID:  "p1",
+		TargetType: domain.CommentTargetTypeTask,
+		TargetID:   "t1",
+	})
+	if err != nil {
+		t.Fatalf("ListCommentsByTarget() error = %v", err)
+	}
+	if len(comments) != 2 {
+		t.Fatalf("expected 2 comments, got %d", len(comments))
+	}
+	if comments[0].ID != "comment-1" || comments[1].ID != "comment-2" {
+		t.Fatalf("expected deterministic id ordering on equal timestamps, got %#v", comments)
+	}
+}
+
+// TestCreateCommentValidation verifies behavior for the covered scenario.
+func TestCreateCommentValidation(t *testing.T) {
+	repo := newFakeRepo()
+	svc := NewService(repo, func() string { return "comment-1" }, time.Now, ServiceConfig{})
+
+	_, err := svc.CreateComment(context.Background(), CreateCommentInput{
+		ProjectID:    "",
+		TargetType:   domain.CommentTargetTypeProject,
+		TargetID:     "p1",
+		BodyMarkdown: "body",
+	})
+	if err != domain.ErrInvalidID {
+		t.Fatalf("expected ErrInvalidID for missing project id, got %v", err)
+	}
+
+	_, err = svc.CreateComment(context.Background(), CreateCommentInput{
+		ProjectID:    "p1",
+		TargetType:   domain.CommentTargetTypeTask,
+		TargetID:     "t1",
+		BodyMarkdown: " ",
+	})
+	if err != domain.ErrInvalidBodyMarkdown {
+		t.Fatalf("expected ErrInvalidBodyMarkdown, got %v", err)
+	}
+
+	_, err = svc.ListCommentsByTarget(context.Background(), ListCommentsByTargetInput{
+		ProjectID:  "p1",
+		TargetType: domain.CommentTargetType("invalid"),
+		TargetID:   "t1",
+	})
+	if err != domain.ErrInvalidTargetType {
+		t.Fatalf("expected ErrInvalidTargetType, got %v", err)
 	}
 }

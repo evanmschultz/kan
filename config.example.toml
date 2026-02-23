@@ -41,6 +41,16 @@ include_archived = false
 # Canonical lifecycle states only: todo | progress | done | archived.
 states = ["todo", "progress", "done"]
 
+[identity]
+# Display name used for default actor identity in prompts and logs.
+display_name = ""
+# user | agent | system
+default_actor_type = "user"
+
+[paths]
+# Global filesystem roots used for search/picker defaults.
+search_roots = []
+
 [ui]
 # Durations used for "due soon" badges and summary counts.
 due_soon_windows = ["24h", "1h"]

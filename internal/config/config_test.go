@@ -44,6 +44,15 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Logging.DevFile.Dir != ".kan/log" {
 		t.Fatalf("expected default dev file log dir .kan/log, got %q", cfg.Logging.DevFile.Dir)
 	}
+	if cfg.Identity.DisplayName != "" {
+		t.Fatalf("expected empty default identity display name, got %q", cfg.Identity.DisplayName)
+	}
+	if cfg.Identity.DefaultActorType != "user" {
+		t.Fatalf("expected default identity actor type user, got %q", cfg.Identity.DefaultActorType)
+	}
+	if len(cfg.Paths.SearchRoots) != 0 {
+		t.Fatalf("expected no default search roots, got %#v", cfg.Paths.SearchRoots)
+	}
 }
 
 // TestLoadMissingFileUsesDefaults verifies behavior for the covered scenario.
@@ -110,6 +119,46 @@ show_due_summary = false
 	}
 	if cfg.UI.ShowDueSummary {
 		t.Fatal("expected due summary hidden from config override")
+	}
+}
+
+// TestLoadIdentityAndPathsOverrides verifies behavior for the covered scenario.
+func TestLoadIdentityAndPathsOverrides(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	content := `
+[database]
+path = "/custom/kan.db"
+
+[identity]
+display_name = "  Evan Schultz  "
+default_actor_type = "AGENT"
+
+[paths]
+search_roots = [" /tmp/a ", "/tmp/a", "/tmp/b/../b"]
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	cfg, err := Load(path, Default("/tmp/default.db"))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Identity.DisplayName != "Evan Schultz" {
+		t.Fatalf("unexpected identity display name %q", cfg.Identity.DisplayName)
+	}
+	if cfg.Identity.DefaultActorType != "agent" {
+		t.Fatalf("unexpected identity actor type %q", cfg.Identity.DefaultActorType)
+	}
+	if len(cfg.Paths.SearchRoots) != 2 {
+		t.Fatalf("unexpected search roots %#v", cfg.Paths.SearchRoots)
+	}
+	if cfg.Paths.SearchRoots[0] != filepath.Clean("/tmp/a") {
+		t.Fatalf("unexpected first search root %q", cfg.Paths.SearchRoots[0])
+	}
+	if cfg.Paths.SearchRoots[1] != filepath.Clean("/tmp/b") {
+		t.Fatalf("unexpected second search root %q", cfg.Paths.SearchRoots[1])
 	}
 }
 
@@ -263,6 +312,15 @@ func TestValidateRejectsInvalidLoggingLevel(t *testing.T) {
 	}
 }
 
+// TestValidateRejectsInvalidIdentityActorType verifies behavior for the covered scenario.
+func TestValidateRejectsInvalidIdentityActorType(t *testing.T) {
+	cfg := Default("/tmp/kan.db")
+	cfg.Identity.DefaultActorType = "robot"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected invalid identity actor type validation error")
+	}
+}
+
 // TestDueSoonDurationsNormalizes verifies behavior for the covered scenario.
 func TestDueSoonDurationsNormalizes(t *testing.T) {
 	cfg := Default("/tmp/kan.db")
@@ -397,6 +455,129 @@ func TestUpsertProjectRootRejectsInvalidInput(t *testing.T) {
 	}
 	if err := UpsertProjectRoot(path, "", "/tmp/inbox"); err == nil {
 		t.Fatal("expected error for empty project slug")
+	}
+}
+
+// TestUpsertIdentityWritesAndClears verifies behavior for the covered scenario.
+func TestUpsertIdentityWritesAndClears(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	content := `
+[database]
+path = "/tmp/custom.db"
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	if err := UpsertIdentity(path, "Evan", "agent"); err != nil {
+		t.Fatalf("UpsertIdentity() error = %v", err)
+	}
+	cfg, err := Load(path, Default("/tmp/default.db"))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got := cfg.Identity.DisplayName; got != "Evan" {
+		t.Fatalf("expected persisted display name Evan, got %q", got)
+	}
+	if got := cfg.Identity.DefaultActorType; got != "agent" {
+		t.Fatalf("expected persisted actor type agent, got %q", got)
+	}
+	if got := cfg.Database.Path; got != "/tmp/custom.db" {
+		t.Fatalf("expected database path preserved, got %q", got)
+	}
+
+	if err := UpsertIdentity(path, "", "system"); err != nil {
+		t.Fatalf("UpsertIdentity(clear display) error = %v", err)
+	}
+	cfg, err = Load(path, Default("/tmp/default.db"))
+	if err != nil {
+		t.Fatalf("Load() after clear error = %v", err)
+	}
+	if got := cfg.Identity.DisplayName; got != "" {
+		t.Fatalf("expected display name cleared, got %q", got)
+	}
+	if got := cfg.Identity.DefaultActorType; got != "system" {
+		t.Fatalf("expected actor type system after clear, got %q", got)
+	}
+}
+
+// TestUpsertIdentityMissingFileClearNoop verifies behavior for the covered scenario.
+func TestUpsertIdentityMissingFileClearNoop(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing.toml")
+	if err := UpsertIdentity(path, "", ""); err != nil {
+		t.Fatalf("UpsertIdentity() error = %v", err)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected no file created for clear noop, stat err=%v", err)
+	}
+}
+
+// TestUpsertIdentityRejectsInvalidInput verifies behavior for the covered scenario.
+func TestUpsertIdentityRejectsInvalidInput(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := UpsertIdentity("", "Evan", "user"); err == nil {
+		t.Fatal("expected error for empty config path")
+	}
+	if err := UpsertIdentity(path, "Evan", "robot"); err == nil {
+		t.Fatal("expected error for invalid actor type")
+	}
+}
+
+// TestUpsertSearchRootsWritesAndClears verifies behavior for the covered scenario.
+func TestUpsertSearchRootsWritesAndClears(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	content := `
+[database]
+path = "/tmp/custom.db"
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	if err := UpsertSearchRoots(path, []string{" /tmp/a ", "/tmp/a", "/tmp/b/../b"}); err != nil {
+		t.Fatalf("UpsertSearchRoots() error = %v", err)
+	}
+	cfg, err := Load(path, Default("/tmp/default.db"))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	want := []string{filepath.Clean("/tmp/a"), filepath.Clean("/tmp/b")}
+	if len(cfg.Paths.SearchRoots) != len(want) {
+		t.Fatalf("unexpected persisted search roots %#v", cfg.Paths.SearchRoots)
+	}
+	for i := range want {
+		if cfg.Paths.SearchRoots[i] != want[i] {
+			t.Fatalf("unexpected search root at %d: got %q want %q", i, cfg.Paths.SearchRoots[i], want[i])
+		}
+	}
+
+	if err := UpsertSearchRoots(path, nil); err != nil {
+		t.Fatalf("UpsertSearchRoots(clear) error = %v", err)
+	}
+	cfg, err = Load(path, Default("/tmp/default.db"))
+	if err != nil {
+		t.Fatalf("Load() after clear error = %v", err)
+	}
+	if len(cfg.Paths.SearchRoots) != 0 {
+		t.Fatalf("expected search roots cleared, got %#v", cfg.Paths.SearchRoots)
+	}
+}
+
+// TestUpsertSearchRootsMissingFileClearNoop verifies behavior for the covered scenario.
+func TestUpsertSearchRootsMissingFileClearNoop(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing.toml")
+	if err := UpsertSearchRoots(path, nil); err != nil {
+		t.Fatalf("UpsertSearchRoots() error = %v", err)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected no file created for clear noop, stat err=%v", err)
+	}
+}
+
+// TestUpsertSearchRootsRejectsInvalidInput verifies behavior for the covered scenario.
+func TestUpsertSearchRootsRejectsInvalidInput(t *testing.T) {
+	if err := UpsertSearchRoots("", []string{"/tmp/a"}); err == nil {
+		t.Fatal("expected error for empty config path")
 	}
 }
 

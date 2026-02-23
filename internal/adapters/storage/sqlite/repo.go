@@ -152,11 +152,26 @@ func (r *Repository) migrate(ctx context.Context) error {
 			created_at TEXT NOT NULL,
 			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
 		);`,
+		// comments.target_id is polymorphic, so only project_id is enforced as a foreign key.
+		`CREATE TABLE IF NOT EXISTS comments (
+			id TEXT PRIMARY KEY,
+			project_id TEXT NOT NULL,
+			target_type TEXT NOT NULL,
+			target_id TEXT NOT NULL,
+			body_markdown TEXT NOT NULL,
+			actor_type TEXT NOT NULL DEFAULT 'user',
+			author_name TEXT NOT NULL DEFAULT 'kan-user',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+		);`,
 		`CREATE INDEX IF NOT EXISTS idx_columns_project_position ON columns_v1(project_id, position);`,
 		`CREATE INDEX IF NOT EXISTS idx_tasks_project_column_position ON tasks(project_id, column_id, position);`,
 		`CREATE INDEX IF NOT EXISTS idx_work_items_project_column_position ON work_items(project_id, column_id, position);`,
 		`CREATE INDEX IF NOT EXISTS idx_work_items_project_parent ON work_items(project_id, parent_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_change_events_project_created_at ON change_events(project_id, created_at DESC, id DESC);`,
+		`CREATE INDEX IF NOT EXISTS idx_comments_project_target_created_at ON comments(project_id, target_type, target_id, created_at ASC, id ASC);`,
+		`CREATE INDEX IF NOT EXISTS idx_comments_project_created_at ON comments(project_id, created_at DESC, id DESC);`,
 	}
 
 	for _, stmt := range stmts {
@@ -631,6 +646,89 @@ func (r *Repository) DeleteTask(ctx context.Context, id string) error {
 	return err
 }
 
+// CreateComment creates comment.
+func (r *Repository) CreateComment(ctx context.Context, comment domain.Comment) error {
+	commentID := strings.TrimSpace(comment.ID)
+	if commentID == "" {
+		return domain.ErrInvalidID
+	}
+
+	target, err := domain.NormalizeCommentTarget(domain.CommentTarget{
+		ProjectID:  comment.ProjectID,
+		TargetType: comment.TargetType,
+		TargetID:   comment.TargetID,
+	})
+	if err != nil {
+		return err
+	}
+
+	bodyMarkdown := strings.TrimSpace(comment.BodyMarkdown)
+	if bodyMarkdown == "" {
+		return domain.ErrInvalidBodyMarkdown
+	}
+
+	authorName := strings.TrimSpace(comment.AuthorName)
+	if authorName == "" {
+		authorName = "kan-user"
+	}
+	createdAt := comment.CreatedAt
+	if createdAt.IsZero() {
+		createdAt = time.Now().UTC()
+	}
+	updatedAt := comment.UpdatedAt
+	if updatedAt.IsZero() {
+		updatedAt = createdAt
+	}
+
+	_, err = r.db.ExecContext(ctx, `
+		INSERT INTO comments(id, project_id, target_type, target_id, body_markdown, actor_type, author_name, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`,
+		commentID,
+		target.ProjectID,
+		string(target.TargetType),
+		target.TargetID,
+		bodyMarkdown,
+		string(normalizeActorType(comment.ActorType)),
+		authorName,
+		ts(createdAt),
+		ts(updatedAt),
+	)
+	if err != nil {
+		return fmt.Errorf("insert comment: %w", err)
+	}
+	return nil
+}
+
+// ListCommentsByTarget lists comments for a concrete project target.
+func (r *Repository) ListCommentsByTarget(ctx context.Context, target domain.CommentTarget) ([]domain.Comment, error) {
+	target, err := domain.NormalizeCommentTarget(target)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, project_id, target_type, target_id, body_markdown, actor_type, author_name, created_at, updated_at
+		FROM comments
+		WHERE project_id = ? AND target_type = ? AND target_id = ?
+		ORDER BY created_at ASC, id ASC
+	`, target.ProjectID, string(target.TargetType), target.TargetID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]domain.Comment, 0)
+	for rows.Next() {
+		comment, scanErr := scanComment(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		out = append(out, comment)
+	}
+	return out, rows.Err()
+}
+
 // ListProjectChangeEvents lists recent project events for activity-log consumption.
 func (r *Repository) ListProjectChangeEvents(ctx context.Context, projectID string, limit int) ([]domain.ChangeEvent, error) {
 	if limit <= 0 {
@@ -1001,6 +1099,46 @@ func scanTask(s scanner) (domain.Task, error) {
 		t.UpdatedByType = domain.ActorTypeUser
 	}
 	return t, nil
+}
+
+// scanComment handles scan comment.
+func scanComment(s scanner) (domain.Comment, error) {
+	var (
+		comment       domain.Comment
+		targetTypeRaw string
+		actorTypeRaw  string
+		createdRaw    string
+		updatedRaw    string
+	)
+	if err := s.Scan(
+		&comment.ID,
+		&comment.ProjectID,
+		&targetTypeRaw,
+		&comment.TargetID,
+		&comment.BodyMarkdown,
+		&actorTypeRaw,
+		&comment.AuthorName,
+		&createdRaw,
+		&updatedRaw,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.Comment{}, app.ErrNotFound
+		}
+		return domain.Comment{}, err
+	}
+	comment.TargetType = domain.NormalizeCommentTargetType(domain.CommentTargetType(targetTypeRaw))
+	if !domain.IsValidCommentTargetType(comment.TargetType) {
+		return domain.Comment{}, fmt.Errorf("decode comment target_type %q: %w", targetTypeRaw, domain.ErrInvalidTargetType)
+	}
+	comment.ActorType = normalizeActorType(domain.ActorType(actorTypeRaw))
+	comment.BodyMarkdown = strings.TrimSpace(comment.BodyMarkdown)
+	comment.AuthorName = strings.TrimSpace(comment.AuthorName)
+	if comment.AuthorName == "" {
+		comment.AuthorName = "kan-user"
+	}
+	comment.CreatedAt = parseTS(createdRaw)
+	comment.UpdatedAt = parseTS(updatedRaw)
+	return comment, nil
 }
 
 // translateNoRows handles translate no rows.

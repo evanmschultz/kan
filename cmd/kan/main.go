@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -132,13 +134,24 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if dbOverridden {
 		cfg.Database.Path = dbPath
 	}
+	if command == "" {
+		cfg, err = ensureStartupBootstrap(configPath, cfg, defaultCfg, dbPath, dbOverridden, os.Stdin, stderr)
+		if err != nil {
+			return fmt.Errorf("startup bootstrap: %w", err)
+		}
+	}
 
 	logger, err := newRuntimeLogger(stderr, appName, devMode, cfg.Logging, time.Now)
 	if err != nil {
 		return fmt.Errorf("configure runtime logger: %w", err)
 	}
+	if command == "" {
+		// Keep TUI rendering clean: runtime logs stay in the dev-file sink while the board is active.
+		logger.SetConsoleEnabled(false)
+	}
 	defer func() {
-		if closeErr := logger.Close(); closeErr != nil {
+		if closeErr := logger.Close(); closeErr != nil && logger.shouldLogToSink(logger.consoleSink) {
+			// Keep TUI shutdown quiet on the terminal when console logging is intentionally muted.
 			_, _ = fmt.Fprintf(stderr, "warning: close runtime log sink: %v\n", closeErr)
 		}
 	}()
@@ -194,6 +207,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 	m := tui.NewModel(
 		svc,
+		tui.WithLaunchProjectPicker(true),
 		tui.WithRuntimeConfig(toTUIRuntimeConfig(cfg)),
 		tui.WithReloadConfigCallback(func() (tui.RuntimeConfig, error) {
 			logger.Info("runtime config reload requested", "config_path", configPath)
@@ -314,6 +328,181 @@ func firstArg(args []string) string {
 	return args[0]
 }
 
+// startupBootstrapValues captures required first-run bootstrap answers.
+type startupBootstrapValues struct {
+	DisplayName string
+	SearchRoots []string
+}
+
+// ensureStartupBootstrap collects and persists required startup fields before TUI launch.
+func ensureStartupBootstrap(configPath string, cfg config.Config, defaults config.Config, dbPath string, dbOverridden bool, input io.Reader, output io.Writer) (config.Config, error) {
+	if strings.TrimSpace(cfg.Identity.DisplayName) != "" && len(cfg.Paths.SearchRoots) > 0 {
+		return cfg, nil
+	}
+	values, err := promptStartupBootstrapValues(input, output, cfg)
+	if err != nil {
+		return config.Config{}, err
+	}
+	actorType := strings.TrimSpace(cfg.Identity.DefaultActorType)
+	if actorType == "" {
+		actorType = "user"
+	}
+	if err := persistIdentity(configPath, values.DisplayName, actorType); err != nil {
+		return config.Config{}, fmt.Errorf("persist identity: %w", err)
+	}
+	if err := persistSearchRoots(configPath, values.SearchRoots); err != nil {
+		return config.Config{}, fmt.Errorf("persist search roots: %w", err)
+	}
+	reloaded, err := config.Load(configPath, defaults)
+	if err != nil {
+		return config.Config{}, fmt.Errorf("reload config %q: %w", configPath, err)
+	}
+	if dbOverridden {
+		reloaded.Database.Path = dbPath
+	}
+	return reloaded, nil
+}
+
+// promptStartupBootstrapValues runs interactive prompts for required startup fields.
+func promptStartupBootstrapValues(input io.Reader, output io.Writer, existing config.Config) (startupBootstrapValues, error) {
+	if input == nil {
+		return startupBootstrapValues{}, errors.New("bootstrap input is required")
+	}
+	if output == nil {
+		output = io.Discard
+	}
+
+	reader := bufio.NewReader(input)
+	_, _ = fmt.Fprintln(output, "kan setup required")
+	_, _ = fmt.Fprintln(output, "Please provide required identity and search root settings.")
+	displayName := strings.TrimSpace(existing.Identity.DisplayName)
+	if displayName == "" {
+		var err error
+		displayName, err = promptRequiredBootstrapValue(reader, output, "Display name: ", "display name is required")
+		if err != nil {
+			return startupBootstrapValues{}, err
+		}
+	}
+	searchRoots := append([]string(nil), existing.Paths.SearchRoots...)
+	if len(searchRoots) == 0 {
+		var err error
+		searchRoots, err = promptBootstrapSearchRoots(reader, output)
+		if err != nil {
+			return startupBootstrapValues{}, err
+		}
+	}
+	_, _ = fmt.Fprintln(output)
+	return startupBootstrapValues{
+		DisplayName: displayName,
+		SearchRoots: searchRoots,
+	}, nil
+}
+
+// promptRequiredBootstrapValue reads one non-empty prompt value.
+func promptRequiredBootstrapValue(reader *bufio.Reader, output io.Writer, prompt, emptyErr string) (string, error) {
+	for {
+		value, err := readBootstrapLine(reader, output, prompt)
+		if err != nil {
+			return "", err
+		}
+		if value != "" {
+			return value, nil
+		}
+		_, _ = fmt.Fprintln(output, emptyErr)
+	}
+}
+
+// promptBootstrapSearchRoots prompts for one-or-more valid root directory paths.
+func promptBootstrapSearchRoots(reader *bufio.Reader, output io.Writer) ([]string, error) {
+	roots := make([]string, 0, 1)
+	seen := map[string]struct{}{}
+	for {
+		rawRoot, err := promptRequiredBootstrapValue(reader, output, "Search root path: ", "search root path is required")
+		if err != nil {
+			return nil, err
+		}
+		root, err := normalizeBootstrapSearchRoot(rawRoot)
+		if err != nil {
+			_, _ = fmt.Fprintln(output, "invalid search root:", err)
+			continue
+		}
+		if _, ok := seen[root]; ok {
+			_, _ = fmt.Fprintln(output, "search root already added")
+			continue
+		}
+		seen[root] = struct{}{}
+		roots = append(roots, root)
+
+		more, err := promptBootstrapYesNo(reader, output, "Add another root? [y/N]: ", false)
+		if err != nil {
+			return nil, err
+		}
+		if !more {
+			break
+		}
+	}
+	return roots, nil
+}
+
+// promptBootstrapYesNo reads a y/n answer with a configurable default.
+func promptBootstrapYesNo(reader *bufio.Reader, output io.Writer, prompt string, defaultYes bool) (bool, error) {
+	for {
+		value, err := readBootstrapLine(reader, output, prompt)
+		if err != nil {
+			return false, err
+		}
+		switch strings.ToLower(strings.TrimSpace(value)) {
+		case "":
+			return defaultYes, nil
+		case "y", "yes":
+			return true, nil
+		case "n", "no":
+			return false, nil
+		default:
+			_, _ = fmt.Fprintln(output, "please answer y or n")
+		}
+	}
+}
+
+// readBootstrapLine renders one prompt and returns the trimmed response.
+func readBootstrapLine(reader *bufio.Reader, output io.Writer, prompt string) (string, error) {
+	if _, err := fmt.Fprint(output, prompt); err != nil {
+		return "", fmt.Errorf("write prompt: %w", err)
+	}
+	line, err := reader.ReadString('\n')
+	switch {
+	case err == nil:
+		return strings.TrimSpace(line), nil
+	case errors.Is(err, io.EOF):
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			return "", io.EOF
+		}
+		return trimmed, nil
+	default:
+		return "", fmt.Errorf("read prompt value: %w", err)
+	}
+}
+
+// normalizeBootstrapSearchRoot validates one input path and canonicalizes it.
+func normalizeBootstrapSearchRoot(raw string) (string, error) {
+	root := strings.TrimSpace(raw)
+	if root == "" {
+		return "", errors.New("search root path is required")
+	}
+	if absRoot, err := filepath.Abs(root); err == nil {
+		root = absRoot
+	}
+	info, err := os.Stat(root)
+	if err != nil {
+		return "", fmt.Errorf("path not found: %w", err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("path must be a directory")
+	}
+	return filepath.Clean(root), nil
+}
+
 // parseBoolEnv parses input into a normalized form.
 func parseBoolEnv(name string) (bool, bool) {
 	raw := strings.TrimSpace(os.Getenv(name))
@@ -354,6 +543,7 @@ func toTUIRuntimeConfig(cfg config.Config) tui.RuntimeConfig {
 			IncludeArchived: cfg.Search.IncludeArchived,
 			States:          append([]string(nil), cfg.Search.States...),
 		},
+		SearchRoots: cloneSearchRoots(cfg.Paths.SearchRoots),
 		Confirm: tui.ConfirmConfig{
 			Delete:     cfg.Confirm.Delete,
 			Archive:    cfg.Confirm.Archive,
@@ -382,6 +572,10 @@ func toTUIRuntimeConfig(cfg config.Config) tui.RuntimeConfig {
 			Undo:           cfg.Keys.Undo,
 			Redo:           cfg.Keys.Redo,
 		},
+		Identity: tui.IdentityConfig{
+			DisplayName:      cfg.Identity.DisplayName,
+			DefaultActorType: cfg.Identity.DefaultActorType,
+		},
 	}
 }
 
@@ -389,6 +583,22 @@ func toTUIRuntimeConfig(cfg config.Config) tui.RuntimeConfig {
 func persistProjectRoot(configPath, projectSlug, rootPath string) error {
 	if err := config.UpsertProjectRoot(configPath, projectSlug, rootPath); err != nil {
 		return fmt.Errorf("persist project root: %w", err)
+	}
+	return nil
+}
+
+// persistIdentity updates identity defaults in the TOML config file.
+func persistIdentity(configPath, displayName, defaultActorType string) error {
+	if err := config.UpsertIdentity(configPath, displayName, defaultActorType); err != nil {
+		return fmt.Errorf("persist identity config: %w", err)
+	}
+	return nil
+}
+
+// persistSearchRoots updates global search roots in the TOML config file.
+func persistSearchRoots(configPath string, searchRoots []string) error {
+	if err := config.UpsertSearchRoots(configPath, searchRoots); err != nil {
+		return fmt.Errorf("persist search roots config: %w", err)
 	}
 	return nil
 }
@@ -419,11 +629,18 @@ func cloneProjectRoots(in map[string]string) map[string]string {
 	return out
 }
 
+// cloneSearchRoots deep-copies global search-root paths.
+func cloneSearchRoots(in []string) []string {
+	return append([]string(nil), in...)
+}
+
 // runtimeLogger fans log events to a styled console sink and an optional dev-file sink.
 type runtimeLogger struct {
-	sinks     []*charmLog.Logger
-	closeFile func() error
-	devLog    string
+	sinks          []*charmLog.Logger
+	consoleSink    *charmLog.Logger
+	consoleEnabled bool
+	closeFile      func() error
+	devLog         string
 }
 
 // newRuntimeLogger configures runtime log sinks from CLI/config state.
@@ -449,7 +666,9 @@ func newRuntimeLogger(stderr io.Writer, appName string, devMode bool, cfg config
 	})
 
 	logger := &runtimeLogger{
-		sinks: []*charmLog.Logger{consoleLogger},
+		sinks:          []*charmLog.Logger{consoleLogger},
+		consoleSink:    consoleLogger,
+		consoleEnabled: true,
 	}
 	if !devMode || !cfg.DevFile.Enabled {
 		return logger, nil
@@ -497,12 +716,37 @@ func (l *runtimeLogger) Close() error {
 	return l.closeFile()
 }
 
+// SetConsoleEnabled toggles whether the console sink receives runtime events.
+func (l *runtimeLogger) SetConsoleEnabled(enabled bool) {
+	if l == nil {
+		return
+	}
+	l.consoleEnabled = enabled
+}
+
+// shouldLogToSink reports whether one sink should receive runtime output.
+func (l *runtimeLogger) shouldLogToSink(sink *charmLog.Logger) bool {
+	if l == nil {
+		return false
+	}
+	if sink == nil {
+		return false
+	}
+	if sink == l.consoleSink && !l.consoleEnabled {
+		return false
+	}
+	return true
+}
+
 // Debug logs a debug event to all configured sinks.
 func (l *runtimeLogger) Debug(msg string, keyvals ...any) {
 	if l == nil {
 		return
 	}
 	for _, sink := range l.sinks {
+		if !l.shouldLogToSink(sink) {
+			continue
+		}
 		sink.Debug(msg, keyvals...)
 	}
 }
@@ -513,6 +757,9 @@ func (l *runtimeLogger) Info(msg string, keyvals ...any) {
 		return
 	}
 	for _, sink := range l.sinks {
+		if !l.shouldLogToSink(sink) {
+			continue
+		}
 		sink.Info(msg, keyvals...)
 	}
 }
@@ -523,6 +770,9 @@ func (l *runtimeLogger) Warn(msg string, keyvals ...any) {
 		return
 	}
 	for _, sink := range l.sinks {
+		if !l.shouldLogToSink(sink) {
+			continue
+		}
 		sink.Warn(msg, keyvals...)
 	}
 }
@@ -533,6 +783,9 @@ func (l *runtimeLogger) Error(msg string, keyvals ...any) {
 		return
 	}
 	for _, sink := range l.sinks {
+		if !l.shouldLogToSink(sink) {
+			continue
+		}
 		sink.Error(msg, keyvals...)
 	}
 }

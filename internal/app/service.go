@@ -203,6 +203,23 @@ type UpdateTaskInput struct {
 	UpdatedType domain.ActorType
 }
 
+// CreateCommentInput holds input values for create comment operations.
+type CreateCommentInput struct {
+	ProjectID    string
+	TargetType   domain.CommentTargetType
+	TargetID     string
+	BodyMarkdown string
+	ActorType    domain.ActorType
+	AuthorName   string
+}
+
+// ListCommentsByTargetInput holds input values for list comment operations.
+type ListCommentsByTargetInput struct {
+	ProjectID  string
+	TargetType domain.CommentTargetType
+	TargetID   string
+}
+
 // SearchTasksFilter defines filtering criteria for queries.
 type SearchTasksFilter struct {
 	ProjectID       string
@@ -440,6 +457,58 @@ func (s *Service) ListTasks(ctx context.Context, projectID string, includeArchiv
 		return strings.Compare(a.ColumnID, b.ColumnID)
 	})
 	return tasks, nil
+}
+
+// CreateComment creates a comment for a concrete project target.
+func (s *Service) CreateComment(ctx context.Context, in CreateCommentInput) (domain.Comment, error) {
+	target, err := normalizeCommentTargetInput(in.ProjectID, in.TargetType, in.TargetID)
+	if err != nil {
+		return domain.Comment{}, err
+	}
+	body := strings.TrimSpace(in.BodyMarkdown)
+	if body == "" {
+		return domain.Comment{}, domain.ErrInvalidBodyMarkdown
+	}
+
+	comment, err := domain.NewComment(domain.CommentInput{
+		ID:           s.idGen(),
+		ProjectID:    target.ProjectID,
+		TargetType:   target.TargetType,
+		TargetID:     target.TargetID,
+		BodyMarkdown: body,
+		ActorType:    normalizeActorTypeInput(in.ActorType),
+		AuthorName:   strings.TrimSpace(in.AuthorName),
+	}, s.clock())
+	if err != nil {
+		return domain.Comment{}, err
+	}
+	if err := s.repo.CreateComment(ctx, comment); err != nil {
+		return domain.Comment{}, err
+	}
+	return comment, nil
+}
+
+// ListCommentsByTarget lists comments for a specific target in deterministic order.
+func (s *Service) ListCommentsByTarget(ctx context.Context, in ListCommentsByTargetInput) ([]domain.Comment, error) {
+	target, err := normalizeCommentTargetInput(in.ProjectID, in.TargetType, in.TargetID)
+	if err != nil {
+		return nil, err
+	}
+	comments, err := s.repo.ListCommentsByTarget(ctx, target)
+	if err != nil {
+		return nil, err
+	}
+	slices.SortFunc(comments, func(a, b domain.Comment) int {
+		switch {
+		case a.CreatedAt.Before(b.CreatedAt):
+			return -1
+		case a.CreatedAt.After(b.CreatedAt):
+			return 1
+		default:
+			return strings.Compare(a.ID, b.ID)
+		}
+	})
+	return comments, nil
 }
 
 // ListProjectChangeEvents lists recent change events for a project.
@@ -783,6 +852,24 @@ func lifecycleStateForColumnID(columns []domain.Column, columnID string) domain.
 		}
 	}
 	return ""
+}
+
+// normalizeCommentTargetInput canonicalizes and validates comment target fields.
+func normalizeCommentTargetInput(projectID string, targetType domain.CommentTargetType, targetID string) (domain.CommentTarget, error) {
+	return domain.NormalizeCommentTarget(domain.CommentTarget{
+		ProjectID:  projectID,
+		TargetType: targetType,
+		TargetID:   targetID,
+	})
+}
+
+// normalizeActorTypeInput canonicalizes actor-type input and applies a default.
+func normalizeActorTypeInput(actorType domain.ActorType) domain.ActorType {
+	actorType = domain.ActorType(strings.TrimSpace(strings.ToLower(string(actorType))))
+	if actorType == "" {
+		return domain.ActorTypeUser
+	}
+	return actorType
 }
 
 // createDefaultColumns creates default columns.

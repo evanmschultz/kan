@@ -1,0 +1,44 @@
+package tui
+
+import (
+	"strings"
+
+	"github.com/charmbracelet/glamour"
+)
+
+// markdownRenderer renders markdown for terminal views and recreates the renderer when wrap width changes.
+type markdownRenderer struct {
+	width    int
+	renderer *glamour.TermRenderer
+}
+
+// render converts markdown input into ANSI-styled terminal text with the requested wrap width.
+func (r *markdownRenderer) render(markdown string, width int) string {
+	markdown = strings.TrimSpace(markdown)
+	if markdown == "" {
+		return ""
+	}
+
+	wrapWidth := width
+	if wrapWidth < 24 {
+		wrapWidth = 24
+	}
+
+	if r.renderer == nil || r.width != wrapWidth {
+		renderer, err := glamour.NewTermRenderer(
+			glamour.WithStandardStyle("dark"),
+			glamour.WithWordWrap(wrapWidth),
+		)
+		if err != nil {
+			return markdown
+		}
+		r.renderer = renderer
+		r.width = wrapWidth
+	}
+
+	rendered, err := r.renderer.Render(markdown)
+	if err != nil {
+		return markdown
+	}
+	return strings.TrimRight(rendered, "\n")
+}
