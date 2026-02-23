@@ -194,8 +194,8 @@ func TestRunBootstrapModalPersistsMissingFields(t *testing.T) {
 	if got := cfg.Identity.DisplayName; got != "Lane User" {
 		t.Fatalf("expected persisted display name Lane User, got %q", got)
 	}
-	if got := cfg.Identity.DefaultActorType; got != "agent" {
-		t.Fatalf("expected persisted actor type agent, got %q", got)
+	if got := cfg.Identity.DefaultActorType; got != "user" {
+		t.Fatalf("expected persisted actor type user, got %q", got)
 	}
 	if len(cfg.Paths.SearchRoots) != 1 || cfg.Paths.SearchRoots[0] != filepath.Clean(workspace) {
 		t.Fatalf("expected persisted search root %q, got %#v", filepath.Clean(workspace), cfg.Paths.SearchRoots)

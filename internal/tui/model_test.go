@@ -2048,7 +2048,7 @@ func TestModelStartupBootstrapPrecedesLaunchPicker(t *testing.T) {
 	if saveCalls != 1 {
 		t.Fatalf("expected one bootstrap save call, got %d", saveCalls)
 	}
-	if saved.DisplayName != "Lane User" || saved.DefaultActorType != "agent" {
+	if saved.DisplayName != "Lane User" || saved.DefaultActorType != "user" {
 		t.Fatalf("unexpected saved bootstrap config %#v", saved)
 	}
 	if ready.mode != modeProjectPicker {
@@ -3548,13 +3548,13 @@ func TestResourcePickerHelpers(t *testing.T) {
 		t.Fatalf("expected directories sorted before files, got %#v", entries)
 	}
 
-	// Outside paths should clamp back to root.
+	// Outside paths should be honored so callers can navigate to parent directories.
 	_, current, err = listResourcePickerEntries(projectDir, root)
 	if err != nil {
-		t.Fatalf("listResourcePickerEntries clamp: %v", err)
+		t.Fatalf("listResourcePickerEntries outside root: %v", err)
 	}
-	if current != projectDir {
-		t.Fatalf("expected clamped current dir %q, got %q", projectDir, current)
+	if current != root {
+		t.Fatalf("expected outside current dir %q, got %q", root, current)
 	}
 }
 
@@ -3761,6 +3761,19 @@ func TestResourcePickerEntrySelectionAndParent(t *testing.T) {
 	}
 	if loaded.current != root {
 		t.Fatalf("expected parent load to clamp at root %q, got %q", root, loaded.current)
+	}
+
+	m.resourcePickerDir = root
+	msg = m.openResourcePickerParent()()
+	loaded, ok = msg.(resourcePickerLoadedMsg)
+	if !ok {
+		t.Fatalf("expected resourcePickerLoadedMsg from root-parent nav, got %T", msg)
+	}
+	if loaded.err != nil {
+		t.Fatalf("expected root-parent directory load success, got %v", loaded.err)
+	}
+	if loaded.current != filepath.Dir(root) {
+		t.Fatalf("expected root parent %q, got %q", filepath.Dir(root), loaded.current)
 	}
 }
 

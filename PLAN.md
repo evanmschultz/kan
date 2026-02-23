@@ -2483,3 +2483,45 @@ Single-branch parallel execution is now bootstrapped. This section is the source
         - created `TUI_MANUAL_TEST_WORKSHEET_DELTA_BOOTSTRAP_THREADS.md` for post-change targeted manual validation.
     - status:
         - complete for this ordered wave; ready for user manual delta pass.
+- [x] 2026-02-23: First-run actor scope correction + resource-picker parent navigation UX fix
+    - objective:
+        - fix two pre-manual-test launch issues requested by user:
+            1) keep startup onboarding actor as human (`user`) while preserving `agent|system` ownership support elsewhere,
+            2) make `ctrl+r` browse/path-picker flows show current directory path and allow traversal to higher directories.
+    - Context7 evidence (required):
+        - pre-edit consult:
+            - `resolve-library-id` `charmbracelet/bubbletea` -> pass (`/charmbracelet/bubbletea`)
+            - `query-docs` `/charmbracelet/bubbletea` (key-routing/update handler patterns for modal/input coexistence) -> pass
+        - failure-triggered re-consult:
+            - `resolve-library-id` `Go standard library filepath` -> pass (`/websites/pkg_go_dev_go1_25_3`)
+            - `query-docs` `/websites/pkg_go_dev_go1_25_3` (parent navigation/path semantics context) -> pass
+    - files updated:
+        - `internal/tui/model.go`
+        - `internal/tui/options.go`
+        - `internal/tui/model_test.go`
+        - `cmd/kan/main.go`
+        - `cmd/kan/main_test.go`
+    - implementation notes:
+        - actor handling:
+            - restored full actor support (`user|agent|system`) for runtime identity/ownership attribution.
+            - mandatory startup bootstrap now always persists `default_actor_type = user`.
+            - startup modal keeps actor row visible but locks actor mutation during mandatory onboarding.
+        - resource picker/path UX:
+            - removed root-bound clamping in `listResourcePickerEntries`; picker can navigate to higher parent directories.
+            - picker modal now renders absolute `current:` directory path in header (shared by all path-picker backflows).
+            - on directory loads, default selection skips `..` when present to avoid accidental parent selection.
+            - for root-selection flows (`add/edit project`, `paths/roots`, `bootstrap settings`), `a` now chooses the current open directory explicitly.
+    - failure/remediation log:
+        - `just test-pkg ./cmd/kan` -> fail
+            - `TestRunBootstrapModalPersistsMissingFields` expected selected root, got parent directory after introducing `..` row.
+            - remediation: root-selection `a` behavior changed to choose current directory.
+        - `just test-pkg ./internal/tui` -> fail
+            - `TestModelBootstrapSettingsCommandPaletteRootsEditing` parent directory selected unexpectedly.
+            - `TestModelResourcePickerAttachFromTaskInfoAndEdit` attached `local_dir` due shifted default index with `..` row.
+            - remediation: skip default selection over `..` and adjust root-selection attach behavior.
+    - verification log:
+        - `just test-pkg ./cmd/kan` -> pass
+        - `just test-pkg ./internal/tui` -> pass
+        - `just ci` -> pass
+    - status:
+        - complete; ready for user manual verification pass.

@@ -671,6 +671,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.resourcePickerDir = msg.current
 		m.resourcePickerItems = msg.entries
 		m.resourcePickerIndex = 0
+		if len(m.resourcePickerItems) > 1 && m.resourcePickerItems[0].Name == ".." {
+			m.resourcePickerIndex = 1
+		}
 		return m, nil
 
 	case actionMsg:
@@ -1344,7 +1347,11 @@ func (m *Model) startBootstrapSettingsMode(mandatory bool) tea.Cmd {
 	m.bootstrapMandatory = mandatory
 	m.bootstrapDisplayInput.SetValue(strings.TrimSpace(m.identityDisplayName))
 	m.bootstrapDisplayInput.CursorEnd()
-	m.bootstrapActorIndex = bootstrapActorTypeIndex(m.identityDefaultActorType)
+	if mandatory {
+		m.bootstrapActorIndex = bootstrapActorTypeIndex(string(domain.ActorTypeUser))
+	} else {
+		m.bootstrapActorIndex = bootstrapActorTypeIndex(m.identityDefaultActorType)
+	}
 	m.bootstrapRoots = append([]string(nil), normalizeSearchRoots(m.searchRoots)...)
 	m.bootstrapRootIndex = clamp(m.bootstrapRootIndex, 0, len(m.bootstrapRoots)-1)
 	m.status = "bootstrap settings"
@@ -1424,9 +1431,13 @@ func (m Model) submitBootstrapSettings() (tea.Model, tea.Cmd) {
 		m.status = "save bootstrap failed: callback unavailable"
 		return m, nil
 	}
+	actorType := m.bootstrapActorType()
+	if m.bootstrapMandatory {
+		actorType = string(domain.ActorTypeUser)
+	}
 	cfg := BootstrapConfig{
 		DisplayName:      displayName,
-		DefaultActorType: m.bootstrapActorType(),
+		DefaultActorType: actorType,
 		SearchRoots:      roots,
 	}
 	m.status = "saving bootstrap settings..."
@@ -3166,6 +3177,28 @@ func (m *Model) attachSelectedResourceEntry() tea.Cmd {
 			IsDir: true,
 		}
 	}
+	return m.attachResourcePickerEntry(entry)
+}
+
+// attachCurrentResourcePickerDir attaches the currently open picker directory.
+func (m *Model) attachCurrentResourcePickerDir() tea.Cmd {
+	current := strings.TrimSpace(m.resourcePickerDir)
+	if current == "" {
+		current = strings.TrimSpace(m.resourcePickerRoot)
+	}
+	if current == "" {
+		current = "."
+	}
+	entry := resourcePickerEntry{
+		Name:  filepath.Base(current),
+		Path:  current,
+		IsDir: true,
+	}
+	return m.attachResourcePickerEntry(entry)
+}
+
+// attachResourcePickerEntry applies one picker entry for the current picker back-flow.
+func (m *Model) attachResourcePickerEntry(entry resourcePickerEntry) tea.Cmd {
 	back := m.resourcePickerBack
 	m.mode = back
 	m.resourcePickerFilter.Blur()
@@ -3400,37 +3433,27 @@ func normalizeConfigLabels(values []string) []string {
 	return out
 }
 
-// listResourcePickerEntries loads picker entries and keeps the current directory within root bounds.
+// listResourcePickerEntries loads picker entries using root as the default start directory.
 func listResourcePickerEntries(root, dir string) ([]resourcePickerEntry, string, error) {
 	root = strings.TrimSpace(root)
 	if root == "" {
 		root = "."
 	}
-	rootAbs, err := filepath.Abs(root)
-	if err != nil {
-		return nil, "", err
-	}
 	dirAbs := strings.TrimSpace(dir)
 	if dirAbs == "" {
-		dirAbs = rootAbs
+		dirAbs = root
 	}
-	dirAbs, err = filepath.Abs(dirAbs)
+	dirAbs, err := filepath.Abs(dirAbs)
 	if err != nil {
 		return nil, "", err
-	}
-	if rel, relErr := filepath.Rel(rootAbs, dirAbs); relErr != nil || strings.HasPrefix(rel, "..") {
-		dirAbs = rootAbs
 	}
 	items, err := os.ReadDir(dirAbs)
 	if err != nil {
 		return nil, "", err
 	}
 	entries := make([]resourcePickerEntry, 0, len(items)+1)
-	if dirAbs != rootAbs {
-		parent := filepath.Dir(dirAbs)
-		if rel, relErr := filepath.Rel(rootAbs, parent); relErr != nil || strings.HasPrefix(rel, "..") {
-			parent = rootAbs
-		}
+	parent := filepath.Dir(dirAbs)
+	if parent != "." && parent != "" && parent != dirAbs {
 		entries = append(entries, resourcePickerEntry{
 			Name:  "..",
 			Path:  parent,
@@ -4141,10 +4164,10 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			return m, m.focusBootstrapField(wrapIndex(m.bootstrapFocus, -1, 4))
-		case (msg.String() == "h" || msg.String() == "left") && m.bootstrapFocus == 1:
+		case (msg.String() == "h" || msg.String() == "left") && m.bootstrapFocus == 1 && !m.bootstrapMandatory:
 			m.cycleBootstrapActor(-1)
 			return m, nil
-		case (msg.String() == "l" || msg.String() == "right") && m.bootstrapFocus == 1:
+		case (msg.String() == "l" || msg.String() == "right") && m.bootstrapFocus == 1 && !m.bootstrapMandatory:
 			m.cycleBootstrapActor(1)
 			return m, nil
 		case msg.String() == "ctrl+r" && m.bootstrapFocus == 2:
@@ -4165,6 +4188,9 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case msg.Code == tea.KeyEnter || msg.String() == "enter":
 			switch m.bootstrapFocus {
 			case 1:
+				if m.bootstrapMandatory {
+					return m, m.focusBootstrapField(2)
+				}
 				m.cycleBootstrapActor(1)
 				return m, nil
 			case 2:
@@ -4538,6 +4564,9 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, m.openResourcePickerDir(entry.Path)
 		case "a":
+			if m.resourcePickerBack == modeAddProject || m.resourcePickerBack == modeEditProject || m.resourcePickerBack == modePathsRoots || m.resourcePickerBack == modeBootstrapSettings {
+				return m, m.attachCurrentResourcePickerDir()
+			}
 			return m, m.attachSelectedResourceEntry()
 		case "enter":
 			entry, ok := m.selectedResourcePickerEntry()
@@ -7345,6 +7374,9 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 			actorLabel.Render("default actor:") + " " + strings.Join(actorParts, "  "),
 			rootsLabel.Render(fmt.Sprintf("global search roots (%d):", len(m.bootstrapRoots))),
 		}
+		if m.bootstrapMandatory {
+			lines = append(lines, hintStyle.Render("startup onboarding locks default actor to user"))
+		}
 		if len(m.bootstrapRoots) == 0 {
 			lines = append(lines, hintStyle.Render("(none yet)"))
 		} else {
@@ -7367,7 +7399,11 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 			}
 		}
 		lines = append(lines, saveLabel.Render("[ save settings ]"))
-		lines = append(lines, hintStyle.Render("tab focus • j/k move • h/l actor • a or ctrl+r browse + add root • d remove root • enter save"))
+		if m.bootstrapMandatory {
+			lines = append(lines, hintStyle.Render("tab focus • j/k move • a or ctrl+r browse + add root • d remove root • enter save"))
+		} else {
+			lines = append(lines, hintStyle.Render("tab focus • j/k move • h/l actor • a or ctrl+r browse + add root • d remove root • enter save"))
+		}
 		if m.bootstrapMandatory {
 			lines = append(lines, hintStyle.Render("esc disabled until required settings are saved"))
 		} else {
@@ -7389,9 +7425,8 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		if currentPath == "" {
 			currentPath = m.resourcePickerRoot
 		}
-		displayPath := "."
-		if rel, err := filepath.Rel(m.resourcePickerRoot, currentPath); err == nil {
-			displayPath = filepath.ToSlash(rel)
+		if absPath, err := filepath.Abs(currentPath); err == nil {
+			currentPath = absPath
 		}
 		title := "Attach Resource"
 		if m.resourcePickerBack == modeAddProject || m.resourcePickerBack == modeEditProject || m.resourcePickerBack == modePathsRoots {
@@ -7405,7 +7440,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		lines := []string{
 			titleStyle.Render(title),
 			hintStyle.Render("root: " + truncate(m.resourcePickerRoot, 72)),
-			hintStyle.Render("path: " + displayPath),
+			hintStyle.Render("current: " + truncate(currentPath, 72)),
 			hintStyle.Render("filter: ") + filterInput.View(),
 		}
 		items := m.visibleResourcePickerItems()
