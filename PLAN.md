@@ -2066,3 +2066,15 @@ Single-branch parallel execution is now bootstrapped. This section is the source
     - `just ci` -> pass
   - status:
     - in progress (code + worksheet updated; awaiting full user worksheet pass to close re-opened pre-Phase-11 remediation item).
+- [x] 2026-02-23: Focused multi-select marker polish (star-only indicator)
+  - objective:
+    - remove non-focused multi-select row background highlight so star markers are the only multi-select indicator.
+  - files updated:
+    - `internal/tui/model.go`
+  - implementation notes:
+    - changed non-focused multi-select style from filled background to no additional styling.
+    - focused/selected behavior remains unchanged (`│*` marker + focused highlight color).
+  - commands/tests:
+    - `just test-pkg ./internal/tui` -> initial run blocked by sandbox cache permission.
+    - reran with approval outside sandbox:
+      - `just test-pkg ./internal/tui` -> pass.

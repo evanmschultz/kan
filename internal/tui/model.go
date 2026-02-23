@@ -767,7 +767,8 @@ func (m Model) View() tea.View {
 	highlight := m.selectedTaskHighlightColor()
 	selectedTaskStyle := lipgloss.NewStyle().Foreground(highlight).Bold(true)
 	selectedMultiTaskStyle := lipgloss.NewStyle().Foreground(highlight).Bold(true).Underline(true)
-	multiSelectedTaskStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Background(lipgloss.Color("237")).Bold(true)
+	// Multi-select should be indicated by marker stars only; avoid extra row background fill.
+	multiSelectedTaskStyle := lipgloss.NewStyle()
 	itemSubStyle := lipgloss.NewStyle().Foreground(muted)
 	groupStyle := lipgloss.NewStyle().Bold(true).Foreground(muted)
 	warningStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("203"))
