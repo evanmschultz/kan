@@ -46,6 +46,16 @@ states = ["todo", "progress", "done"]
 due_soon_windows = ["24h", "1h"]
 show_due_summary = true
 
+[logging]
+# debug | info | warn | error | fatal
+level = "info"
+
+[logging.dev_file]
+# When true in --dev mode, runtime logs are also written to a local file sink.
+enabled = true
+# Relative paths are resolved from the current workspace directory.
+dir = ".kan/log"
+
 [project_roots]
 # Machine-local root mappings by project slug. Keep these in TOML so DB exports stay portable.
 # Example:

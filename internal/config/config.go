@@ -20,6 +20,8 @@ type DeleteMode string
 const (
 	DeleteModeArchive DeleteMode = "archive"
 	DeleteModeHard    DeleteMode = "hard"
+	defaultLogLevel              = "info"
+	defaultDevLogDir             = ".kan/log"
 )
 
 // Config holds package configuration.
@@ -31,6 +33,7 @@ type Config struct {
 	Board        BoardConfig       `toml:"board"`
 	Search       SearchConfig      `toml:"search"`
 	UI           UIConfig          `toml:"ui"`
+	Logging      LoggingConfig     `toml:"logging"`
 	ProjectRoots map[string]string `toml:"project_roots"`
 	Labels       LabelConfig       `toml:"labels"`
 	Keys         KeyConfig         `toml:"keys"`
@@ -79,6 +82,18 @@ type SearchConfig struct {
 type UIConfig struct {
 	DueSoonWindows []string `toml:"due_soon_windows"`
 	ShowDueSummary bool     `toml:"show_due_summary"`
+}
+
+// LoggingConfig holds runtime logging configuration.
+type LoggingConfig struct {
+	Level   string               `toml:"level"`
+	DevFile LoggingDevFileConfig `toml:"dev_file"`
+}
+
+// LoggingDevFileConfig holds development local-file logging controls.
+type LoggingDevFileConfig struct {
+	Enabled bool   `toml:"enabled"`
+	Dir     string `toml:"dir"`
 }
 
 // LabelConfig holds label suggestion and enforcement configuration.
@@ -132,6 +147,13 @@ func Default(dbPath string) Config {
 			DueSoonWindows: []string{"24h", "1h"},
 			ShowDueSummary: true,
 		},
+		Logging: LoggingConfig{
+			Level: defaultLogLevel,
+			DevFile: LoggingDevFileConfig{
+				Enabled: true,
+				Dir:     defaultDevLogDir,
+			},
+		},
 		ProjectRoots: map[string]string{},
 		Labels: LabelConfig{
 			Global:         []string{},
@@ -152,6 +174,7 @@ func Default(dbPath string) Config {
 // Load loads required data for the current operation.
 func Load(path string, defaults Config) (Config, error) {
 	cfg := defaults
+	defaultDBPath := strings.TrimSpace(defaults.Database.Path)
 	if strings.TrimSpace(path) == "" {
 		return cfg, nil
 	}
@@ -169,6 +192,11 @@ func Load(path string, defaults Config) (Config, error) {
 
 	if err := toml.Unmarshal(content, &cfg); err != nil {
 		return Config{}, fmt.Errorf("decode toml: %w", err)
+	}
+	// A blank database.path in TOML means "use resolved default path", not
+	// "erase the DB path and fail validation".
+	if strings.TrimSpace(cfg.Database.Path) == "" {
+		cfg.Database.Path = defaultDBPath
 	}
 	cfg.normalize()
 
@@ -216,6 +244,19 @@ func (c *Config) Validate() error {
 		if d <= 0 {
 			return fmt.Errorf("ui.due_soon_windows[%d] must be > 0", i)
 		}
+	}
+	c.Logging.Level = strings.TrimSpace(strings.ToLower(c.Logging.Level))
+	if c.Logging.Level == "" {
+		c.Logging.Level = defaultLogLevel
+	}
+	switch c.Logging.Level {
+	case "debug", "info", "warn", "error", "fatal":
+	default:
+		return fmt.Errorf("invalid logging.level: %q", c.Logging.Level)
+	}
+	c.Logging.DevFile.Dir = strings.TrimSpace(c.Logging.DevFile.Dir)
+	if c.Logging.DevFile.Dir == "" {
+		c.Logging.DevFile.Dir = defaultDevLogDir
 	}
 	for key, rootPath := range c.ProjectRoots {
 		if strings.TrimSpace(key) == "" {
@@ -327,6 +368,14 @@ func (c *Config) normalize() {
 		windows = []string{"24h", "1h"}
 	}
 	c.UI.DueSoonWindows = windows
+	c.Logging.Level = strings.TrimSpace(strings.ToLower(c.Logging.Level))
+	if c.Logging.Level == "" {
+		c.Logging.Level = defaultLogLevel
+	}
+	c.Logging.DevFile.Dir = strings.TrimSpace(c.Logging.DevFile.Dir)
+	if c.Logging.DevFile.Dir == "" {
+		c.Logging.DevFile.Dir = defaultDevLogDir
+	}
 
 	roots := make(map[string]string, len(c.ProjectRoots))
 	for rawKey, rawPath := range c.ProjectRoots {
@@ -384,6 +433,199 @@ func EnsureConfigDir(path string) error {
 		return nil
 	}
 	return os.MkdirAll(dir, 0o755)
+}
+
+// UpsertProjectRoot writes one project_roots mapping update to the config file.
+func UpsertProjectRoot(path, projectSlug, rootPath string) error {
+	configPath := strings.TrimSpace(path)
+	if configPath == "" {
+		return errors.New("config path is required")
+	}
+	slug := strings.TrimSpace(strings.ToLower(projectSlug))
+	if slug == "" {
+		return errors.New("project slug is required")
+	}
+	rootPath = strings.TrimSpace(rootPath)
+
+	raw := map[string]any{}
+	missing := false
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("read config: %w", err)
+		}
+		missing = true
+	} else if len(content) > 0 {
+		if err := toml.Unmarshal(content, &raw); err != nil {
+			return fmt.Errorf("decode toml: %w", err)
+		}
+	}
+	if missing && rootPath == "" {
+		return nil
+	}
+
+	roots := map[string]any{}
+	if tableValue, ok := raw["project_roots"]; ok {
+		table, ok := tableValue.(map[string]any)
+		if !ok {
+			return errors.New("project_roots must be a table")
+		}
+		for rawKey, rawValue := range table {
+			key := strings.TrimSpace(strings.ToLower(rawKey))
+			if key == "" {
+				continue
+			}
+			pathValue, ok := rawValue.(string)
+			if !ok {
+				return fmt.Errorf("project_roots.%s must be a string", rawKey)
+			}
+			pathValue = strings.TrimSpace(pathValue)
+			if pathValue == "" {
+				continue
+			}
+			roots[key] = pathValue
+		}
+	}
+
+	if rootPath == "" {
+		delete(roots, slug)
+	} else {
+		roots[slug] = rootPath
+	}
+	if len(roots) == 0 {
+		delete(raw, "project_roots")
+	} else {
+		raw["project_roots"] = roots
+	}
+
+	encoded, err := toml.Marshal(raw)
+	if err != nil {
+		return fmt.Errorf("encode toml: %w", err)
+	}
+	if err := EnsureConfigDir(configPath); err != nil {
+		return fmt.Errorf("ensure config dir: %w", err)
+	}
+	if err := os.WriteFile(configPath, encoded, 0o644); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+	return nil
+}
+
+// UpsertAllowedLabels writes global + one per-project label list update to the config file.
+func UpsertAllowedLabels(path, projectSlug string, globalLabels, projectLabels []string) error {
+	configPath := strings.TrimSpace(path)
+	if configPath == "" {
+		return errors.New("config path is required")
+	}
+	slug := strings.TrimSpace(strings.ToLower(projectSlug))
+	if slug == "" {
+		return errors.New("project slug is required")
+	}
+	globalLabels = normalizeLabelConfigList(globalLabels)
+	projectLabels = normalizeLabelConfigList(projectLabels)
+
+	raw := map[string]any{}
+	missing := false
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("read config: %w", err)
+		}
+		missing = true
+	} else if len(content) > 0 {
+		if err := toml.Unmarshal(content, &raw); err != nil {
+			return fmt.Errorf("decode toml: %w", err)
+		}
+	}
+	if missing && len(globalLabels) == 0 && len(projectLabels) == 0 {
+		return nil
+	}
+
+	labels := map[string]any{}
+	if labelsRaw, ok := raw["labels"]; ok {
+		table, ok := labelsRaw.(map[string]any)
+		if !ok {
+			return errors.New("labels must be a table")
+		}
+		for k, v := range table {
+			labels[k] = v
+		}
+	}
+
+	projects := map[string]any{}
+	if projectsRaw, ok := labels["projects"]; ok {
+		table, ok := projectsRaw.(map[string]any)
+		if !ok {
+			return errors.New("labels.projects must be a table")
+		}
+		for rawKey, rawValue := range table {
+			key := strings.TrimSpace(strings.ToLower(rawKey))
+			if key == "" {
+				continue
+			}
+			list, err := decodeStringList(rawValue, "labels.projects."+rawKey)
+			if err != nil {
+				return err
+			}
+			if len(list) == 0 {
+				continue
+			}
+			projects[key] = list
+		}
+	}
+
+	if len(globalLabels) == 0 {
+		delete(labels, "global")
+	} else {
+		labels["global"] = append([]string(nil), globalLabels...)
+	}
+	if len(projectLabels) == 0 {
+		delete(projects, slug)
+	} else {
+		projects[slug] = append([]string(nil), projectLabels...)
+	}
+	if len(projects) == 0 {
+		delete(labels, "projects")
+	} else {
+		labels["projects"] = projects
+	}
+	if len(labels) == 0 {
+		delete(raw, "labels")
+	} else {
+		raw["labels"] = labels
+	}
+
+	encoded, err := toml.Marshal(raw)
+	if err != nil {
+		return fmt.Errorf("encode toml: %w", err)
+	}
+	if err := EnsureConfigDir(configPath); err != nil {
+		return fmt.Errorf("ensure config dir: %w", err)
+	}
+	if err := os.WriteFile(configPath, encoded, 0o644); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+	return nil
+}
+
+// decodeStringList coerces TOML list values into normalized string slices.
+func decodeStringList(value any, field string) ([]string, error) {
+	switch list := value.(type) {
+	case []string:
+		return normalizeLabelConfigList(list), nil
+	case []any:
+		out := make([]string, 0, len(list))
+		for idx, raw := range list {
+			text, ok := raw.(string)
+			if !ok {
+				return nil, fmt.Errorf("%s[%d] must be a string", field, idx)
+			}
+			out = append(out, text)
+		}
+		return normalizeLabelConfigList(out), nil
+	default:
+		return nil, fmt.Errorf("%s must be an array of strings", field)
+	}
 }
 
 // isKnownLifecycleState reports whether the requested condition is satisfied.

@@ -2,6 +2,8 @@
 
 A local-first Kanban TUI built with Bubble Tea v2, Bubbles v2, and Lip Gloss v2.
 
+`kan` is designed as a better human-visible planning and verification surface than ad-hoc markdown checklists. The primary direction is human + coding-agent collaboration with explicit state, auditability, and clear completion gates, while still remaining useful as a standalone personal TUI task manager.
+
 Current scope:
 - local tracking and planning workflows (human-operated TUI).
 - local runtime diagnostics with styled logging and dev-mode local log files.
@@ -14,6 +16,11 @@ Current scope:
 - Archive-first delete flow with configurable defaults.
 - JSON snapshot import/export.
 - Configurable task field visibility.
+
+## Human-Agent Workflow (Current + Roadmap Direction)
+- **Today (pre-Phase 11):** use `kan` as the canonical local planning/verification source while collaborating with an agent in terminal/chat.
+- **Current best practice:** keep manual QA notes in `TUI_MANUAL_TEST_WORKSHEET.md` with sectioned anchors so findings are precise and replayable.
+- **Roadmap (Phase 11+):** expose the same project/branch/phase/task state through MCP/HTTP so agents can consume authoritative updates instead of fragile markdown-only status files.
 
 ## Run
 ```bash
@@ -55,7 +62,9 @@ Path resolution controls:
 - `--app` / `KAN_APP_NAME` to namespace paths (default `kan`)
 - `--dev` / `KAN_DEV_MODE` to use `<app>-dev` path roots
 - `kan paths` prints the resolved config/data/db paths for the current environment
-- dev mode logging is expected to write under workspace-local `.kan/log/` for troubleshooting
+- dev mode logging writes to workspace-local `.kan/log/` when `logging.dev_file.enabled = true`
+  - relative dev log dirs are anchored to the nearest workspace root marker (`go.mod` or `.git`)
+- logging level is controlled by TOML `logging.level` (`debug|info|warn|error|fatal`)
 
 Example:
 ```toml
@@ -75,16 +84,17 @@ show_description = false
 show_wip_warnings = true
 group_by = "none" # none | priority | state
 
-[[board.states]]
-id = "todo"
-name = "To Do"
-wip_limit = 0
-position = 0
-
 [search]
 cross_project = false
 include_archived = false
 states = ["todo", "progress", "done"] # plus optional "archived"
+
+[logging]
+level = "info"
+
+[logging.dev_file]
+enabled = true
+dir = ".kan/log"
 ```
 
 Full template: `config.example.toml`
@@ -113,6 +123,13 @@ just fmt
 just test-pkg ./internal/app
 just test
 just ci
+```
+
+VHS visual regression captures:
+```bash
+just vhs
+just vhs vhs/regression_subtasks.tape
+just vhs vhs/regression_scroll.tape
 ```
 
 Golden tests:

@@ -1,668 +1,619 @@
-# Kan TUI Manual Test Worksheet (Pre-Phase 11)
+# Kan TUI Manual Test Worksheet (Pre-Phase 11 Closeout Retest)
 
-Use this worksheet to run end-to-end manual verification of all implemented non-MCP features.
-Fill in each response block as you go.
+Use this worksheet for a fresh end-to-end validation pass of all pre-Phase-11 behavior.
+Run against a clean DB. Capture screenshots/GIFs for any failures.
 
-## 0) Test Setup
+## 0) Setup
 
-1. Run with an isolated DB so results are deterministic:
-    - `KAN_DB_PATH=/tmp/kan-manual-test.db just run`
-2. Keep terminal at least `140x45` if possible.
-3. Keep this worksheet open side-by-side and record notes/screenshots.
-
-### Setup Response
-
-- DB path used:
-- Terminal size:
-- Start timestamp:
-- End timestamp:
-
----
-
-## 1) Startup + Baseline Navigation
-
-### 1.1 App starts and board renders
+### 0.1 Environment bootstrap
 
 Actions:
 
-1. Start app.
-2. Verify header, columns, summary/info, and bottom help line render.
+1. Start with a clean DB path.
+2. Run the app in a terminal at least 140x45.
+3. If no projects exist, confirm first-run immediately opens project creation flow.
+
+Commands:
+
+```bash
+rm -f /tmp/kan-manual-test.db
+KAN_DB_PATH=/tmp/kan-manual-test.db just run
+```
 
 Expected:
 
-- No startup error.
-- Board appears with `To Do`, `In Progress`, `Done`.
+- App launches without migration/runtime error.
+- Board + status + bottom help render.
+- Empty DB does not auto-create a default project; `New Project` flow is shown.
 
-Response:
+### USER NOTES S0.1-N1
 
 - Pass/Fail:
+- Evidence:
 - Notes:
 
 ---
 
-pass
-
-### 1.2 Keyboard navigation
+### 0.2 Artifact/log sanity
 
 Actions:
 
-1. Press `h/l` and arrow keys left/right for columns.
-2. Press `j/k` and arrow keys up/down for task selection.
+1. Quit app.
+2. Verify local runtime artifact locations.
+
+Commands:
+
+```bash
+git status --short
+ls -la .kan 2>/dev/null || true
+ls -la cmd/kan/.kan 2>/dev/null || true
+```
 
 Expected:
 
-- Selection moves correctly with both vim and arrows.
+- Runtime logs are under repo-root `.kan/log/`.
+- No `cmd/kan/.kan` runtime artifact directory is created.
+- Generated artifacts remain gitignored.
 
-Response:
+### USER NOTES S0.2-N1
 
 - Pass/Fail:
+- Evidence:
 - Notes:
 
 ---
 
-pass
+## 1) Board UX and Navigation
 
-## 2) Project Management
-
-### 2.1 Create project
+### 1.1 Column and cursor navigation
 
 Actions:
 
-1. Press `N`.
-2. Fill project fields and save.
+1. Move columns with `h/l` and left/right arrows.
+2. Move rows with `j/k` and up/down arrows.
 
 Expected:
 
-- New project created and available in picker.
+- Focus changes correctly with vim keys and arrows.
+- No erratic cursor jumps.
 
-Response:
-
-- Pass/Fail:
-- Notes:
-
-what is the icon text? I am not seeing it rendered, also, there is no "edit" project functionality. I also don't see a local path to the project. remember, we need to be able to put a local path the locally saved project and have a way for that to be turned into a relative path as needed when exported and shared. but there is no path logic to a dir. let's discuss fixes and options for this. explain the csv tags thing!
-
-### 2.2 Edit project
-
-Actions:
-
-1. Switch to created project.
-2. Press `M`, update metadata, save.
-
-Expected:
-
-- Project details update correctly.
-
-Response:
+### USER NOTES S1.1-N1
 
 - Pass/Fail:
-- Notes:
-
-now I see there is a way to edit a project, this needs to be more clear and evident, though I may have just been silly so who knows, let's discuss. it does work after knowing how to use it.
-
-### 2.3 Project picker
-
-Actions:
-
-1. Press `p`/`P`.
-2. Navigate and select project.
-
-Expected:
-
-- Picker works with keyboard and selection updates board.
-
-Response:
-
-- Pass/Fail:
+- Evidence:
 - Notes:
 
 ---
 
-this works, but want to know why "Inbox" is the default "project" also, do we really need to note that p and capital P open the picker? that takes space, and seems to lock off the option for different keys later. I don't mind reserving all "p's" for project picker, just want to discuss pros and cons of making the space taken to show both. I am leaning towards showing and keeping both, but let's discuss
+### 1.2 Long-list viewport follow
 
-## 3) Task Create/Edit + Due + Labels
+Precondition:
 
-### 3.1 Create task
+- Have 15+ tasks in one column.
+
+Actions:
+
+1. Hold `j` to move selection beyond visible rows.
+2. Add new tasks until list exceeds viewport.
+3. Move back with `k`.
+
+Expected:
+
+- Column viewport stays bounded; board height does not grow.
+- Focused row stays visible while scrolling.
+- Newly created task becomes focused after create and remains visible.
+
+### USER NOTES S1.2-N1
+
+- Pass/Fail:
+- Evidence:
+- Notes:
+
+---
+
+### 1.3 Row marker semantics and styling
+
+Actions:
+
+1. Select a task with `space`.
+2. Keep cursor on that same row.
+3. Move focus to another selected row.
+
+Expected:
+
+- Focused row uses fuchsia highlight.
+- Focused+selected row keeps selection cue (does not lose selected style).
+- Selection styling is distinct from plain focus.
+
+### USER NOTES S1.3-N1
+
+- Pass/Fail:
+- Evidence:
+- Notes:
+
+---
+
+## 2) Task Create/Edit Modal UX
+
+### 2.1 Add task modal centered overlay
 
 Actions:
 
 1. Press `n`.
-2. Fill title, description, priority, due date/time, labels.
-3. Save.
+2. Verify centered overlay behavior.
+3. In labels field, use `ctrl+l` and `ctrl+y` suggestion acceptance.
+4. Use `ctrl+d` due picker.
+5. Use `ctrl+r` to stage resource refs.
+6. Fill dependency fields (`depends_on`, `blocked_by`, `blocked_reason`).
 
 Expected:
 
-- Task appears in selected column.
+- Modal is centered and does not push board layout.
+- Tab order is deterministic.
+- Label suggestion and picker are usable.
+- Resource attach from create flow works.
+- Dependency values are accepted in add flow.
 
-Response:
+### USER NOTES S2.1-N1
 
 - Pass/Fail:
+- Evidence:
 - Notes:
 
-the task edit and create needs to show the expected date time format and a way to add time, we apparently don't have the time like we discussed in the plan.md file! explain the inherit labels. also, the helpful hints like hit ctrl + d for picker are obscured by the global stuff below it, it isn't obvious or intuitive. we need to fix that. ask me for a screen cap
+---
 
-### 3.2 Edit task
+### 2.2 Edit task modal behavior
+
+Actions:
+
+1. Select task and press `e`.
+2. Validate prefilled values (title/description/priority/due/labels/dependencies/resources).
+3. Update fields and save.
+
+Expected:
+
+- Existing values load correctly.
+- No stale/duplicated field values.
+- Save persists updates including dependency and resource metadata edits.
+
+### USER NOTES S2.2-N1
+
+- Pass/Fail:
+- Evidence:
+- Notes:
+
+---
+
+### 2.3 Priority and due behavior
+
+Actions:
+
+1. Cycle priority with `h/l` in priority field.
+2. Enter due date only (`YYYY-MM-DD`).
+3. Enter due datetime (`YYYY-MM-DD HH:MM` and `YYYY-MM-DDTHH:MM`).
+4. Enter past due datetime.
+
+Expected:
+
+- Priority picker remains keyboard-friendly.
+- Date and datetime inputs are accepted.
+- Past due warning appears before save.
+- Due warnings surface in board/task-info context after save.
+
+### USER NOTES S2.3-N1
+
+- Pass/Fail:
+- Evidence:
+- Notes:
+
+---
+
+## 3) Task Info + Subtask Drill Flow
+
+### 3.1 Open info from list
 
 Actions:
 
 1. Select task.
-2. Press `e`.
-3. Modify fields and save.
+2. Press `i`.
+3. Close and repeat with `enter`.
 
 Expected:
 
-- Updated fields persist.
+- Both `i` and `enter` open task info.
+- Modal remains centered.
+- Task-info hints include edit, dependency edit, resource attach, subtask, and move shortcuts.
 
-Response:
-
-- Pass/Fail:
-- Notes:
-
-I love the attach resource, but this needs to be a part of task creation as well, also, there needs to be a full ability to nav because resources could be outside the project. also, what is attached there? the file as it is or a pointer? I want it to be a pointer. also, the path nav stuff should be based on the project path info if given, not where the cli was launched because this is meant to possibly work with multiple projects at once, although, we could discuss the implications of that and maybe it is better to limit it to the dir it is called in. let's think and discuss. you will need to ask many clarifying questions and what not for this. make sure to ask me about the grand idea, for instance, I think of this as being a global tool, where we eventually may put boundaries on mcp calls, but the dev keeps it running in one window and can manage multiple projects with the agents through the mcp. but it could be a project by project local thing. but we also need to be set up to handle bare repos and worktrees and other common dev workflows, particularly workflows with agents, but also solo devs and so on. so research online and discuss with me and ask questions and so on and so forth!
-
-### 3.3 Due datetime warnings
-
-Actions:
-
-1. Edit task due to a past datetime.
-2. Observe warning.
-3. Set valid future datetime and save.
-
-Expected:
-
-- Past-due warning shown before save.
-- Future datetime accepted.
-
-Response:
+### USER NOTES S3.1-N1
 
 - Pass/Fail:
+- Evidence:
 - Notes:
 
 ---
 
-pass
+### 3.2 Subtask visibility and completion model
 
-## 4) Task Info + Resource Picker
+Precondition:
 
-### 4.1 Info modal
+- Parent task with subtasks.
 
 Actions:
 
-1. Select task.
-2. Press `i` and then `enter` (separately).
+1. Observe parent row on board.
+2. Open parent task info.
+3. Use `enter` on a subtask to drill in.
+4. Use `[` / `]` in task-info to move subtask state.
 
 Expected:
 
-- Both open task info modal.
+- Board row hides inline subtasks and shows compact progress (`done/total`).
+- Task info shows subtasks list.
+- Subtasks can be progressed/completed from task-info context.
+- Parent move to `done` is blocked while any subtask remains incomplete.
 
-Response:
+### USER NOTES S3.2-N1
 
 - Pass/Fail:
+- Evidence:
 - Notes:
 
 ---
 
-pass
-
-### 4.2 Resource attach flow
+### 3.3 Subtask drill-in and step-back consistency
 
 Actions:
 
-1. In task info modal press `r` (or from edit mode use `ctrl+r`).
-2. Navigate filesystem entries.
-3. Attach file and attach directory.
+1. In task info, use `j/k` to highlight subtask.
+2. Press `enter` to open subtask detail.
+3. Press `backspace` to parent.
+4. Press `esc` repeatedly to step back then close.
 
 Expected:
 
-- Resource picker opens centered.
-- Selected resource is attached to task metadata and reflected in info display.
+- Drill-in works.
+- `backspace` and `esc` behave as one-step-back navigation.
+- Subtasks remain visible/accessible regardless of parent column/state.
 
-Response:
+### USER NOTES S3.3-N1
 
 - Pass/Fail:
+- Evidence:
 - Notes:
 
 ---
 
-I tried this but didn't see any resources attached. my bad, I did'nt see you needed to press 'a' not enter. enter should work or through a warning, it looked like it would have been attached by pressing enter again. also, see above about path and stuff!
+## 4) Resource Attachment UX
 
-## 5) Label Inheritance + Label Picker
-
-### 5.1 Inherited label display
+### 4.1 Attach resource from task info
 
 Actions:
 
-1. Create/use a phase parent task with labels.
-2. Create a child task under that phase.
-3. Open child task info.
+1. Open task info.
+2. Press `r`.
+3. Use picker filter typing and `ctrl+u` clear.
+4. Attach file and directory entries.
 
 Expected:
 
-- Inherited label sources display with global/project/phase context.
+- Picker opens centered.
+- Filter narrows entries.
+- Attach behavior is explicit and predictable.
+- Attached refs appear in task info.
 
-Response:
+### USER NOTES S4.1-N1
 
 - Pass/Fail:
+- Evidence:
 - Notes:
 
 ---
 
-see above
-
-### 5.2 Label picker in task form
+### 4.2 Attach resource from create/edit task forms
 
 Actions:
 
-1. Edit/create task and focus labels field.
-2. Press `ctrl+l`.
-3. Select inherited label.
+1. Open add-task (`n`) and edit-task (`e`) modals.
+2. Use `ctrl+r` in each modal.
+3. Stage resources and save.
 
 Expected:
 
-- Label picker opens centered.
-- Selected label appends without duplicates.
+- Attach flow works from add and edit modals.
+- Staged refs persist after save.
 
-Response:
+### USER NOTES S4.2-N1
 
 - Pass/Fail:
+- Evidence:
 - Notes:
 
 ---
 
-see above
+## 5) Search + Command Palette
 
-## 6) Search Modal + Filtering
-
-### 6.1 Search focus order and controls
+### 5.1 Search modal ergonomics
 
 Actions:
 
 1. Press `/`.
-2. Tab through: query -> states -> scope -> archived -> apply.
-3. Toggle state selections.
+2. Tab across query/state/scope/archive controls.
+3. Apply filters and inspect results.
 
 Expected:
 
-- Focus order is correct.
-- No duplicate labels/fields.
+- Focus order is deterministic.
+- Search results update correctly.
+- Clear query vs reset filters remain distinct.
 
-Response:
+### USER NOTES S5.1-N1
 
 - Pass/Fail:
+- Evidence:
 - Notes:
 
 ---
 
-needs fuzzy finder filtering that displays so the user gets immediate feedback
-
-### 6.2 Clear query vs reset filters
-
-Actions:
-
-1. Apply search with non-default query/filters.
-2. Use clear-query command.
-3. Use reset-filters command.
-
-Expected:
-
-- Clear query clears text only.
-- Reset returns query/states/scope/archived to defaults.
-
-Response:
-
-- Pass/Fail:
-- Notes:
-
----
-
-works, but see above about fuzzy finder and that stuff, let's discuss
-
-## 7) Command Palette + Quick Actions
-
-### 7.1 Command palette behavior
+### 5.2 Command palette filtering and execution
 
 Actions:
 
 1. Press `:`.
-2. Type partial command terms.
-3. Use `tab` autocomplete and `enter` execute.
+2. Try fuzzy/abbrev queries (for example `ns` for `new-subtask`).
+3. Execute `search-all` and `search-project` from palette.
+4. Scroll through palette list beyond first page.
 
 Expected:
 
-- Live filtering works.
-- Enter runs highlighted command.
+- Fuzzy command ranking behaves predictably.
+- Enter executes highlighted command.
+- `search-all` and `search-project` open search mode with correct scope.
+- Windowed scrolling keeps highlighted command visible.
 
-Response:
+### USER NOTES S5.2-N1
 
 - Pass/Fail:
+- Evidence:
 - Notes:
 
 ---
 
-it filters which is good, but doesn't use fuzzy finding stuff so we can do ns for new-subtask and so on. we want it to be fuzzy finding. this goes for the file search too, we need to add file search for resource attachment as well. and we need errors for if someone puts in a path, say by strictly typing and the file doesn't exist.
-
-### 7.2 Quick actions
+### 5.3 Quick actions menu state-awareness
 
 Actions:
 
-1. Press `.`.
-2. Run several actions (edit/info/move/archive).
+1. Press `.` with no multi-selection.
+2. Observe enabled vs disabled actions.
+3. Select tasks with `space` and reopen quick actions.
+4. Execute bulk actions.
 
 Expected:
 
-- Quick actions execute on selected task.
+- State-irrelevant actions appear disabled with reason.
+- Enabled actions sort first.
+- Disabled actions cannot execute.
+- Bulk actions become available when selection exists.
 
-Response:
+### USER NOTES S5.3-N1
 
 - Pass/Fail:
+- Evidence:
 - Notes:
 
 ---
 
-this works, but we should find a way to simplify the menu and have a filter commands by fuzzy finding them!
+## 6) Multi-Select + Bulk Operations
 
-## 8) Multi-Select + Bulk Actions
-
-### 8.1 Select/unselect
+### 6.1 Selection controls
 
 Actions:
 
-1. Select multiple tasks using `space`.
-2. Unselect one.
-3. Clear selection via `esc`.
+1. Toggle select on multiple tasks with `space`.
+2. Clear selection with `esc`.
 
 Expected:
 
-- Selection count/indicators update correctly.
+- Selected set updates predictably.
+- Selection indicators stay clear and stable.
 
-Response:
+### USER NOTES S6.1-N1
 
 - Pass/Fail:
+- Evidence:
 - Notes:
 
 ---
 
-appears to work
-
-### 8.2 Bulk operations
+### 6.2 Bulk move/archive/delete
 
 Actions:
 
-1. Multi-select tasks.
-2. Execute bulk move left/right.
-3. Execute bulk archive/delete via palette/quick actions.
+1. Select 2+ tasks.
+2. Run bulk move left/right (`[`/`]` with selection).
+3. Run bulk archive/delete and confirm.
 
 Expected:
 
-- All selected tasks update consistently.
+- Bulk actions apply to selected set.
+- Confirm modal appears for destructive operations.
+- Non-applicable actions are blocked with clear status.
 
-Response:
+### USER NOTES S6.2-N1
 
 - Pass/Fail:
+- Evidence:
 - Notes:
 
 ---
 
-pressing 't' says it is showing archived, but archived isn't on the screen and the screen viewport didn't update in any way other than saying showing archived. i imagine we would need a modal or some other way of showing the list of archived for that project. bulk select move right by using '[' doesn't work, it just moves the one that the cursor is focused on. also, the \* style of showing it is selected is ugly, let's change the color to the charmbracelet pink if it is selected by using space bar. actually, it seems that bulk actions just don't work, also, the quick action menu '.' needs to conditionally limit what is available if multiple items are selected, for instance, you can't edit multiple at once, but you can move or archive. we need logical bulk actions!
+## 7) Undo/Redo + Activity Log
 
-## 9) Undo/Redo + Activity Log
-
-### 9.1 Undo/redo
+### 7.1 Undo/redo
 
 Actions:
 
-1. Perform mutating actions (single + bulk).
-2. Press `z` undo.
-3. Press `Z` redo.
+1. Perform several mutating actions.
+2. Press `z` for undo.
+3. Press `Z` for redo.
 
 Expected:
 
-- Reversible actions undo/redo correctly.
-- Non-undoable action shows clear status message.
+- Undo/redo sequence is deterministic.
+- User-facing status is clear for non-undoable cases.
 
-Response:
+### USER NOTES S7.1-N1
 
 - Pass/Fail:
+- Evidence:
 - Notes:
 
 ---
 
-works and make sense
-
-### 9.2 Activity log modal
+### 7.2 Activity log modal
 
 Actions:
 
 1. Press `g`.
-2. Review event list and timestamps.
-3. Close with `esc`.
+2. Review persisted recent entries.
 
 Expected:
 
-- Activity log opens centered and shows recent events.
+- Modal opens centered.
+- Entries are readable and ordered.
 
-Response:
+### USER NOTES S7.2-N1
 
 - Pass/Fail:
+- Evidence:
 - Notes:
 
 ---
 
-this should allow for moving back to old states or whatever, but remember, not just show the log, this should allow interaction and control. but remember this will eventually be used with an agent llm through an mcp and we will be updating the agent about any changes that happen, so the state log will need to track all actions even going back to a previous state through this menu and through z or Z. and the mcp will need to keep the agent aware of that anytime the agent makes a call, or whatever good methodology we should determine. this will be slightly determined by the use and clarifying questions above, so keep that in mind and we will discuss!
+## 8) Project Management + Paths + Labels Config
 
-## 10) Subtree Projection + Breadcrumb
-
-### 10.1 Focus subtree
+### 8.1 Create/edit project
 
 Actions:
 
-1. Select parent task.
-2. Press `f` to focus subtree.
-3. Navigate board.
+1. Press `N` create project.
+2. Set metadata fields including `color` and `root_path`.
+3. Save and confirm selected project/task list refresh behavior.
+4. Press `M` to edit and resave.
 
 Expected:
 
-- Only root + descendants are shown.
-- Breadcrumb/focus context visible.
+- Create/edit both work.
+- New project selection refresh is immediate (no stale prior-project tasks).
+- Accent color changes are visible in project-scoped styling.
+- Root path is editable in form.
 
-Response:
+### USER NOTES S8.1-N1
 
 - Pass/Fail:
+- Evidence:
 - Notes:
 
 ---
 
-i think this is user error, but I haven't seen how to. also, this focuses, but it doesn't logically change the screen where we would see the subtasks and all of that nested stuff. I think we really need to plan how this nesting should work and how it would look, so ascii art examples would be good, but also asking clarifying questions so you know what I have in mind and we can better plan would be good. but the state should change. right now, it just changes the view to only show one task, and doesn't change the view in a way that seems to appreciably allow for subtasks, also, task creation and edit should allow for markable subtask things. think about other task management systems like taskwarror, trello, clickup, and so on. we don't need full feature parity, but want similarity in func for stuff like this and need nesting and subtasks, but also nesting with phases that could be at the same level as tasks. we need to plan this out much better and you need to consider how other projects like this work and discuss with me what we are doing different keeping in mind that this will largely be beneficial with coding agents, but also devs or anyone wanting a tui task manager, but we need to plan out this important and base level functionality. how will it work, how will it look, and why, and so on!
-
-### 10.2 Clear subtree focus
+### 8.2 Project picker behavior
 
 Actions:
 
-1. Press `F`.
+1. Press `p`/`P`.
+2. Switch across projects.
 
 Expected:
 
-- Full board is restored.
+- Picker opens correctly.
+- Selection applies and board reloads for selected project.
 
-Response:
+### USER NOTES S8.2-N1
 
 - Pass/Fail:
+- Evidence:
 - Notes:
 
 ---
 
-## 11) Dependency + Rollup Visualization
-
-### 11.1 Project rollup line
+### 8.3 Project root mapping + labels config workflows
 
 Actions:
 
-1. Ensure tasks have dependency metadata.
-2. Observe board summary/overview.
+1. Open paths/roots flow from command palette (`paths-roots`).
+2. Use `ctrl+r` directory picker and filter; save valid root.
+3. Validate invalid path error handling.
+4. Open labels config (`labels-config`) and update global/project labels.
 
 Expected:
 
-- Dependency rollup summary appears and updates.
+- Root mapping accepts valid directories and blocks invalid paths with clear error.
+- Directory picker supports fuzzy filtering for easier selection.
+- Labels config saves and applies global/project defaults.
 
-Response:
+### USER NOTES S8.3-N1
 
 - Pass/Fail:
+- Evidence:
 - Notes:
 
 ---
 
-how do I even do this? how do I add it, how do I check it what? how does this change with the things we are discussing and deciding above?
+## 9) Help + Discoverability
 
-### 11.2 Task-level dependency hints
-
-Actions:
-
-1. Open task info modal for dependent/blocked task.
-
-Expected:
-
-- `depends_on`, `blocked_by`, and blocked reason hints render clearly.
-
-Response:
-
-- Pass/Fail:
-- Notes:
-
----
-
-explain how I do this and what it is for and how to control it and use it and how it changes with the above!
-
-## 12) Destructive Action Confirmations
-
-### 12.1 Confirm modals
-
-Actions:
-
-1. Trigger `d`, `a`, `D`, `u` actions on task(s).
-2. Validate confirm/cancel behavior.
-
-Expected:
-
-- Confirmation modal appears according to config.
-- Cancel does not mutate state.
-
-Response:
-
-- Pass/Fail:
-- Notes:
-
----
-
-'u' doesn't do anything!
-
-## 13) Grouping + WIP Warnings (Config-Driven)
-
-### 13.1 Group by priority
-
-Actions:
-
-1. Set `board.group_by = "priority"` in config.
-2. Restart and observe board.
-
-Expected:
-
-- Task grouping/ordering reflects priority grouping.
-
-Response:
-
-- Pass/Fail:
-- Notes:
-
----
-
-how do I do this and what is it supposed to do and why? also, we don't have hot reloading of config and stuff like that. we also don't have a tui way of updating the config!
-
-### 13.2 Group by state
-
-Actions:
-
-1. Set `board.group_by = "state"` and restart.
-
-Expected:
-
-- Grouping reflects lifecycle state.
-
-Response:
-
-- Pass/Fail:
-- Notes:
-  how do I do this and what is it supposed to do and why? also, we don't have hot reloading of config and stuff like that. we also don't have a tui way of updating the config!
-
-### 13.3 WIP warning
-
-Actions:
-
-1. Set a low WIP limit on a column.
-2. Move enough tasks into that column.
-
-Expected:
-
-- WIP warning appears when threshold exceeded.
-
-Response:
-
-- Pass/Fail:
-- Notes:
-
----
-
-how do I do this and what is it supposed to do and why? also, we don't have hot reloading of config and stuff like that. we also don't have a tui way of updating the config!
-
-## 14) Help Modal + Discoverability
-
-### 14.1 Help modal content
+### 9.1 Help overlay content
 
 Actions:
 
 1. Press `?`.
-2. Verify new commands are documented (`space`, `g`, `z`, `Z`, `f`, `F`, search semantics).
+2. Validate listed keys and workflows against runtime behavior.
 
 Expected:
 
-- Help content matches runtime behavior.
+- Help renders as centered overlay.
+- Key hints match actual behavior (including task-info/subtask/dependency/resource flows).
 
-Response:
+### USER NOTES S9.1-N1
 
 - Pass/Fail:
+- Evidence:
 - Notes:
 
 ---
 
-## 15) Final Regression Sweep
+## 10) Final Regression Sweep
 
-### 15.1 No regressions in core flow
+### 10.1 End-to-end core flow
 
 Actions:
 
-1. Create -> edit -> move -> archive -> restore -> search -> export/import (if desired).
+1. Create project and set root path.
+2. Create parent task and subtasks.
+3. Edit dependencies and labels defaults.
+4. Move tasks across columns and verify completion rules.
+5. Attach resources from create/edit/info flows.
+6. Use search, command palette, quick actions, and bulk operations.
+7. Use undo/redo and review activity log.
+8. Restart app and verify persistence.
 
 Expected:
 
-- No crashes, consistent status messages, and persisted state after restart.
+- No crashes.
+- No data loss.
+- Behavior matches sections above.
 
-Response:
+### USER NOTES S10.1-N1
 
 - Pass/Fail:
+- Evidence:
 - Notes:
-
-### 15.2 Screenshots / artifact references
-
-- Screenshot paths:
-- GIF/video paths:
-- Extra logs:
 
 ---
 
-## Final Sign-Off
+## Final Sign-off
 
 - Overall result: Pass / Pass with minor issues / Fail
-- Critical bugs found:
+- Critical bugs:
 - Non-critical UX issues:
-- Suggested follow-ups:
-- Tester name:
+- Suggested next priorities:
+- Tester:
 - Date:

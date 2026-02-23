@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -221,9 +222,12 @@ func TestCreateTaskMoveSearchAndDeleteModes(t *testing.T) {
 		t.Fatalf("unexpected moved task %#v", task)
 	}
 
-	search, err := svc.SearchTasks(context.Background(), project.ID, "parser", false)
+	search, err := svc.SearchTaskMatches(context.Background(), SearchTasksFilter{
+		ProjectID: project.ID,
+		Query:     "parser",
+	})
 	if err != nil {
-		t.Fatalf("SearchTasks() error = %v", err)
+		t.Fatalf("SearchTaskMatches() error = %v", err)
 	}
 	if len(search) != 1 {
 		t.Fatalf("expected 1 search result, got %d", len(search))
@@ -392,9 +396,12 @@ func TestListAndSortHelpers(t *testing.T) {
 		t.Fatalf("unexpected task order: %#v", tasks)
 	}
 
-	allWithEmptyQuery, err := svc.SearchTasks(context.Background(), p.ID, " ", false)
+	allWithEmptyQuery, err := svc.SearchTaskMatches(context.Background(), SearchTasksFilter{
+		ProjectID: p.ID,
+		Query:     " ",
+	})
 	if err != nil {
-		t.Fatalf("SearchTasks(empty) error = %v", err)
+		t.Fatalf("SearchTaskMatches(empty) error = %v", err)
 	}
 	if len(allWithEmptyQuery) != 3 {
 		t.Fatalf("expected 3 results for empty query, got %d", len(allWithEmptyQuery))
@@ -695,6 +702,49 @@ func TestMoveTaskAllowsDoneWhenContractsSatisfied(t *testing.T) {
 	}
 	if moved.CompletedAt == nil {
 		t.Fatal("expected completed_at to be set")
+	}
+}
+
+// TestMoveTaskBlocksDoneWhenAnySubtaskIncomplete verifies behavior for the covered scenario.
+func TestMoveTaskBlocksDoneWhenAnySubtaskIncomplete(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	repo.projects[project.ID] = project
+	progress, _ := domain.NewColumn("c2", project.ID, "In Progress", 1, 0, now)
+	done, _ := domain.NewColumn("c3", project.ID, "Done", 2, 0, now)
+	repo.columns[progress.ID] = progress
+	repo.columns[done.ID] = done
+
+	parent, _ := domain.NewTask(domain.TaskInput{
+		ID:             "t-parent",
+		ProjectID:      project.ID,
+		ColumnID:       progress.ID,
+		Position:       0,
+		Title:          "parent",
+		Priority:       domain.PriorityHigh,
+		LifecycleState: domain.StateProgress,
+	}, now)
+	child, _ := domain.NewTask(domain.TaskInput{
+		ID:             "t-child",
+		ProjectID:      project.ID,
+		ParentID:       parent.ID,
+		ColumnID:       progress.ID,
+		Position:       1,
+		Title:          "child",
+		Priority:       domain.PriorityLow,
+		LifecycleState: domain.StateProgress,
+	}, now)
+	repo.tasks[parent.ID] = parent
+	repo.tasks[child.ID] = child
+
+	svc := NewService(repo, nil, func() time.Time { return now.Add(time.Minute) }, ServiceConfig{})
+	_, err := svc.MoveTask(context.Background(), parent.ID, done.ID, 0)
+	if err == nil || !errors.Is(err, domain.ErrTransitionBlocked) {
+		t.Fatalf("expected ErrTransitionBlocked, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "subtasks must be done") {
+		t.Fatalf("expected incomplete subtask reason, got %v", err)
 	}
 }
 

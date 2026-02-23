@@ -7,3 +7,6 @@ bin/
 .artifacts/
 .tmp/
 .go-cache
+.go-mod-cache/
+.go-build-cache/
+.kan/

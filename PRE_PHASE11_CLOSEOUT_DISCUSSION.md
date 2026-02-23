@@ -1,6 +1,6 @@
 # Pre-Phase 11 Closeout Discussion
 
-Purpose: capture everything still missing, clarify decisions from your manual worksheet notes, and prep a final consensus pass before coding the remaining pre-Phase-11 work.
+Purpose: capture closeout decisions from your manual worksheet notes and preserve the locked pre-Phase-11 consensus baseline before Phase 11 begins.
 
 Date: 2026-02-22
 
@@ -52,29 +52,39 @@ Note:
 
 ## 1) Is `PLAN.md` Mostly Finished?
 
-Yes, mostly.
+Yes. Pre-Phase-11 execution scope is complete; remaining items in this file are either:
+- historical discussion capture from earlier closeout passes, or
+- explicit roadmap items for Phase 11+.
 
 Current assessment:
 
 - Implemented and verified:
   - Phase 3 core config/import-export/delete behavior
-  - most of Phase 5 UX expansion
-  - most of Phase 6 search/state/command-palette UX remediation
+  - Phase 5 UX expansion (including command palette, quick actions, multi-select, centered modals, help modal)
+  - Phase 6 search/state/command-palette remediations
   - major pre-Phase-11 foundations from Phases 7/8/10 (local-only, no MCP transport)
-- Not fully complete yet against pre-Phase-11 acceptance:
   - durable activity log UI backed by persisted `change_events`
-  - first-run onboarding flow
-  - UX/behavior issues from manual worksheet notes (detailed below)
+  - runtime `:reload-config` behavior and `paths/roots` edit modal
+  - pre-Phase-11 logging baseline (`github.com/charmbracelet/log` + dev file logs under `.kan/log/`)
+  - optional cleanup formerly listed in closeout (`SearchTasks` path removed)
+- Intentionally not required for pre-Phase-11 (locked):
+  - first-run onboarding is roadmap-only.
 
 Conclusion:
 
-- We are in "closeout and polish with several important functional fixes", not "start from scratch."
+- Pre-Phase-11 is in closeout-complete state; this document remains as the decision register for what was locked and why.
 
 ---
 
 ## 2) What Is Missing to Complete Pre-Phase 11
 
-This is the high-level closeout list before section-by-section detail.
+No remaining pre-Phase-11 blockers are open.
+
+This section is preserved as historical closeout context from earlier passes. Items listed below were discussion drivers and have since been either:
+- implemented and verified, or
+- explicitly moved to roadmap with locked scope boundaries.
+
+Authoritative execution status and command/test evidence are in `PLAN.md`.
 
 ### A. Product/UX behavior gaps
 
@@ -1501,3 +1511,54 @@ Resolved (2026-02-22):
   - ensure this MCP plan is suitable for internal dogfooding as part of the broader system roadmap.
 - Guidance:
   - existing schema and contract locks should largely support this, but the agent must review all current design artifacts and surface any new findings before 11.1+ coding.
+
+### 15.14 Re-opened Pre-Phase-11 Blockers (Live QA Override)
+
+Status (2026-02-22):
+- pre-Phase-11 is re-opened due to user-confirmed runtime UX regressions.
+- prior closeout claims remain historical, but are superseded by this blocker list until resolved and re-verified.
+
+Locked remediation set for this re-open:
+
+1. Board row/subtask rendering:
+- subtasks are hidden from board row listing.
+- board rows show only parent work item summary + compact subtask completion count (`x/y`) near metadata.
+- selected/focused marker applies only to focused row, not every row.
+
+2. Column viewport/scroll behavior:
+- board columns keep fixed height independent of task count.
+- cursor navigation and wheel scrolling must keep focused row inside visible viewport window.
+- no off-screen selection drift.
+
+3. Task info/subtask consistency:
+- subtask data must remain visible in info flow regardless of parent column/state.
+- task info modal should be the entry point for subtask exploration/editing (modal drill-in).
+
+4. Runtime artifact hygiene:
+- workspace/runtime artifacts are gitignored and deterministic:
+  - `.kan/`
+  - `.go-mod-cache/`
+- dev logs should not materialize under package directories during test execution.
+
+5. Verification/documentation refresh:
+- VHS scenarios must be expanded/updated to catch the above regressions.
+- manual worksheet must be reissued with machine-readable user note anchors:
+  - `### USER NOTES Sx.y-Nz`
+
+Execution note:
+- `PLAN.md` is the sole execution/worklog ledger for this remediation wave.
+- this closeout doc remains a decision register and blocker definition source.
+
+### 15.15 Product-Intent Clarification (Locked for Pre-Phase-11 docs)
+
+`kan` is not just a generic board UI; it is intended to be the human-readable, auditable coordination layer for developer + coding-agent workflows that currently degrade when managed with markdown-only checklists.
+
+Locked documentation implications:
+- pre-Phase-11 behavior and docs should already optimize for clear human↔agent handoff quality, even before MCP transport exists.
+- manual test communication should use stable anchored notes to reduce ambiguity and context loss.
+- roadmap language for MCP/HTTP should preserve this contract: authoritative state + explicit completion semantics + visible deltas, not free-form status prose.
+
+Operational doc lock:
+- `TUI_MANUAL_TEST_WORKSHEET.md` uses section anchors in the required form:
+  - `### USER NOTES Sx.y-Nz`
+  - this is now the preferred shorthand format for tester↔agent discussion during pre-Phase-11 closeout.

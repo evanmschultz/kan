@@ -2,8 +2,11 @@ package tui
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -16,11 +19,13 @@ import (
 
 // fakeService represents fake service data used by this package.
 type fakeService struct {
-	projects []domain.Project
-	columns  map[string][]domain.Column
-	tasks    map[string][]domain.Task
-	err      error
-	rollups  map[string]domain.DependencyRollup
+	projects        []domain.Project
+	columns         map[string][]domain.Column
+	tasks           map[string][]domain.Task
+	err             error
+	rollups         map[string]domain.DependencyRollup
+	changeEvents    map[string][]domain.ChangeEvent
+	changeEventsErr error
 }
 
 // newFakeService constructs fake service.
@@ -34,10 +39,11 @@ func newFakeService(projects []domain.Project, columns []domain.Column, tasks []
 		taskByProject[t.ProjectID] = append(taskByProject[t.ProjectID], t)
 	}
 	return &fakeService{
-		projects: projects,
-		columns:  colByProject,
-		tasks:    taskByProject,
-		rollups:  map[string]domain.DependencyRollup{},
+		projects:     projects,
+		columns:      colByProject,
+		tasks:        taskByProject,
+		rollups:      map[string]domain.DependencyRollup{},
+		changeEvents: map[string][]domain.ChangeEvent{},
 	}
 }
 
@@ -83,6 +89,18 @@ func (f *fakeService) ListTasks(_ context.Context, projectID string, includeArch
 	return out, nil
 }
 
+// ListProjectChangeEvents lists persisted activity entries.
+func (f *fakeService) ListProjectChangeEvents(_ context.Context, projectID string, limit int) ([]domain.ChangeEvent, error) {
+	if f.changeEventsErr != nil {
+		return nil, f.changeEventsErr
+	}
+	events := append([]domain.ChangeEvent(nil), f.changeEvents[projectID]...)
+	if limit > 0 && len(events) > limit {
+		events = events[:limit]
+	}
+	return events, nil
+}
+
 // GetProjectDependencyRollup returns project dependency rollup totals.
 func (f *fakeService) GetProjectDependencyRollup(_ context.Context, projectID string) (domain.DependencyRollup, error) {
 	if f.err != nil {
@@ -119,32 +137,6 @@ func (f *fakeService) GetProjectDependencyRollup(_ context.Context, projectID st
 		}
 	}
 	return rollup, nil
-}
-
-// SearchTasks handles search tasks.
-func (f *fakeService) SearchTasks(ctx context.Context, projectID, query string, includeArchived bool) ([]domain.Task, error) {
-	tasks, err := f.ListTasks(ctx, projectID, includeArchived)
-	if err != nil {
-		return nil, err
-	}
-	query = strings.ToLower(strings.TrimSpace(query))
-	if query == "" {
-		return tasks, nil
-	}
-	out := make([]domain.Task, 0)
-	for _, task := range tasks {
-		if strings.Contains(strings.ToLower(task.Title), query) || strings.Contains(strings.ToLower(task.Description), query) {
-			out = append(out, task)
-			continue
-		}
-		for _, label := range task.Labels {
-			if strings.Contains(strings.ToLower(label), query) {
-				out = append(out, task)
-				break
-			}
-		}
-	}
-	return out, nil
 }
 
 // SearchTaskMatches handles search task matches.
@@ -461,9 +453,9 @@ func TestModelQuickAddMoveArchiveRestoreDelete(t *testing.T) {
 	}
 
 	m = applyMsg(t, m, keyRune(']'))
-	if svc.tasks[p.ID][0].ColumnID != c2.ID {
-		// existing task is selected first and should move.
-		t.Fatalf("expected selected task to move to column %q", c2.ID)
+	moved, ok := svc.taskByID("t-new")
+	if !ok || moved.ColumnID != c2.ID {
+		t.Fatalf("expected created task to move to column %q, got %#v ok=%t", c2.ID, moved, ok)
 	}
 
 	m = applyMsg(t, m, keyRune('d'))
@@ -472,12 +464,14 @@ func TestModelQuickAddMoveArchiveRestoreDelete(t *testing.T) {
 	}
 	m.confirmChoice = 0
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
-	if svc.tasks[p.ID][0].ArchivedAt == nil {
-		t.Fatal("expected selected task archived")
+	archived, ok := svc.taskByID("t-new")
+	if !ok || archived.ArchivedAt == nil {
+		t.Fatalf("expected selected task archived, got %#v ok=%t", archived, ok)
 	}
 	m = applyMsg(t, m, keyRune('u'))
-	if svc.tasks[p.ID][0].ArchivedAt != nil {
-		t.Fatal("expected selected task restored")
+	restored, ok := svc.taskByID("t-new")
+	if !ok || restored.ArchivedAt != nil {
+		t.Fatalf("expected selected task restored, got %#v ok=%t", restored, ok)
 	}
 
 	m = applyMsg(t, m, keyRune('D'))
@@ -487,6 +481,36 @@ func TestModelQuickAddMoveArchiveRestoreDelete(t *testing.T) {
 	m = applyMsg(t, m, keyRune('y'))
 	if len(svc.tasks[p.ID]) != 1 {
 		t.Fatalf("expected hard delete to remove task, got %d tasks", len(svc.tasks[p.ID]))
+	}
+}
+
+// TestModelCreateTaskFocusesNewTask verifies that create-task reload focuses the created row.
+func TestModelCreateTaskFocusesNewTask(t *testing.T) {
+	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	existing, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Existing task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{existing})
+	m := loadReadyModel(t, NewModel(svc))
+
+	m = applyMsg(t, m, keyRune('n'))
+	for _, r := range []rune("New focus task") {
+		m = applyMsg(t, m, keyRune(r))
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	if task, ok := m.selectedTaskInCurrentColumn(); !ok || task.ID != "t-new" {
+		t.Fatalf("expected focus on created task t-new, got %#v ok=%t", task, ok)
+	}
+	if m.selectedTask != 1 {
+		t.Fatalf("expected selectedTask index to move to new row, got %d", m.selectedTask)
 	}
 }
 
@@ -594,7 +618,15 @@ func TestModelAddAndEditProject(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
-	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, nil)
+	existing, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-existing",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Existing task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{existing})
 	m := loadReadyModel(t, NewModel(svc))
 
 	m = applyMsg(t, m, keyRune('N'))
@@ -611,6 +643,18 @@ func TestModelAddAndEditProject(t *testing.T) {
 	}
 	if m.selectedProject != len(m.projects)-1 {
 		t.Fatalf("expected selection on new project, got %d", m.selectedProject)
+	}
+	selected := m.projects[m.selectedProject]
+	if selected.ID != "p-new" {
+		t.Fatalf("expected created project selected, got %q", selected.ID)
+	}
+	if len(m.tasks) != 0 {
+		t.Fatalf("expected fresh project task list, got %#v", m.tasks)
+	}
+	for _, column := range m.columns {
+		if column.ProjectID != selected.ID {
+			t.Fatalf("expected columns for project %q, got %#v", selected.ID, m.columns)
+		}
 	}
 
 	m = applyMsg(t, m, keyRune('M'))
@@ -655,9 +699,23 @@ func TestModelCommandPaletteAndQuickActions(t *testing.T) {
 	m = applyMsg(t, m, keyRune('l'))
 	m = applyMsg(t, m, keyRune('l'))
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeSearch {
+		t.Fatalf("expected search mode after search-all, got %v", m.mode)
+	}
 	if !m.searchCrossProject {
 		t.Fatal("expected search-all command to enable cross-project scope")
 	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+
+	updated, cmd := m.executeCommandPalette("search-project")
+	m = applyResult(t, updated, cmd)
+	if m.mode != modeSearch {
+		t.Fatalf("expected search mode after search-project, got %v", m.mode)
+	}
+	if m.searchCrossProject {
+		t.Fatal("expected search-project command to disable cross-project scope")
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
 
 	m = applyMsg(t, m, keyRune('.'))
 	if m.mode != modeQuickActions {
@@ -676,6 +734,447 @@ func TestModelCommandPaletteAndQuickActions(t *testing.T) {
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if !strings.Contains(m.status, "unknown command") {
 		t.Fatalf("expected unknown command status, got %q", m.status)
+	}
+}
+
+// TestModelCommandPaletteFuzzyAbbreviationExecutesNewSubtask verifies fuzzy abbreviations can target commands like new-subtask.
+func TestModelCommandPaletteFuzzyAbbreviationExecutesNewSubtask(t *testing.T) {
+	now := time.Date(2026, 2, 23, 9, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	parent, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-parent",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Parent",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{parent})
+	m := loadReadyModel(t, NewModel(svc))
+
+	m = applyMsg(t, m, keyRune(':'))
+	m = applyMsg(t, m, keyRune('n'))
+	m = applyMsg(t, m, keyRune('s'))
+	if len(m.commandMatches) == 0 {
+		t.Fatal("expected fuzzy command matches for abbreviation 'ns'")
+	}
+	if got := m.commandMatches[0].Command; got != "new-subtask" {
+		t.Fatalf("expected top fuzzy command match new-subtask, got %q", got)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeAddTask {
+		t.Fatalf("expected add-task mode after executing new-subtask, got %v", m.mode)
+	}
+	if got := m.taskFormKind; got != domain.WorkKindSubtask {
+		t.Fatalf("expected task form kind subtask, got %q", got)
+	}
+	if got := m.taskFormParentID; got != parent.ID {
+		t.Fatalf("expected subtask parent %q, got %q", parent.ID, got)
+	}
+}
+
+// TestModelLabelsConfigCommandSave verifies labels-config command flow updates runtime labels and calls persistence callback.
+func TestModelLabelsConfigCommandSave(t *testing.T) {
+	now := time.Date(2026, 2, 23, 9, 30, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, nil)
+
+	saveCalls := 0
+	var savedSlug string
+	var savedGlobal []string
+	var savedProject []string
+	m := loadReadyModel(t, NewModel(
+		svc,
+		WithLabelConfig(LabelConfig{
+			Global:   []string{"bug"},
+			Projects: map[string][]string{"inbox": {"kan"}},
+		}),
+		WithSaveLabelsConfigCallback(func(projectSlug string, globalLabels, projectLabels []string) error {
+			saveCalls++
+			savedSlug = projectSlug
+			savedGlobal = append([]string(nil), globalLabels...)
+			savedProject = append([]string(nil), projectLabels...)
+			return nil
+		}),
+	))
+
+	updated, cmd := m.executeCommandPalette("labels-config")
+	m = applyResult(t, updated, cmd)
+	if m.mode != modeLabelsConfig {
+		t.Fatalf("expected labels config mode, got %v", m.mode)
+	}
+	if got := m.labelsConfigSlug; got != "inbox" {
+		t.Fatalf("expected labels config slug inbox, got %q", got)
+	}
+
+	m.labelsConfigInputs[0].SetValue("Bug, chore, bug")
+	m.labelsConfigInputs[1].SetValue("Roadmap, kan, roadmap")
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	if saveCalls != 1 {
+		t.Fatalf("expected one labels save call, got %d", saveCalls)
+	}
+	if savedSlug != "inbox" {
+		t.Fatalf("expected labels save slug inbox, got %q", savedSlug)
+	}
+	wantGlobal := []string{"bug", "chore"}
+	if len(savedGlobal) != len(wantGlobal) {
+		t.Fatalf("unexpected saved global labels %#v", savedGlobal)
+	}
+	for i := range wantGlobal {
+		if savedGlobal[i] != wantGlobal[i] {
+			t.Fatalf("unexpected saved global label at %d: got %q want %q", i, savedGlobal[i], wantGlobal[i])
+		}
+	}
+	wantProject := []string{"roadmap", "kan"}
+	if len(savedProject) != len(wantProject) {
+		t.Fatalf("unexpected saved project labels %#v", savedProject)
+	}
+	for i := range wantProject {
+		if savedProject[i] != wantProject[i] {
+			t.Fatalf("unexpected saved project label at %d: got %q want %q", i, savedProject[i], wantProject[i])
+		}
+	}
+	if m.mode != modeNone {
+		t.Fatalf("expected modal closed after save, got %v", m.mode)
+	}
+	if !strings.Contains(m.status, "labels config saved") {
+		t.Fatalf("expected labels save status, got %q", m.status)
+	}
+	if len(m.allowedLabelGlobal) != len(wantGlobal) {
+		t.Fatalf("unexpected in-memory global labels %#v", m.allowedLabelGlobal)
+	}
+	for i := range wantGlobal {
+		if m.allowedLabelGlobal[i] != wantGlobal[i] {
+			t.Fatalf("unexpected in-memory global label at %d: got %q want %q", i, m.allowedLabelGlobal[i], wantGlobal[i])
+		}
+	}
+	projectLabels := m.allowedLabelProject["inbox"]
+	if len(projectLabels) != len(wantProject) {
+		t.Fatalf("unexpected in-memory project labels %#v", m.allowedLabelProject)
+	}
+	for i := range wantProject {
+		if projectLabels[i] != wantProject[i] {
+			t.Fatalf("unexpected in-memory project label at %d: got %q want %q", i, projectLabels[i], wantProject[i])
+		}
+	}
+}
+
+// TestModelCommandPaletteWindowedRendering verifies command selection stays visible past the first page.
+func TestModelCommandPaletteWindowedRendering(t *testing.T) {
+	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, nil)
+	m := loadReadyModel(t, NewModel(svc))
+
+	m = applyMsg(t, m, keyRune(':'))
+	for i := 0; i < 12; i++ {
+		m = applyMsg(t, m, keyRune('j'))
+	}
+	if m.commandIndex != 12 {
+		t.Fatalf("expected commandIndex=12, got %d", m.commandIndex)
+	}
+
+	accent := lipgloss.Color("62")
+	muted := lipgloss.Color("241")
+	dim := lipgloss.Color("239")
+	helpStyle := lipgloss.NewStyle().Foreground(muted)
+	out := m.renderModeOverlay(accent, muted, dim, helpStyle, 96)
+	if !strings.Contains(out, "› focus-clear") {
+		t.Fatalf("expected selected command to remain visible in windowed list, got %q", out)
+	}
+}
+
+// TestModelQuickActionsDisabledOrderingAndBlocking verifies disabled quick actions sort last and cannot execute.
+func TestModelQuickActionsDisabledOrderingAndBlocking(t *testing.T) {
+	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, nil)
+	m := loadReadyModel(t, NewModel(svc))
+
+	m = applyMsg(t, m, keyRune('.'))
+	if m.mode != modeQuickActions {
+		t.Fatalf("expected quick actions mode, got %v", m.mode)
+	}
+
+	accent := lipgloss.Color("62")
+	muted := lipgloss.Color("241")
+	dim := lipgloss.Color("239")
+	helpStyle := lipgloss.NewStyle().Foreground(muted)
+	out := m.renderModeOverlay(accent, muted, dim, helpStyle, 96)
+	enabledIdx := strings.Index(out, "Activity Log")
+	disabledIdx := strings.Index(out, "Task Info (no task selected)")
+	if enabledIdx == -1 || disabledIdx == -1 || enabledIdx > disabledIdx {
+		t.Fatalf("expected enabled action before disabled entries, got %q", out)
+	}
+
+	m = applyMsg(t, m, keyRune('j')) // move from enabled Activity Log to first disabled row
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeQuickActions {
+		t.Fatalf("expected disabled quick action to stay in quick-actions mode, got %v", m.mode)
+	}
+	if !strings.Contains(m.status, "unavailable") {
+		t.Fatalf("expected unavailable status for disabled quick action, got %q", m.status)
+	}
+}
+
+// TestModelCommandPaletteReloadConfigAppliesRuntimeSettings verifies behavior for the covered scenario.
+func TestModelCommandPaletteReloadConfigAppliesRuntimeSettings(t *testing.T) {
+	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+
+	rootDir := t.TempDir()
+	reloadCalls := 0
+	m := loadReadyModel(t, NewModel(
+		svc,
+		WithReloadConfigCallback(func() (RuntimeConfig, error) {
+			reloadCalls++
+			return RuntimeConfig{
+				DefaultDeleteMode: app.DeleteModeHard,
+				TaskFields: TaskFieldConfig{
+					ShowPriority:    false,
+					ShowDueDate:     false,
+					ShowLabels:      false,
+					ShowDescription: true,
+				},
+				Search: SearchConfig{
+					CrossProject:    true,
+					IncludeArchived: true,
+					States:          []string{"todo", "archived"},
+				},
+				Confirm: ConfirmConfig{
+					Delete:     false,
+					Archive:    false,
+					HardDelete: false,
+					Restore:    true,
+				},
+				Board: BoardConfig{
+					ShowWIPWarnings: false,
+					GroupBy:         "priority",
+				},
+				UI: UIConfig{
+					DueSoonWindows: []time.Duration{2 * time.Hour},
+					ShowDueSummary: false,
+				},
+				Labels: LabelConfig{
+					Global:         []string{"bug"},
+					Projects:       map[string][]string{"inbox": {"roadmap"}},
+					EnforceAllowed: true,
+				},
+				ProjectRoots: map[string]string{"inbox": rootDir},
+				Keys: KeyConfig{
+					CommandPalette: ";",
+					QuickActions:   ",",
+					MultiSelect:    "x",
+					ActivityLog:    "v",
+					Undo:           "u",
+					Redo:           "U",
+				},
+			}, nil
+		}),
+	))
+
+	updated, cmd := m.executeCommandPalette("reload-config")
+	m = applyResult(t, updated, cmd)
+
+	if reloadCalls != 1 {
+		t.Fatalf("expected one reload callback invocation, got %d", reloadCalls)
+	}
+	if m.defaultDeleteMode != app.DeleteModeHard {
+		t.Fatalf("expected hard default delete mode, got %q", m.defaultDeleteMode)
+	}
+	if m.taskFields.ShowPriority || m.taskFields.ShowDueDate || m.taskFields.ShowLabels || !m.taskFields.ShowDescription {
+		t.Fatalf("unexpected task fields after reload %#v", m.taskFields)
+	}
+	if !m.searchCrossProject || !m.searchDefaultCrossProject || !m.showArchived || !m.searchDefaultIncludeArchive {
+		t.Fatalf("unexpected search scope flags after reload %#v", m)
+	}
+	if got := strings.Join(m.searchStates, ","); got != "todo" {
+		t.Fatalf("unexpected search states after reload %#v", m.searchStates)
+	}
+	if m.boardGroupBy != "priority" || m.showWIPWarnings {
+		t.Fatalf("unexpected board config after reload group=%q wip=%t", m.boardGroupBy, m.showWIPWarnings)
+	}
+	if m.confirmDelete || m.confirmArchive || m.confirmHardDelete || !m.confirmRestore {
+		t.Fatalf("unexpected confirm flags after reload delete=%t archive=%t hard=%t restore=%t", m.confirmDelete, m.confirmArchive, m.confirmHardDelete, m.confirmRestore)
+	}
+	if len(m.dueSoonWindows) != 1 || m.dueSoonWindows[0] != 2*time.Hour || m.showDueSummary {
+		t.Fatalf("unexpected ui config after reload due=%#v summary=%t", m.dueSoonWindows, m.showDueSummary)
+	}
+	if !m.enforceAllowedLabels || len(m.allowedLabelGlobal) != 1 || m.allowedLabelGlobal[0] != "bug" {
+		t.Fatalf("unexpected label config after reload %#v", m.allowedLabelGlobal)
+	}
+	if got := m.allowedLabelProject["inbox"]; len(got) != 1 || got[0] != "roadmap" {
+		t.Fatalf("unexpected per-project labels after reload %#v", m.allowedLabelProject)
+	}
+	if got := m.projectRoots["inbox"]; got != rootDir {
+		t.Fatalf("unexpected project roots after reload %#v", m.projectRoots)
+	}
+	if m.status != "config reloaded" {
+		t.Fatalf("expected config reloaded status, got %q", m.status)
+	}
+
+	m = applyMsg(t, m, keyRune(';'))
+	if m.mode != modeCommandPalette {
+		t.Fatalf("expected command palette open with reloaded keybinding, got %v", m.mode)
+	}
+}
+
+// TestModelCommandPaletteReloadConfigError verifies behavior for the covered scenario.
+func TestModelCommandPaletteReloadConfigError(t *testing.T) {
+	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	m := loadReadyModel(t, NewModel(svc, WithReloadConfigCallback(func() (RuntimeConfig, error) {
+		return RuntimeConfig{}, errors.New("disk read failed")
+	})))
+
+	updated, cmd := m.executeCommandPalette("reload-config")
+	m = applyResult(t, updated, cmd)
+	if !strings.Contains(m.status, "reload config failed") {
+		t.Fatalf("expected reload-config error status, got %q", m.status)
+	}
+}
+
+// TestModelPathsRootsModalSaveAndClear verifies behavior for the covered scenario.
+func TestModelPathsRootsModalSaveAndClear(t *testing.T) {
+	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+
+	rootDir := t.TempDir()
+	type saveCall struct {
+		slug string
+		path string
+	}
+	saveCalls := make([]saveCall, 0, 2)
+	m := loadReadyModel(t, NewModel(
+		svc,
+		WithSaveProjectRootCallback(func(projectSlug, rootPath string) error {
+			saveCalls = append(saveCalls, saveCall{slug: projectSlug, path: rootPath})
+			return nil
+		}),
+	))
+
+	updated, cmd := m.executeCommandPalette("paths-roots")
+	m = applyResult(t, updated, cmd)
+	if m.mode != modePathsRoots {
+		t.Fatalf("expected paths/roots modal mode, got %v", m.mode)
+	}
+	m.pathsRootInput.SetValue(rootDir)
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	absRoot, err := filepath.Abs(rootDir)
+	if err != nil {
+		t.Fatalf("Abs() error = %v", err)
+	}
+	if len(saveCalls) != 1 || saveCalls[0].slug != "inbox" || saveCalls[0].path != absRoot {
+		t.Fatalf("unexpected save callback calls %#v", saveCalls)
+	}
+	if got := m.projectRoots["inbox"]; got != absRoot {
+		t.Fatalf("expected in-memory project root update to %q, got %#v", absRoot, m.projectRoots)
+	}
+	if m.status != "project root saved" {
+		t.Fatalf("expected project root saved status, got %q", m.status)
+	}
+
+	updated, cmd = m.executeCommandPalette("paths-roots")
+	m = applyResult(t, updated, cmd)
+	m.pathsRootInput.SetValue("")
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if len(saveCalls) != 2 || saveCalls[1].slug != "inbox" || saveCalls[1].path != "" {
+		t.Fatalf("unexpected clear callback calls %#v", saveCalls)
+	}
+	if _, ok := m.projectRoots["inbox"]; ok {
+		t.Fatalf("expected root mapping cleared, got %#v", m.projectRoots)
+	}
+	if m.status != "project root cleared" {
+		t.Fatalf("expected project root cleared status, got %q", m.status)
+	}
+}
+
+// TestModelPathsRootsModalValidationAndSaveError verifies behavior for the covered scenario.
+func TestModelPathsRootsModalValidationAndSaveError(t *testing.T) {
+	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+
+	saveCalls := 0
+	m := loadReadyModel(t, NewModel(
+		svc,
+		WithSaveProjectRootCallback(func(projectSlug, rootPath string) error {
+			saveCalls++
+			return errors.New("write failed")
+		}),
+	))
+
+	updated, cmd := m.executeCommandPalette("paths-roots")
+	m = applyResult(t, updated, cmd)
+	m.pathsRootInput.SetValue(filepath.Join(t.TempDir(), "missing"))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modePathsRoots {
+		t.Fatalf("expected modal to remain open after validation failure, got %v", m.mode)
+	}
+	if saveCalls != 0 {
+		t.Fatalf("expected no callback invocation on validation failure, got %d", saveCalls)
+	}
+	if !strings.Contains(m.status, "root path not found") {
+		t.Fatalf("expected not-found validation message, got %q", m.status)
+	}
+
+	validRoot := t.TempDir()
+	m.pathsRootInput.SetValue(validRoot)
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeNone {
+		t.Fatalf("expected modal close after callback execution, got %v", m.mode)
+	}
+	if saveCalls != 1 {
+		t.Fatalf("expected one callback invocation after valid submit, got %d", saveCalls)
+	}
+	if !strings.Contains(m.status, "save root failed") {
+		t.Fatalf("expected save error message, got %q", m.status)
 	}
 }
 
@@ -717,6 +1216,336 @@ func TestModelMouseWheelAndClick(t *testing.T) {
 	}
 }
 
+// TestModelBoardHidesSubtasksAndShowsProgress verifies board rows hide subtask cards but show progress metadata.
+func TestModelBoardHidesSubtasksAndShowsProgress(t *testing.T) {
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+
+	parent, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-parent",
+		ProjectID: p.ID,
+		ColumnID:  c1.ID,
+		Position:  0,
+		Title:     "Parent task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	childDone, _ := domain.NewTask(domain.TaskInput{
+		ID:             "t-child-done",
+		ProjectID:      p.ID,
+		ColumnID:       c1.ID,
+		Position:       1,
+		Title:          "Child done",
+		Priority:       domain.PriorityLow,
+		Kind:           domain.WorkKindSubtask,
+		ParentID:       parent.ID,
+		LifecycleState: domain.StateDone,
+	}, now)
+	childTodo, _ := domain.NewTask(domain.TaskInput{
+		ID:             "t-child-todo",
+		ProjectID:      p.ID,
+		ColumnID:       c1.ID,
+		Position:       2,
+		Title:          "Child todo",
+		Priority:       domain.PriorityLow,
+		Kind:           domain.WorkKindSubtask,
+		ParentID:       parent.ID,
+		LifecycleState: domain.StateTodo,
+	}, now)
+
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c1}, []domain.Task{parent, childDone, childTodo})
+	m := loadReadyModel(t, NewModel(svc))
+
+	view := m.View()
+	rendered := fmt.Sprint(view.Content)
+	if strings.Contains(rendered, "Child done") || strings.Contains(rendered, "Child todo") {
+		t.Fatalf("expected subtasks hidden from board rows, got\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "[medium|1/2]") {
+		t.Fatalf("expected subtask progress metadata in board row, got\n%s", rendered)
+	}
+}
+
+// TestModelTaskInfoShowsSubtasksAcrossColumns verifies task-info modal subtask visibility independent of parent column.
+func TestModelTaskInfoShowsSubtasksAcrossColumns(t *testing.T) {
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	cTodo, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	cProgress, _ := domain.NewColumn("c2", p.ID, "In Progress", 1, 0, now)
+
+	parent, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-parent",
+		ProjectID: p.ID,
+		ColumnID:  cProgress.ID,
+		Position:  0,
+		Title:     "Parent task",
+		Priority:  domain.PriorityHigh,
+	}, now)
+	child, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-child",
+		ProjectID: p.ID,
+		ColumnID:  cTodo.ID,
+		Position:  0,
+		Title:     "Cross-column subtask",
+		Priority:  domain.PriorityLow,
+		Kind:      domain.WorkKindSubtask,
+		ParentID:  parent.ID,
+	}, now)
+
+	svc := newFakeService([]domain.Project{p}, []domain.Column{cTodo, cProgress}, []domain.Task{parent, child})
+	m := loadReadyModel(t, NewModel(svc))
+	m.focusTaskByID(parent.ID)
+
+	m = applyMsg(t, m, keyRune('i'))
+	if m.mode != modeTaskInfo {
+		t.Fatalf("expected task info mode, got %v", m.mode)
+	}
+
+	view := m.View()
+	rendered := fmt.Sprint(view.Content)
+	if !strings.Contains(rendered, "Cross-column subtask") {
+		t.Fatalf("expected task info modal to include subtasks across columns, got\n%s", rendered)
+	}
+}
+
+// TestModelTaskInfoEscStepsBack verifies esc navigates to parent before closing the task-info modal.
+func TestModelTaskInfoEscStepsBack(t *testing.T) {
+	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	cTodo, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	cProgress, _ := domain.NewColumn("c2", p.ID, "In Progress", 1, 0, now)
+
+	parent, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-parent",
+		ProjectID: p.ID,
+		ColumnID:  cProgress.ID,
+		Position:  0,
+		Title:     "Parent task",
+		Priority:  domain.PriorityHigh,
+	}, now)
+	child, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-child",
+		ProjectID: p.ID,
+		ColumnID:  cTodo.ID,
+		Position:  0,
+		Title:     "Nested subtask",
+		Priority:  domain.PriorityLow,
+		Kind:      domain.WorkKindSubtask,
+		ParentID:  parent.ID,
+	}, now)
+
+	svc := newFakeService([]domain.Project{p}, []domain.Column{cTodo, cProgress}, []domain.Task{parent, child})
+	m := loadReadyModel(t, NewModel(svc))
+	m.focusTaskByID(parent.ID)
+
+	m = applyMsg(t, m, keyRune('i'))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter}) // drill into child
+	if m.taskInfoTaskID != child.ID {
+		t.Fatalf("expected drill-in to child task, got %q", m.taskInfoTaskID)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.mode != modeTaskInfo {
+		t.Fatalf("expected task-info mode after stepping back, got %v", m.mode)
+	}
+	if m.taskInfoTaskID != parent.ID {
+		t.Fatalf("expected esc step-back to parent, got %q", m.taskInfoTaskID)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.mode != modeNone {
+		t.Fatalf("expected esc to close task-info at root, got %v", m.mode)
+	}
+}
+
+// TestModelTaskInfoAllowsSubtaskCreation verifies task-info view can start a subtask form for the focused task.
+func TestModelTaskInfoAllowsSubtaskCreation(t *testing.T) {
+	now := time.Date(2026, 2, 23, 10, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	parent, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-parent",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Parent",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{parent})
+	m := loadReadyModel(t, NewModel(svc))
+	m.focusTaskByID(parent.ID)
+
+	m = applyMsg(t, m, keyRune('i'))
+	if m.mode != modeTaskInfo {
+		t.Fatalf("expected task-info mode, got %v", m.mode)
+	}
+	m = applyMsg(t, m, keyRune('s'))
+	if m.mode != modeAddTask {
+		t.Fatalf("expected add-task mode after task-info subtask key, got %v", m.mode)
+	}
+	if got := m.taskFormKind; got != domain.WorkKindSubtask {
+		t.Fatalf("expected subtask form kind, got %q", got)
+	}
+	if got := m.taskFormParentID; got != parent.ID {
+		t.Fatalf("expected parent id %q, got %q", parent.ID, got)
+	}
+}
+
+// TestModelTaskInfoMovesCurrentTaskWithBrackets verifies task-info mode supports moving the focused task between columns.
+func TestModelTaskInfoMovesCurrentTaskWithBrackets(t *testing.T) {
+	now := time.Date(2026, 2, 23, 10, 15, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	cTodo, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	cProgress, _ := domain.NewColumn("c2", p.ID, "In Progress", 1, 0, now)
+
+	parent, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-parent",
+		ProjectID: p.ID,
+		ColumnID:  cTodo.ID,
+		Position:  0,
+		Title:     "Parent",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	child, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-child",
+		ProjectID: p.ID,
+		ColumnID:  cTodo.ID,
+		Position:  1,
+		Title:     "Child",
+		Priority:  domain.PriorityLow,
+		Kind:      domain.WorkKindSubtask,
+		ParentID:  parent.ID,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{cTodo, cProgress}, []domain.Task{parent, child})
+	m := loadReadyModel(t, NewModel(svc))
+	m.focusTaskByID(parent.ID)
+
+	m = applyMsg(t, m, keyRune('i'))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter}) // open child from parent info
+	if m.taskInfoTaskID != child.ID {
+		t.Fatalf("expected child task info selected, got %q", m.taskInfoTaskID)
+	}
+
+	m = applyMsg(t, m, keyRune(']'))
+	moved, ok := svc.taskByID(child.ID)
+	if !ok {
+		t.Fatalf("expected moved child task in fake service")
+	}
+	if moved.ColumnID != cProgress.ID {
+		t.Fatalf("expected child moved to progress column %q, got %q", cProgress.ID, moved.ColumnID)
+	}
+	if m.mode != modeTaskInfo {
+		t.Fatalf("expected task-info mode retained after move, got %v", m.mode)
+	}
+
+	m = applyMsg(t, m, keyRune('['))
+	moved, ok = svc.taskByID(child.ID)
+	if !ok {
+		t.Fatalf("expected moved child task in fake service")
+	}
+	if moved.ColumnID != cTodo.ID {
+		t.Fatalf("expected child moved back to todo column %q, got %q", cTodo.ID, moved.ColumnID)
+	}
+}
+
+// TestModelBoardScrollKeepsSelectedRowVisible verifies dynamic list scrolling for long columns.
+func TestModelBoardScrollKeepsSelectedRowVisible(t *testing.T) {
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+
+	tasks := make([]domain.Task, 0, 36)
+	for i := 0; i < 36; i++ {
+		task, _ := domain.NewTask(domain.TaskInput{
+			ID:        fmt.Sprintf("t-%02d", i),
+			ProjectID: p.ID,
+			ColumnID:  c1.ID,
+			Position:  i,
+			Title:     fmt.Sprintf("Task %02d", i),
+			Priority:  domain.PriorityLow,
+		}, now)
+		tasks = append(tasks, task)
+	}
+
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c1}, tasks)
+	m := loadReadyModel(t, NewModel(svc))
+	for i := 0; i < 30; i++ {
+		m = applyMsg(t, m, keyRune('j'))
+	}
+
+	view := m.View()
+	rendered := fmt.Sprint(view.Content)
+	if !strings.Contains(rendered, "Task 30") {
+		t.Fatalf("expected selected row to remain visible after scrolling, got\n%s", rendered)
+	}
+}
+
+// TestModelFocusedAndSelectedStyling verifies focused rows use fuchsia and retain multi-select cues.
+func TestModelFocusedAndSelectedStyling(t *testing.T) {
+	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Styled task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	m := loadReadyModel(t, NewModel(svc))
+	m.selectedTaskIDs = map[string]struct{}{task.ID: {}}
+
+	view := m.View()
+	rendered := fmt.Sprint(view.Content)
+	if !strings.Contains(rendered, "38;5;212") {
+		t.Fatalf("expected focused task rendered with fuchsia color, got\n%s", rendered)
+	}
+	plain := stripANSI(rendered)
+	if !strings.Contains(plain, "│* Styled task") {
+		t.Fatalf("expected focused+selected marker to preserve selection cue, got\n%s", plain)
+	}
+}
+
+// TestModelEscClearsSubtreeFocus verifies esc returns to full-board view from subtree focus.
+func TestModelEscClearsSubtreeFocus(t *testing.T) {
+	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c1, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	parent, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-parent",
+		ProjectID: p.ID,
+		ColumnID:  c1.ID,
+		Position:  0,
+		Title:     "Parent",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	child, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-child",
+		ProjectID: p.ID,
+		ColumnID:  c1.ID,
+		Position:  1,
+		Title:     "Child",
+		Priority:  domain.PriorityLow,
+		Kind:      domain.WorkKindSubtask,
+		ParentID:  parent.ID,
+	}, now)
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c1}, []domain.Task{parent, child})))
+	m = applyMsg(t, m, keyRune('f'))
+	if m.projectionRootTaskID == "" {
+		t.Fatal("expected subtree focus root to be set")
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.projectionRootTaskID != "" {
+		t.Fatalf("expected esc to clear subtree focus, got %q", m.projectionRootTaskID)
+	}
+	if m.status != "full board view" {
+		t.Fatalf("expected full-board status, got %q", m.status)
+	}
+}
+
 // TestModelQuitKey verifies behavior for the covered scenario.
 func TestModelQuitKey(t *testing.T) {
 	m := NewModel(newFakeService(nil, nil, nil))
@@ -752,6 +1581,19 @@ func TestModelViewStatesAndPrompts(t *testing.T) {
 	v = m.View()
 	if v.Content == nil {
 		t.Fatal("expected error view content")
+	}
+}
+
+// TestModelNoProjectsBootstrapsProjectForm verifies first-run project creation flow.
+func TestModelNoProjectsBootstrapsProjectForm(t *testing.T) {
+	m := loadReadyModel(t, NewModel(newFakeService(nil, nil, nil)))
+	if m.mode != modeAddProject {
+		t.Fatalf("expected add-project mode for empty workspace, got %v", m.mode)
+	}
+	view := m.View()
+	rendered := fmt.Sprint(view.Content)
+	if !strings.Contains(rendered, "New Project") {
+		t.Fatalf("expected new-project modal overlay for first run, got\n%s", rendered)
 	}
 }
 
@@ -857,6 +1699,45 @@ func TestModelNormalModeExtraBranches(t *testing.T) {
 	m = applyMsg(t, m, keyRune('['))
 	if m.selectedColumn != 0 {
 		t.Fatalf("expected no-op move left, got %d", m.selectedColumn)
+	}
+}
+
+// TestModelBulkMoveKeysUseSelection verifies that bracket move keys apply to the full multi-selection.
+func TestModelBulkMoveKeysUseSelection(t *testing.T) {
+	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	todo, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	progress, _ := domain.NewColumn("c2", project.ID, "In Progress", 1, 0, now)
+
+	t1, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  todo.ID,
+		Position:  0,
+		Title:     "Task 1",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	t2, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t2",
+		ProjectID: project.ID,
+		ColumnID:  todo.ID,
+		Position:  1,
+		Title:     "Task 2",
+		Priority:  domain.PriorityMedium,
+	}, now)
+
+	svc := newFakeService([]domain.Project{project}, []domain.Column{todo, progress}, []domain.Task{t1, t2})
+	m := loadReadyModel(t, NewModel(svc))
+	m.selectedTaskIDs = map[string]struct{}{"t1": {}, "t2": {}}
+
+	m = applyMsg(t, m, keyRune(']'))
+
+	moved := map[string]string{}
+	for _, task := range svc.tasks[project.ID] {
+		moved[task.ID] = task.ColumnID
+	}
+	if moved["t1"] != progress.ID || moved["t2"] != progress.ID {
+		t.Fatalf("expected both selected tasks moved to progress column, got %#v", moved)
 	}
 }
 
@@ -1445,6 +2326,63 @@ func TestTaskFormLabelSuggestions(t *testing.T) {
 	}
 }
 
+// TestTaskFormCtrlYAcceptsLabelSuggestion verifies ctrl+y applies label autocomplete.
+func TestTaskFormCtrlYAcceptsLabelSuggestion(t *testing.T) {
+	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+		Labels:    []string{"chore"},
+	}, now)
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})))
+	m = applyMsg(t, m, keyRune('n'))
+	m = applyCmd(t, m, m.focusTaskFormField(4))
+	m = applyMsg(t, m, keyRune('c'))
+	m = applyMsg(t, m, keyRune('h'))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl})
+	if got := strings.TrimSpace(m.formInputs[4].Value()); got != "chore" {
+		t.Fatalf("expected ctrl+y to apply label suggestion, got %q", got)
+	}
+}
+
+// TestProjectFormSavesRootPathOnCreate verifies project-form root path callback wiring.
+func TestProjectFormSavesRootPathOnCreate(t *testing.T) {
+	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	rootPath := t.TempDir()
+
+	var savedSlug string
+	var savedPath string
+	m := loadReadyModel(t, NewModel(
+		newFakeService([]domain.Project{p}, []domain.Column{c}, nil),
+		WithSaveProjectRootCallback(func(projectSlug, root string) error {
+			savedSlug = projectSlug
+			savedPath = root
+			return nil
+		}),
+	))
+	m = applyMsg(t, m, keyRune('N'))
+	if m.mode != modeAddProject {
+		t.Fatalf("expected add-project mode, got %v", m.mode)
+	}
+	m.projectFormInputs[0].SetValue("Roadmap")
+	m.projectFormInputs[7].SetValue(rootPath)
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if savedSlug == "" {
+		t.Fatal("expected project-root callback to capture project slug")
+	}
+	if savedPath != rootPath {
+		t.Fatalf("expected saved root path %q, got %q", rootPath, savedPath)
+	}
+}
+
 // TestSearchAndCommandPaletteFlow verifies behavior for the covered scenario.
 func TestSearchAndCommandPaletteFlow(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
@@ -1622,9 +2560,26 @@ func TestModelActivityLogOverlay(t *testing.T) {
 		Priority:  domain.PriorityMedium,
 	}, now)
 	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	svc.changeEvents[p.ID] = []domain.ChangeEvent{
+		{
+			ID:         2,
+			ProjectID:  p.ID,
+			WorkItemID: task.ID,
+			Operation:  domain.ChangeOperationMove,
+			Metadata:   map[string]string{},
+			OccurredAt: now.Add(2 * time.Minute),
+		},
+		{
+			ID:         1,
+			ProjectID:  p.ID,
+			WorkItemID: task.ID,
+			Operation:  domain.ChangeOperationCreate,
+			Metadata:   map[string]string{"title": task.Title},
+			OccurredAt: now.Add(time.Minute),
+		},
+	}
 	m := loadReadyModel(t, NewModel(svc))
 
-	m = applyMsg(t, m, keyRune(' '))
 	m = applyMsg(t, m, keyRune('g'))
 	if m.mode != modeActivityLog {
 		t.Fatalf("expected activity-log mode, got %v", m.mode)
@@ -1633,11 +2588,43 @@ func TestModelActivityLogOverlay(t *testing.T) {
 	if !strings.Contains(out, "Activity Log") {
 		t.Fatalf("expected activity-log title, got %q", out)
 	}
-	if !strings.Contains(out, "select task") {
-		t.Fatalf("expected selection activity entry, got %q", out)
+	if !strings.Contains(out, "move task") || !strings.Contains(out, "create task") {
+		t.Fatalf("expected persisted activity entries, got %q", out)
 	}
 	if !strings.Contains(out, ":") {
 		t.Fatalf("expected timestamp in activity entry, got %q", out)
+	}
+}
+
+// TestModelActivityLogOverlayLoadFailure verifies graceful degradation when persisted activity fetch fails.
+func TestModelActivityLogOverlayLoadFailure(t *testing.T) {
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	svc.changeEventsErr = errors.New("load failed")
+	m := loadReadyModel(t, NewModel(svc))
+
+	// Create one in-memory entry so the modal still has content after fetch failure.
+	m = applyMsg(t, m, keyRune(' '))
+	m = applyMsg(t, m, keyRune('g'))
+	if m.mode != modeActivityLog {
+		t.Fatalf("expected activity-log mode after load failure, got %v", m.mode)
+	}
+	if !strings.Contains(m.status, "activity log unavailable") {
+		t.Fatalf("expected non-fatal activity load status, got %q", m.status)
+	}
+	out := m.renderModeOverlay(lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), lipgloss.NewStyle(), 96)
+	if !strings.Contains(out, "select task") {
+		t.Fatalf("expected in-memory fallback entry after activity load failure, got %q", out)
 	}
 }
 
@@ -2469,6 +3456,41 @@ func TestModelDependencyRollupAndTaskInfoHints(t *testing.T) {
 	if !strings.Contains(info, "blocked_reason: waiting on integration") {
 		t.Fatalf("expected blocked_reason hint in task info, got %q", info)
 	}
+}
+
+// TestSortTaskSlicePrefersCreationTime verifies oldest-first ordering regardless of move position churn.
+func TestSortTaskSlicePrefersCreationTime(t *testing.T) {
+	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
+	older, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-older",
+		ProjectID: "p1",
+		ColumnID:  "c1",
+		Position:  9,
+		Title:     "Older",
+		Priority:  domain.PriorityLow,
+	}, now)
+	newer, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-newer",
+		ProjectID: "p1",
+		ColumnID:  "c1",
+		Position:  0,
+		Title:     "Newer",
+		Priority:  domain.PriorityLow,
+	}, now.Add(time.Minute))
+
+	tasks := []domain.Task{newer, older}
+	sortTaskSlice(tasks)
+	if tasks[0].ID != older.ID {
+		t.Fatalf("expected oldest task first, got %#v", tasks)
+	}
+}
+
+// ansiEscapePattern matches terminal color/style escape sequences for text assertions.
+var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+// stripANSI removes ANSI control codes from rendered output.
+func stripANSI(in string) string {
+	return ansiEscapePattern.ReplaceAllString(in, "")
 }
 
 // applyResult applies a model+command result tuple.

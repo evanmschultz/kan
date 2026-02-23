@@ -10,6 +10,8 @@ You are a senior Go dev. YOU ALWAYS:
 - Write idiomatic Go doc comments for all top-level declarations and methods in production and test code, and add inline comments for non-obvious behavior blocks (including behavior blocks in `*_test.go`).
 - Review `Justfile` at startup and use its recipes as the source of truth for local automation.
 - Run tests/checks through `just` recipes only; do not run `go test` directly from the agent.
+- Run `just` recipes directly (for example `just ci`) without `GOCACHE=...` or other cache-path env overrides unless the user explicitly asks for an override.
+- Do not create workspace-local ad-hoc Go cache directories (for example `.go-cache-*`) during normal test/check execution.
 - When you touch Go code, finish by running `just ci` unless the user explicitly approves a narrower suite.
 - In subagent parallel mode (single-branch orchestration), worker lanes may run scoped checks (`just test-pkg ...`), but the integrator must run `just ci` before marking a lane integrated/closed.
 - In subagent prompts, explicitly require: Context7 before any code change, Context7 again after any failed test/runtime error, and package-scoped `just test-pkg` checks for touched packages.
@@ -146,6 +148,7 @@ You are a senior Go dev. YOU ALWAYS:
 - For substantial TUI changes, update or add tea-driven tests and golden fixtures.
 - Coverage below 70% is a hard failure.
 - Build/test execution must go through `just` recipes only.
+- Do not wrap `just` test commands with custom Go cache env vars by default; use plain `just` invocations.
 
 ## UX Guardrails
 

@@ -1001,8 +1001,11 @@ Single-branch parallel execution is now bootstrapped. This section is the source
 | L-C | Wave 1 / Lane C | worker-subagent | `internal/adapters/storage/sqlite/**`, `internal/app/**`, `internal/domain/**` | pre-Phase-11 backend foundations (`work_items`, dependency rollups, change event ledger) | verified | 2026-02-22 | 2026-02-22 | closed |
 | L-D | Wave 1 / Lane D | worker-subagent | `internal/tui/**`, `internal/config/**`, `cmd/kan/main.go`, `config.example.toml` | Phase 5 stretch UX (multi-select/bulk, activity log, undo/redo, grouping + WIP) | verified | 2026-02-22 | 2026-02-22 | closed |
 | L-E | Wave 2 / Lane E | worker-subagent | `internal/tui/**`, `internal/config/**`, `cmd/kan/main.go`, `config.example.toml` | remaining pre-Phase-11 UI gaps (resource picker, label inheritance UI, projection breadcrumbs, dependency rollups) | verified | 2026-02-22 | 2026-02-22 | closed |
+| L-F | Wave 3 / Lane F | worker-subagent | `internal/tui/**` | durable activity log modal from persisted `change_events` | verified | 2026-02-22 | 2026-02-22 | closed |
+| L-G | Wave 3 / Lane G | worker-subagent | `cmd/kan/**`, `internal/config/**`, `config.example.toml`, `README.md` | pre-Phase-11 logging baseline (`charmbracelet/log`, dev file logging) | verified | 2026-02-22 | 2026-02-22 | closed |
+| L-J | Wave 3 / Lane J | worker-subagent | `internal/app/**` | cleanup: remove unused `SearchTasks` runtime path | verified | 2026-02-22 | 2026-02-22 | closed |
 | L-I | Integrator | integrator | shared-branch apply scope | serialized patch apply + validation + `just ci` gate | verified | 2026-02-22 | 2026-02-22 | closed |
-| L-QA | Audit / Remediation | orchestrator+worker | `internal/tui/**`, `internal/app/**`, `internal/adapters/storage/sqlite/**`, `vhs/*`, `PLAN.md` | independent quality audit + pre-Phase-11 completion reconciliation | in_progress | 2026-02-22 | 2026-02-22 | open |
+| L-QA | Audit / Remediation | orchestrator+worker | `internal/tui/**`, `internal/app/**`, `internal/adapters/storage/sqlite/**`, `vhs/*`, `PLAN.md` | independent quality audit + pre-Phase-11 completion reconciliation | verified | 2026-02-22 | 2026-02-22 | closed |
 
 ### Lane State Machine
 - `planned`
@@ -1772,3 +1775,257 @@ Single-branch parallel execution is now bootstrapped. This section is the source
     - `test_not_applicable` (docs-only update; no code-path changes)
   - status:
     - governance wording is now aligned: `PLAN.md` is single execution ledger, closeout file is decision register, and orchestrator/integrator is single writer for checkpoint state.
+- [x] 2026-02-22: Wave 3 remediation integration (`L-F`, `L-G`, `L-J`)
+  - `L-F` durable activity log:
+    - `internal/tui/model.go` now loads persisted project events via `ListProjectChangeEvents`.
+    - activity modal surfaces persisted `change_events` and keeps graceful fallback text when fetch fails.
+    - tests updated in `internal/tui/model_test.go` for persisted log rendering and failure handling.
+  - `L-G` logging baseline:
+    - integrated `github.com/charmbracelet/log` in `cmd/kan/main.go`.
+    - added dual sink behavior:
+      - styled/colorized console logs,
+      - dev file logs in workspace-local `.kan/log/`.
+    - added TOML logging config surface in `internal/config/config.go` and `config.example.toml`.
+    - documented behavior in `README.md`; tests added in `cmd/kan/main_test.go` and `internal/config/config_test.go`.
+  - `L-J` cleanup:
+    - removed unused `SearchTasks` method from `internal/app/service.go`.
+    - updated `internal/app/service_test.go` to use `SearchTaskMatches`.
+  - verification:
+    - `GOCACHE=$(pwd)/.kan/go-build-cache just test-pkg ./internal/tui` -> pass
+    - `GOCACHE=$(pwd)/.kan/go-build-cache just test-pkg ./internal/config` -> pass
+    - `GOCACHE=$(pwd)/.kan/go-build-cache just test-pkg ./internal/app` -> pass
+    - `GOCACHE=$(pwd)/.kan/go-build-cache just test-pkg ./cmd/kan` -> pass
+    - `GOCACHE=$(pwd)/.kan/go-build-cache just test-pkg ./cmd/` -> pass
+    - `GOCACHE=$(pwd)/.kan/go-build-cache just ci` -> pass
+  - runtime/vhs confirmation:
+    - `GOCACHE=$(pwd)/.kan/go-build-cache KAN_DB_PATH=/tmp/kan-run-check.db just run` startup/migration verified with fresh DB.
+    - `vhs vhs/board.tape` -> pass
+    - `vhs vhs/workflow.tape` -> pass
+    - extracted mid-timeline frames with `ffmpeg` from `.artifacts/vhs/*.gif`; confirmed board/help/task modals render correctly (first `> K` frame is expected tape startup).
+  - status:
+    - pre-Phase-11 closeout blockers from earlier QA pass are resolved.
+    - first-run onboarding remains intentionally roadmap-only per locked decision register.
+- [x] 2026-02-22: Independent reviewer re-audit (`CR-2`) after Wave 3 integration
+  - objective:
+    - confirm no hidden quality regressions and verify pre-Phase-11 completion claims against code + docs.
+  - findings summary:
+    - no high/medium defects reported.
+    - durable activity log, reload-config/paths-roots, logging baseline, and `SearchTasks` cleanup verified in code/tests.
+    - remaining UX concerns in `PRE_PHASE11_CLOSEOUT_DISCUSSION.md` are treated as backlog/roadmap context, not pre-Phase-11 blockers.
+  - status:
+    - pre-Phase-11 implementation scope remains closed.
+- [ ] 2026-02-22: Re-open pre-Phase-11 remediation from live user QA (orchestrator reset)
+  - objective:
+    - re-open previously closed pre-Phase-11 scope based on confirmed runtime UX regressions and workflow gaps.
+    - execute fixes under single-orchestrator control; only spawn fresh subagents after lock reset and lane scoping.
+  - trigger:
+    - user manual run screenshots + notes identified blocker regressions not captured by existing VHS coverage.
+  - blockers to resolve before re-close:
+    - board list behavior:
+      - subtasks must not render inline in board rows; board row should show compact progress count (`done/total`) only.
+      - selected-row marker semantics must be restored (focused row only), without clutter from global row markers.
+      - long column lists must maintain fixed viewport height and scroll with cursor/wheel so focused row stays visible.
+    - task info/subtask behavior:
+      - subtask visibility must be consistent regardless of parent task column/state (`todo|progress|done|archived`).
+      - task info modal should expose subtasks list and allow drill-in edit flow via modal stack.
+    - runtime artifact hygiene:
+      - `.kan/` runtime logs must not appear under package test directories (`cmd/kan/.kan`).
+      - local caches/runtime artifacts must be gitignored appropriately (`.kan/`, `.go-mod-cache/`).
+      - dev log location policy needs deterministic behavior for `just run`, tests, and VHS.
+    - verification assets:
+      - refresh VHS coverage to include scrolling/selection and subtask modal expectations.
+      - regenerate `TUI_MANUAL_TEST_WORKSHEET.md` with machine-readable note anchors:
+        - `### USER NOTES Sx.y-Nz`
+  - orchestrator policy for this wave:
+    - `PLAN.md` remains single-writer worklog.
+    - no stale/orphan subagent sessions reused; only newly spawned lanes after baseline update.
+  - lane orchestration evidence:
+    - attempted fresh worker spawn for runtime hygiene lane (`L-RH1`) failed due environment agent-capacity limit (`max 6`).
+    - fallback policy activated: orchestrator executes lane work directly until fresh capacity is available.
+  - status:
+    - in progress (docs baseline updated; code remediation pending).
+  - progress update (2026-02-22, orchestrator):
+    - rewrote `TUI_MANUAL_TEST_WORKSHEET.md` with strict machine-readable anchors in every section:
+      - `### USER NOTES Sx.y-Nz`
+    - added targeted regression VHS scenarios:
+      - `vhs/regression_subtasks.tape`
+      - `vhs/regression_scroll.tape`
+    - regenerated and reviewed artifacts:
+      - `.artifacts/vhs/regression_subtasks.gif`
+      - `.artifacts/vhs/regression_scroll.gif`
+      - frame samples under `.artifacts/vhs/review/regression_subtasks-*.png` and `.artifacts/vhs/review/regression_scroll-*.png`
+    - confirmed captures show:
+      - board rows hide subtasks and show compact `done/total` metadata on parent row,
+      - task-info modal still shows subtasks after parent move to `In Progress`,
+      - constrained-height list scroll follows selection.
+    - refreshed docs:
+      - `README.md` now explicitly documents human↔agent collaboration intent and manual-test anchor workflow.
+    - fixed key-behavior gap from user QA:
+      - `[`/`]` now route to bulk move when multi-select is active, and keep single-task behavior when no selection set exists.
+      - added regression test:
+        - `TestModelBulkMoveKeysUseSelection` in `internal/tui/model_test.go`.
+  - verification log (2026-02-22, orchestrator):
+    - `GOCACHE=$(pwd)/.go-cache just test-pkg ./internal/tui` -> pass (cached)
+    - `GOCACHE=$(pwd)/.go-cache just test-pkg ./cmd/kan` -> pass (cached)
+    - `just vhs vhs/regression_subtasks.tape` -> pass
+    - `just vhs vhs/regression_scroll.tape` -> pass
+    - `GOCACHE=$(pwd)/.go-cache just ci` -> pass
+    - note: `just ci` emitted a non-fatal module stat-cache write warning under sandboxed filesystem permissions; command still exited 0 and coverage/build gates passed.
+    - post-fix rerun:
+      - `GOCACHE=$(pwd)/.go-cache just test-pkg ./internal/tui` -> pass
+      - `GOCACHE=$(pwd)/.go-cache just ci` -> pass
+  - progress update (2026-02-22, orchestrator):
+    - user requested new development-environment helpers in `Justfile`.
+    - added descriptive comments for all recipe blocks so `just --list` shows clear intent.
+    - added new recipes:
+      - `init-dev-config`: create/copy dev config at resolved `./kan --dev paths` config path when missing.
+      - `clean-dev`: remove resolved dev data directory returned by `./kan --dev paths`.
+  - verification log (2026-02-22, orchestrator):
+    - `just --list` -> pass; recipe comments rendered as expected.
+    - `just --dry-run init-dev-config` -> pass; command expansion validated.
+    - `just --dry-run clean-dev` -> pass; command expansion validated.
+  - progress update (2026-02-22, orchestrator):
+    - user runtime report: `just run` failed after `just init-dev-config` with:
+      - `load config ".../config.toml": database path is required`
+    - root cause:
+      - `config.example.toml` intentionally uses `database.path = ""`,
+      - `config.Load` merged TOML over defaults and treated blank `database.path` as an explicit empty override.
+    - remediation:
+      - `internal/config/config.go`: preserve resolved default database path when TOML `database.path` is blank.
+      - `internal/config/config_test.go`: added `TestLoadBlankDatabasePathFallsBackToDefault`.
+      - `Justfile`: fixed shell expansion in `init-dev-config`/`clean-dev` (use shell `$...` instead of `$$...`), which previously produced PID-prefixed paths such as `16116cfg`.
+  - verification log (2026-02-22, orchestrator):
+    - `just test-pkg ./internal/config` -> pass
+    - `just test-pkg ./cmd/kan` -> pass
+    - user-reported confirmation:
+      - `just init-dev-config` created `/Users/evanschultz/Library/Application Support/kan-dev/config.toml`
+      - `just ci` -> pass
+  - progress update (2026-02-22, orchestrator, Wave A kickoff):
+    - objective:
+      - begin implementation of remaining pre-Phase-11 worksheet/user-note remediations with parallel lanes where lock scopes allow.
+    - command/test evidence:
+      - `ls -la .kan/log` -> pass (`.kan/log/kan-20260222.log` present)
+      - `tail -n 120 .kan/log/kan-20260222.log` -> pass
+        - finding: clean startup/migration/TUI loop lifecycle events; no runtime failure signatures in recent log tail.
+      - Context7 consults (required pre-edit):
+        - `resolve-library-id` for `github.com/charmbracelet/bubbles` -> pass (`/charmbracelet/bubbles`)
+        - `resolve-library-id` for `github.com/charmbracelet/bubbletea` -> pass (`/charmbracelet/bubbletea`)
+        - `query-docs` `/charmbracelet/bubbles` (textinput suggestions + list behavior) -> pass
+        - `query-docs` `/charmbracelet/bubbletea` (modal/key update patterns) -> pass
+    - lane orchestration:
+      - spawned `L-PA` (startup/default-project behavior lane):
+        - lock: `cmd/kan/main.go`, `cmd/kan/main_test.go`, `internal/app/service.go`, `internal/app/service_test.go`
+      - spawned `L-TUIA` (Wave A TUI behavior lane):
+        - lock: `internal/tui/model.go`, `internal/tui/model_test.go` (+ `internal/tui/keymap_test.go`/`internal/tui/model_teatest_test.go` if required)
+    - status:
+      - in progress (awaiting worker handoffs for integration and gate verification).
+  - progress update (2026-02-23, orchestrator, Wave A integration + remediation):
+    - integrated worker handoffs and completed direct follow-up edits for worksheet-driven UX gaps.
+    - startup/default-project behavior:
+      - removed startup auto-create/default-project path so empty DB no longer silently creates `Inbox`.
+      - first-run empty state now auto-opens `New Project` modal when no projects exist.
+    - task/project flow fixes:
+      - task creation now returns and applies `focusTaskID` so cursor follows newly created tasks.
+      - project creation/edit now supports `root_path` field and persists via project-root callback.
+      - new-project refresh now applies `pendingProjectID` correctly so stale prior-project tasks are not shown.
+    - command/search/actions fixes:
+      - command palette `search-all` and `search-project` now open search mode with scope applied.
+      - command/quick-actions overlays use windowed rendering when list exceeds modal height.
+      - quick actions are now state-aware, enabled actions sort first, disabled actions render with reason and are blocked from execution.
+    - task detail/form UX fixes:
+      - `esc` in task info now steps back to parent before closing.
+      - `esc` in normal board mode now clears subtree focus when active.
+      - focused row styling now uses fuchsia (`212`) and focused+selected cues remain visible.
+      - task due signals now show in board/task-info contexts (`!YYYY-MM-DD` + warning line).
+      - due picker now includes datetime presets (`today 17:00 UTC`, `tomorrow 09:00 UTC`).
+      - label autocomplete accept shortcut added (`ctrl+y`) and hints updated.
+      - task form suggestions now merge inherited + project-observed labels for deterministic autocomplete acceptance.
+      - resource picker hint copy reduced to single attach action wording (`enter/a` semantics).
+    - domain rule hardening:
+      - `MoveTask` completion validation now blocks moving to `done` when any subtask remains incomplete.
+  - failure/remediation log (2026-02-23, orchestrator):
+    - `GOCACHE=$(pwd)/.go-cache-tui just test-pkg ./internal/tui` failed:
+      - compile error: `projectAccentColor` returned `lipgloss.Color` type.
+      - remediation:
+        - updated signature to `color.Color`.
+      - Context7 re-consult (required after failure):
+        - `/charmbracelet/lipgloss` color typing/usage.
+    - `GOCACHE=$(pwd)/.go-cache-tui just test-pkg ./internal/tui` failed:
+      - failing tests:
+        - `TestModelNoProjectsBootstrapsProjectForm` (overlay assertion too strict),
+        - `TestTaskFormCtrlYAcceptsLabelSuggestion` (suggestion source mismatch).
+      - remediation:
+        - aligned first-run test with modal-first rendering expectation,
+        - added robust `isCtrlY` detection,
+        - merged task-form suggestion sources (inherited + project-observed) for autocomplete.
+      - Context7 re-consults (required after failures):
+        - `/charmbracelet/bubbletea` key handling (`ctrl+` inputs),
+        - `/charmbracelet/bubbles` textinput suggestions behavior.
+    - `GOCACHE=$(pwd)/.go-cache-ci just ci` failed:
+      - `coverage` recipe awk parser was non-portable and misparsed output.
+      - remediation:
+        - hardened `Justfile` coverage awk to parse only `^ok` coverage lines with POSIX-safe `sub(...)` extraction.
+      - Context7 re-consult (required after failure):
+        - `/casey/just` cross-platform recipe guidance.
+  - verification log (2026-02-23, orchestrator):
+    - `GOCACHE=$(pwd)/.go-cache-tui just test-pkg ./internal/tui` -> pass
+    - `GOCACHE=$(pwd)/.go-cache-app just test-pkg ./internal/app` -> pass
+    - `GOCACHE=$(pwd)/.go-cache-cmd just test-pkg ./cmd/kan` -> pass
+    - `GOCACHE=$(pwd)/.go-cache-ci just ci` -> pass
+      - note: non-fatal Go stat-cache permission warning emitted under sandboxed module cache write path; command exited 0.
+  - status:
+    - in progress (Wave A fixes integrated; remaining worksheet-note closeout planning pending for unresolved product-scope items).
+  - progress update (2026-02-23, orchestrator, Wave B closeout integration):
+    - objective:
+      - close remaining worksheet-driven pre-Phase-11 UX/behavior gaps and regenerate a clean manual retest worksheet.
+    - Context7 + docs evidence (required pre-edit):
+      - `resolve-library-id` for `charmbracelet bubbletea` -> pass (`/charmbracelet/bubbletea`)
+      - `query-docs` `/charmbracelet/bubbletea` (key handling for ctrl/esc/back semantics) -> pass
+      - `resolve-library-id` for `pelletier go-toml v2` -> no direct match returned by Context7 catalog
+      - fallback source recorded per policy:
+        - `go doc github.com/pelletier/go-toml/v2.Marshal` -> pass
+        - `go doc github.com/pelletier/go-toml/v2.Unmarshal` -> pass
+    - implementation updates:
+      - `internal/tui/model.go`:
+        - task-info mode now supports:
+          - `s` to open subtask form for the current task,
+          - `[`/`]` to move the currently focused task/subtask left/right from within task-info.
+        - task-info hints/mode prompt updated for discoverability (`s subtask`, `[/] move`).
+        - resource-picker hint copy tightened for clearer `enter/a` semantics.
+      - `internal/tui/model_test.go`:
+        - added regression coverage:
+          - `TestModelCommandPaletteFuzzyAbbreviationExecutesNewSubtask`
+          - `TestModelLabelsConfigCommandSave`
+          - `TestModelTaskInfoAllowsSubtaskCreation`
+          - `TestModelTaskInfoMovesCurrentTaskWithBrackets`
+      - `internal/config/config_test.go`:
+        - added `UpsertAllowedLabels` persistence and validation coverage:
+          - write/update/clear behavior,
+          - missing-file clear noop,
+          - invalid input rejection.
+      - `cmd/kan/main_test.go`:
+        - added `TestPersistAllowedLabelsRoundTrip` to verify CLI persistence helper wiring.
+      - `TUI_MANUAL_TEST_WORKSHEET.md`:
+        - fully rewritten as a clean pre-Phase-11 retest worksheet:
+          - preserved machine-readable anchors (`### USER NOTES Sx.y-N1`),
+          - removed stale historical note clutter,
+          - added explicit checks for:
+            - first-run no-default-project behavior,
+            - due datetime + warnings,
+            - dependency/task-info/subtask flows,
+            - create/edit resource attach,
+            - fuzzy command abbreviations,
+            - labels-config + project-root picker workflows.
+  - verification log (2026-02-23, orchestrator, Wave B):
+    - `just fmt` -> pass
+    - package lanes (parallel):
+      - `GOCACHE=$(pwd)/.go-cache-config just test-pkg ./internal/config` -> pass
+      - `GOCACHE=$(pwd)/.go-cache-cmd just test-pkg ./cmd/kan` -> pass
+      - `GOCACHE=$(pwd)/.go-cache-app just test-pkg ./internal/app` -> pass
+      - `GOCACHE=$(pwd)/.go-cache-domain just test-pkg ./internal/domain` -> pass
+      - `GOCACHE=$(pwd)/.go-cache-tui just test-pkg ./internal/tui` -> pass
+    - full gate:
+      - `GOCACHE=$(pwd)/.go-cache-ci just ci` -> pass
+      - note: non-fatal Go module stat-cache permission warning surfaced under sandbox restrictions; command exited 0 and all gates passed.
+  - status:
+    - in progress (implementation + worksheet refresh complete; awaiting user manual worksheet run for final closeout sign-off).

@@ -29,11 +29,11 @@ type ChangeEvent struct {
 
 // DependencyRollup summarizes dependency and blocked-state counts for a project.
 type DependencyRollup struct {
-	ProjectID                  string
-	TotalItems                 int
-	ItemsWithDependencies      int
-	DependencyEdges            int
-	BlockedItems               int
-	BlockedByEdges             int
-	UnresolvedDependencyEdges  int
+	ProjectID                 string
+	TotalItems                int
+	ItemsWithDependencies     int
+	DependencyEdges           int
+	BlockedItems              int
+	BlockedByEdges            int
+	UnresolvedDependencyEdges int
 }

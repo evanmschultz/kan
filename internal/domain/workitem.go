@@ -100,12 +100,12 @@ type CompletionPolicy struct {
 
 // CompletionContract stores start/complete checks and completion evidence.
 type CompletionContract struct {
-	StartCriteria      []ChecklistItem  `json:"start_criteria"`
-	CompletionCriteria []ChecklistItem  `json:"completion_criteria"`
-	CompletionChecklist []ChecklistItem `json:"completion_checklist"`
-	CompletionEvidence []string         `json:"completion_evidence"`
-	CompletionNotes    string           `json:"completion_notes"`
-	Policy             CompletionPolicy `json:"policy"`
+	StartCriteria       []ChecklistItem  `json:"start_criteria"`
+	CompletionCriteria  []ChecklistItem  `json:"completion_criteria"`
+	CompletionChecklist []ChecklistItem  `json:"completion_checklist"`
+	CompletionEvidence  []string         `json:"completion_evidence"`
+	CompletionNotes     string           `json:"completion_notes"`
+	Policy              CompletionPolicy `json:"policy"`
 }
 
 // ContextBlock stores typed contextual notes attached to a work item.
@@ -118,37 +118,37 @@ type ContextBlock struct {
 
 // ResourceRef stores a path/URL reference that supports future context hydration.
 type ResourceRef struct {
-	ID             string     `json:"id"`
+	ID             string       `json:"id"`
 	ResourceType   ResourceType `json:"resource_type"`
-	Location       string     `json:"location"`
-	PathMode       PathMode   `json:"path_mode"`
-	BaseAlias      string     `json:"base_alias"`
-	Title          string     `json:"title"`
-	Notes          string     `json:"notes"`
-	Tags           []string   `json:"tags"`
-	LastVerifiedAt *time.Time `json:"last_verified_at,omitempty"`
+	Location       string       `json:"location"`
+	PathMode       PathMode     `json:"path_mode"`
+	BaseAlias      string       `json:"base_alias"`
+	Title          string       `json:"title"`
+	Notes          string       `json:"notes"`
+	Tags           []string     `json:"tags"`
+	LastVerifiedAt *time.Time   `json:"last_verified_at,omitempty"`
 }
 
 // TaskMetadata stores rich planning context for an item.
 type TaskMetadata struct {
-	Objective               string             `json:"objective"`
-	ImplementationNotesUser string             `json:"implementation_notes_user"`
-	ImplementationNotesAgent string            `json:"implementation_notes_agent"`
-	AcceptanceCriteria      string             `json:"acceptance_criteria"`
-	DefinitionOfDone        string             `json:"definition_of_done"`
-	ValidationPlan          string             `json:"validation_plan"`
-	BlockedReason           string             `json:"blocked_reason"`
-	RiskNotes               string             `json:"risk_notes"`
-	CommandSnippets         []string           `json:"command_snippets"`
-	ExpectedOutputs         []string           `json:"expected_outputs"`
-	DecisionLog             []string           `json:"decision_log"`
-	RelatedItems            []string           `json:"related_items"`
-	TransitionNotes         string             `json:"transition_notes"`
-	DependsOn               []string           `json:"depends_on"`
-	BlockedBy               []string           `json:"blocked_by"`
-	ContextBlocks           []ContextBlock     `json:"context_blocks"`
-	ResourceRefs            []ResourceRef      `json:"resource_refs"`
-	CompletionContract      CompletionContract `json:"completion_contract"`
+	Objective                string             `json:"objective"`
+	ImplementationNotesUser  string             `json:"implementation_notes_user"`
+	ImplementationNotesAgent string             `json:"implementation_notes_agent"`
+	AcceptanceCriteria       string             `json:"acceptance_criteria"`
+	DefinitionOfDone         string             `json:"definition_of_done"`
+	ValidationPlan           string             `json:"validation_plan"`
+	BlockedReason            string             `json:"blocked_reason"`
+	RiskNotes                string             `json:"risk_notes"`
+	CommandSnippets          []string           `json:"command_snippets"`
+	ExpectedOutputs          []string           `json:"expected_outputs"`
+	DecisionLog              []string           `json:"decision_log"`
+	RelatedItems             []string           `json:"related_items"`
+	TransitionNotes          string             `json:"transition_notes"`
+	DependsOn                []string           `json:"depends_on"`
+	BlockedBy                []string           `json:"blocked_by"`
+	ContextBlocks            []ContextBlock     `json:"context_blocks"`
+	ResourceRefs             []ResourceRef      `json:"resource_refs"`
+	CompletionContract       CompletionContract `json:"completion_contract"`
 }
 
 // normalizeLifecycleState canonicalizes lifecycle state aliases.

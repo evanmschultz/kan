@@ -59,6 +59,28 @@ type LabelConfig struct {
 	EnforceAllowed bool
 }
 
+// RuntimeConfig holds TUI runtime settings that can be applied live.
+type RuntimeConfig struct {
+	DefaultDeleteMode app.DeleteMode
+	TaskFields        TaskFieldConfig
+	Search            SearchConfig
+	Confirm           ConfirmConfig
+	Board             BoardConfig
+	UI                UIConfig
+	Labels            LabelConfig
+	ProjectRoots      map[string]string
+	Keys              KeyConfig
+}
+
+// ReloadConfigFunc reloads runtime config values from disk or another source.
+type ReloadConfigFunc func() (RuntimeConfig, error)
+
+// SaveProjectRootFunc persists one project-root mapping update.
+type SaveProjectRootFunc func(projectSlug, rootPath string) error
+
+// SaveLabelsConfigFunc persists label defaults for global and current-project scopes.
+type SaveLabelsConfigFunc func(projectSlug string, globalLabels, projectLabels []string) error
+
 // Option defines a functional option for model configuration.
 type Option func(*Model)
 
@@ -170,5 +192,41 @@ func WithProjectRoots(projectRoots map[string]string) Option {
 func WithKeyConfig(cfg KeyConfig) Option {
 	return func(m *Model) {
 		m.keys.applyConfig(cfg)
+	}
+}
+
+// WithRuntimeConfig returns an option that applies all runtime-configurable settings.
+func WithRuntimeConfig(cfg RuntimeConfig) Option {
+	return func(m *Model) {
+		WithDefaultDeleteMode(cfg.DefaultDeleteMode)(m)
+		WithTaskFieldConfig(cfg.TaskFields)(m)
+		WithSearchConfig(cfg.Search)(m)
+		WithConfirmConfig(cfg.Confirm)(m)
+		WithBoardConfig(cfg.Board)(m)
+		WithUIConfig(cfg.UI)(m)
+		WithLabelConfig(cfg.Labels)(m)
+		WithProjectRoots(cfg.ProjectRoots)(m)
+		WithKeyConfig(cfg.Keys)(m)
+	}
+}
+
+// WithReloadConfigCallback returns an option that sets runtime config reload behavior.
+func WithReloadConfigCallback(cb ReloadConfigFunc) Option {
+	return func(m *Model) {
+		m.reloadConfig = cb
+	}
+}
+
+// WithSaveProjectRootCallback returns an option that sets root-mapping persistence behavior.
+func WithSaveProjectRootCallback(cb SaveProjectRootFunc) Option {
+	return func(m *Model) {
+		m.saveProjectRoot = cb
+	}
+}
+
+// WithSaveLabelsConfigCallback returns an option that sets labels-config persistence behavior.
+func WithSaveLabelsConfigCallback(cb SaveLabelsConfigFunc) Option {
+	return func(m *Model) {
+		m.saveLabels = cb
 	}
 }

@@ -291,7 +291,7 @@ func (s *Service) MoveTask(ctx context.Context, taskID, toColumnID string, posit
 			return domain.Task{}, fmt.Errorf("%w: start criteria unmet (%s)", domain.ErrTransitionBlocked, strings.Join(unmet, ", "))
 		}
 	}
-	if fromState == domain.StateProgress && toState == domain.StateDone {
+	if toState == domain.StateDone {
 		projectTasks, listErr := s.repo.ListTasks(ctx, task.ProjectID, true)
 		if listErr != nil {
 			return domain.Task{}, listErr
@@ -300,6 +300,14 @@ func (s *Service) MoveTask(ctx context.Context, taskID, toColumnID string, posit
 		for _, candidate := range projectTasks {
 			if candidate.ParentID == task.ID {
 				children = append(children, candidate)
+			}
+		}
+		for _, child := range children {
+			if child.ArchivedAt != nil {
+				continue
+			}
+			if child.LifecycleState != domain.StateDone {
+				return domain.Task{}, fmt.Errorf("%w: completion criteria unmet (subtasks must be done before moving to done)", domain.ErrTransitionBlocked)
 			}
 		}
 		if unmet := task.CompletionCriteriaUnmet(children); len(unmet) > 0 {
@@ -502,34 +510,7 @@ func (s *Service) ReparentTask(ctx context.Context, taskID, parentID string) (do
 	return task, nil
 }
 
-// SearchTasks handles search tasks.
-func (s *Service) SearchTasks(ctx context.Context, projectID, query string, includeArchived bool) ([]domain.Task, error) {
-	query = strings.TrimSpace(strings.ToLower(query))
-	if query == "" {
-		return s.ListTasks(ctx, projectID, includeArchived)
-	}
-
-	tasks, err := s.repo.ListTasks(ctx, projectID, includeArchived)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]domain.Task, 0, len(tasks))
-	for _, task := range tasks {
-		if strings.Contains(strings.ToLower(task.Title), query) || strings.Contains(strings.ToLower(task.Description), query) {
-			out = append(out, task)
-			continue
-		}
-		for _, label := range task.Labels {
-			if strings.Contains(strings.ToLower(label), query) {
-				out = append(out, task)
-				break
-			}
-		}
-	}
-	return out, nil
-}
-
-// SearchTaskMatches handles search task matches.
+// SearchTaskMatches finds task matches using project, state, and archive filters.
 func (s *Service) SearchTaskMatches(ctx context.Context, in SearchTasksFilter) ([]TaskMatch, error) {
 	stateFilter := map[string]struct{}{}
 	for _, raw := range in.States {

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -33,6 +34,15 @@ func TestDefaultConfig(t *testing.T) {
 	}
 	if !cfg.UI.ShowDueSummary {
 		t.Fatal("expected due summary enabled by default")
+	}
+	if cfg.Logging.Level != "info" {
+		t.Fatalf("expected default logging level info, got %q", cfg.Logging.Level)
+	}
+	if !cfg.Logging.DevFile.Enabled {
+		t.Fatal("expected dev file logging enabled by default")
+	}
+	if cfg.Logging.DevFile.Dir != ".kan/log" {
+		t.Fatalf("expected default dev file log dir .kan/log, got %q", cfg.Logging.DevFile.Dir)
 	}
 }
 
@@ -103,6 +113,28 @@ show_due_summary = false
 	}
 }
 
+// TestLoadBlankDatabasePathFallsBackToDefault verifies behavior for the covered scenario.
+func TestLoadBlankDatabasePathFallsBackToDefault(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	content := `
+[database]
+path = ""
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	defaults := Default("/tmp/default.db")
+	cfg, err := Load(path, defaults)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got := cfg.Database.Path; got != defaults.Database.Path {
+		t.Fatalf("expected blank database.path to fall back to %q, got %q", defaults.Database.Path, got)
+	}
+}
+
 // TestLoadRejectsInvalidDeleteMode verifies behavior for the covered scenario.
 func TestLoadRejectsInvalidDeleteMode(t *testing.T) {
 	dir := t.TempDir()
@@ -155,6 +187,13 @@ states = ["todo", "progress", "archived"]
 due_soon_windows = ["2h", "48h"]
 show_due_summary = true
 
+[logging]
+level = "DEBUG"
+
+[logging.dev_file]
+enabled = false
+dir = "./tmp/logs"
+
 [keys]
 command_palette = ":"
 quick_actions = "."
@@ -186,6 +225,15 @@ redo = "U"
 	if got := cfg.DueSoonDurations(); len(got) != 2 || got[0] != 2*time.Hour || got[1] != 48*time.Hour {
 		t.Fatalf("unexpected due durations %#v", got)
 	}
+	if cfg.Logging.Level != "debug" {
+		t.Fatalf("unexpected logging level %q", cfg.Logging.Level)
+	}
+	if cfg.Logging.DevFile.Enabled {
+		t.Fatalf("expected dev file logging disabled, got %#v", cfg.Logging.DevFile)
+	}
+	if cfg.Logging.DevFile.Dir != "./tmp/logs" {
+		t.Fatalf("unexpected dev file logging dir %q", cfg.Logging.DevFile.Dir)
+	}
 }
 
 // TestValidateRejectsUnknownSearchState verifies behavior for the covered scenario.
@@ -203,6 +251,15 @@ func TestValidateRejectsInvalidDueSoonWindow(t *testing.T) {
 	cfg.UI.DueSoonWindows = []string{"bogus"}
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("expected invalid due-soon duration error")
+	}
+}
+
+// TestValidateRejectsInvalidLoggingLevel verifies behavior for the covered scenario.
+func TestValidateRejectsInvalidLoggingLevel(t *testing.T) {
+	cfg := Default("/tmp/kan.db")
+	cfg.Logging.Level = "verbose"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected invalid logging level validation error")
 	}
 }
 
@@ -272,5 +329,171 @@ func TestValidateRejectsEmptyProjectRoot(t *testing.T) {
 	cfg.ProjectRoots["inbox"] = ""
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("expected error for empty project root")
+	}
+}
+
+// TestUpsertProjectRootWritesAndClearsMapping verifies behavior for the covered scenario.
+func TestUpsertProjectRootWritesAndClearsMapping(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	content := `
+[database]
+path = "/tmp/custom.db"
+
+[project_roots]
+legacy = "/tmp/legacy"
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	if err := UpsertProjectRoot(path, "Inbox", "/tmp/inbox"); err != nil {
+		t.Fatalf("UpsertProjectRoot() error = %v", err)
+	}
+	cfg, err := Load(path, Default("/tmp/default.db"))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got := cfg.ProjectRoots["inbox"]; got != "/tmp/inbox" {
+		t.Fatalf("expected inbox root /tmp/inbox, got %#v", cfg.ProjectRoots)
+	}
+	if got := cfg.ProjectRoots["legacy"]; got != "/tmp/legacy" {
+		t.Fatalf("expected legacy root preserved, got %#v", cfg.ProjectRoots)
+	}
+	if got := cfg.Database.Path; got != "/tmp/custom.db" {
+		t.Fatalf("expected database path preserved, got %q", got)
+	}
+
+	if err := UpsertProjectRoot(path, "inbox", ""); err != nil {
+		t.Fatalf("UpsertProjectRoot(clear) error = %v", err)
+	}
+	cfg, err = Load(path, Default("/tmp/default.db"))
+	if err != nil {
+		t.Fatalf("Load() after clear error = %v", err)
+	}
+	if _, ok := cfg.ProjectRoots["inbox"]; ok {
+		t.Fatalf("expected inbox root cleared, got %#v", cfg.ProjectRoots)
+	}
+	if got := cfg.ProjectRoots["legacy"]; got != "/tmp/legacy" {
+		t.Fatalf("expected legacy root preserved after clear, got %#v", cfg.ProjectRoots)
+	}
+}
+
+// TestUpsertProjectRootMissingFileClearNoop verifies behavior for the covered scenario.
+func TestUpsertProjectRootMissingFileClearNoop(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing.toml")
+	if err := UpsertProjectRoot(path, "inbox", ""); err != nil {
+		t.Fatalf("UpsertProjectRoot() error = %v", err)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected no file created for clear noop, stat err=%v", err)
+	}
+}
+
+// TestUpsertProjectRootRejectsInvalidInput verifies behavior for the covered scenario.
+func TestUpsertProjectRootRejectsInvalidInput(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := UpsertProjectRoot("", "inbox", "/tmp/inbox"); err == nil {
+		t.Fatal("expected error for empty config path")
+	}
+	if err := UpsertProjectRoot(path, "", "/tmp/inbox"); err == nil {
+		t.Fatal("expected error for empty project slug")
+	}
+}
+
+// TestUpsertAllowedLabelsWritesAndClears verifies behavior for the covered scenario.
+func TestUpsertAllowedLabelsWritesAndClears(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	content := `
+[database]
+path = "/tmp/custom.db"
+
+[labels]
+global = ["legacy"]
+
+[labels.projects]
+legacy = ["ops"]
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	if err := UpsertAllowedLabels(path, "Inbox", []string{"Bug", "chore", "bug"}, []string{"Roadmap", "kan", "roadmap"}); err != nil {
+		t.Fatalf("UpsertAllowedLabels() error = %v", err)
+	}
+	cfg, err := Load(path, Default("/tmp/default.db"))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	wantGlobal := []string{"bug", "chore"}
+	if len(cfg.Labels.Global) != len(wantGlobal) {
+		t.Fatalf("unexpected global labels %#v", cfg.Labels.Global)
+	}
+	for i := range wantGlobal {
+		if cfg.Labels.Global[i] != wantGlobal[i] {
+			t.Fatalf("unexpected global label at %d: got %q want %q", i, cfg.Labels.Global[i], wantGlobal[i])
+		}
+	}
+	wantInbox := []string{"kan", "roadmap"}
+	gotInbox := cfg.Labels.Projects["inbox"]
+	if len(gotInbox) != len(wantInbox) {
+		t.Fatalf("unexpected inbox labels %#v", cfg.Labels.Projects)
+	}
+	for i := range wantInbox {
+		if gotInbox[i] != wantInbox[i] {
+			t.Fatalf("unexpected inbox label at %d: got %q want %q", i, gotInbox[i], wantInbox[i])
+		}
+	}
+	if gotLegacy := cfg.Labels.Projects["legacy"]; len(gotLegacy) != 1 || gotLegacy[0] != "ops" {
+		t.Fatalf("expected legacy labels preserved, got %#v", cfg.Labels.Projects)
+	}
+
+	if err := UpsertAllowedLabels(path, "inbox", []string{"bug"}, nil); err != nil {
+		t.Fatalf("UpsertAllowedLabels(clear project) error = %v", err)
+	}
+	cfg, err = Load(path, Default("/tmp/default.db"))
+	if err != nil {
+		t.Fatalf("Load() after project clear error = %v", err)
+	}
+	if _, ok := cfg.Labels.Projects["inbox"]; ok {
+		t.Fatalf("expected inbox project labels cleared, got %#v", cfg.Labels.Projects)
+	}
+	if len(cfg.Labels.Global) != 1 || cfg.Labels.Global[0] != "bug" {
+		t.Fatalf("expected global labels to remain set, got %#v", cfg.Labels.Global)
+	}
+
+	if err := UpsertAllowedLabels(path, "inbox", nil, nil); err != nil {
+		t.Fatalf("UpsertAllowedLabels(clear globals) error = %v", err)
+	}
+	cfg, err = Load(path, Default("/tmp/default.db"))
+	if err != nil {
+		t.Fatalf("Load() after globals clear error = %v", err)
+	}
+	if len(cfg.Labels.Global) != 0 {
+		t.Fatalf("expected global labels cleared, got %#v", cfg.Labels.Global)
+	}
+	if gotLegacy := cfg.Labels.Projects["legacy"]; len(gotLegacy) != 1 || gotLegacy[0] != "ops" {
+		t.Fatalf("expected legacy project labels preserved, got %#v", cfg.Labels.Projects)
+	}
+}
+
+// TestUpsertAllowedLabelsMissingFileClearNoop verifies behavior for the covered scenario.
+func TestUpsertAllowedLabelsMissingFileClearNoop(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing.toml")
+	if err := UpsertAllowedLabels(path, "inbox", nil, nil); err != nil {
+		t.Fatalf("UpsertAllowedLabels() error = %v", err)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected no file created for clear noop, stat err=%v", err)
+	}
+}
+
+// TestUpsertAllowedLabelsRejectsInvalidInput verifies behavior for the covered scenario.
+func TestUpsertAllowedLabelsRejectsInvalidInput(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := UpsertAllowedLabels("", "inbox", []string{"bug"}, nil); err == nil {
+		t.Fatal("expected error for empty config path")
+	}
+	if err := UpsertAllowedLabels(path, "", []string{"bug"}, nil); err == nil {
+		t.Fatal("expected error for empty project slug")
 	}
 }
