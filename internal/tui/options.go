@@ -80,11 +80,21 @@ type RuntimeConfig struct {
 	Identity          IdentityConfig
 }
 
+// BootstrapConfig holds first-run bootstrap identity and global root settings.
+type BootstrapConfig struct {
+	DisplayName      string
+	DefaultActorType string
+	SearchRoots      []string
+}
+
 // ReloadConfigFunc reloads runtime config values from disk or another source.
 type ReloadConfigFunc func() (RuntimeConfig, error)
 
 // SaveProjectRootFunc persists one project-root mapping update.
 type SaveProjectRootFunc func(projectSlug, rootPath string) error
+
+// SaveBootstrapConfigFunc persists startup bootstrap identity and global root settings.
+type SaveBootstrapConfigFunc func(cfg BootstrapConfig) error
 
 // SaveLabelsConfigFunc persists label defaults for global and current-project scopes.
 type SaveLabelsConfigFunc func(projectSlug string, globalLabels, projectLabels []string) error
@@ -147,6 +157,13 @@ func WithSearchRoots(roots []string) Option {
 func WithLaunchProjectPicker(enabled bool) Option {
 	return func(m *Model) {
 		m.launchPicker = enabled
+	}
+}
+
+// WithStartupBootstrap returns an option that toggles startup bootstrap gating before project picker.
+func WithStartupBootstrap(enabled bool) Option {
+	return func(m *Model) {
+		m.startupBootstrapRequired = enabled
 	}
 }
 
@@ -253,6 +270,13 @@ func WithReloadConfigCallback(cb ReloadConfigFunc) Option {
 func WithSaveProjectRootCallback(cb SaveProjectRootFunc) Option {
 	return func(m *Model) {
 		m.saveProjectRoot = cb
+	}
+}
+
+// WithSaveBootstrapConfigCallback returns an option that sets bootstrap settings persistence behavior.
+func WithSaveBootstrapConfigCallback(cb SaveBootstrapConfigFunc) Option {
+	return func(m *Model) {
+		m.saveBootstrap = cb
 	}
 }
 

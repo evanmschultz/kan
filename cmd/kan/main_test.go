@@ -34,7 +34,42 @@ func (f fakeProgram) Run() (tea.Model, error) {
 	return nil, f.runErr
 }
 
-// writeBootstrapReadyConfig writes the minimum startup fields required to bypass bootstrap prompts.
+// scriptedProgram represents program data used to exercise model flows inside run() tests.
+type scriptedProgram struct {
+	model tea.Model
+	runFn func(tea.Model) (tea.Model, error)
+}
+
+// Run runs scripted model interactions and returns the final state.
+func (p scriptedProgram) Run() (tea.Model, error) {
+	if p.runFn == nil {
+		return p.model, nil
+	}
+	return p.runFn(p.model)
+}
+
+// applyModelMsg applies one message and any resulting command chain.
+func applyModelMsg(t *testing.T, model tea.Model, msg tea.Msg) tea.Model {
+	t.Helper()
+	updated, cmd := model.Update(msg)
+	return applyModelCmd(t, updated, cmd)
+}
+
+// applyModelCmd executes one command chain to completion (bounded for safety).
+func applyModelCmd(t *testing.T, model tea.Model, cmd tea.Cmd) tea.Model {
+	t.Helper()
+	out := model
+	currentCmd := cmd
+	for i := 0; i < 8 && currentCmd != nil; i++ {
+		msg := currentCmd()
+		updated, nextCmd := out.Update(msg)
+		out = updated
+		currentCmd = nextCmd
+	}
+	return out
+}
+
+// writeBootstrapReadyConfig writes the minimum startup fields required to bypass bootstrap modal gating.
 func writeBootstrapReadyConfig(t *testing.T, path, searchRoot string) {
 	t.Helper()
 	content := fmt.Sprintf(`
@@ -112,33 +147,42 @@ func TestRunTUIStartupDoesNotCreateDefaultProject(t *testing.T) {
 	}
 }
 
-// TestRunBootstrapPromptsAndPersistsMissingFields verifies startup bootstrap prompts and persistence.
-func TestRunBootstrapPromptsAndPersistsMissingFields(t *testing.T) {
+// TestRunBootstrapModalPersistsMissingFields verifies startup bootstrap persists through TUI callbacks.
+func TestRunBootstrapModalPersistsMissingFields(t *testing.T) {
 	origFactory := programFactory
 	t.Cleanup(func() { programFactory = origFactory })
-	programFactory = func(_ tea.Model) program { return fakeProgram{} }
+	programFactory = func(model tea.Model) program {
+		return scriptedProgram{
+			model: model,
+			runFn: func(current tea.Model) (tea.Model, error) {
+				current = applyModelCmd(t, current, current.Init())
+				current = applyModelMsg(t, current, tea.WindowSizeMsg{Width: 120, Height: 40})
+				if rendered := fmt.Sprint(current.View().Content); !strings.Contains(rendered, "Startup Setup Required") {
+					t.Fatalf("expected startup bootstrap modal, got\n%s", rendered)
+				}
 
-	tmp := t.TempDir()
-	dbPath := filepath.Join(tmp, "kan.db")
-	cfgPath := filepath.Join(tmp, "config.toml")
-	searchRoot := t.TempDir()
+				for _, r := range "Lane User" {
+					current = applyModelMsg(t, current, tea.KeyPressMsg{Code: r, Text: string(r)})
+				}
+				current = applyModelMsg(t, current, tea.KeyPressMsg{Code: tea.KeyTab})
+				current = applyModelMsg(t, current, tea.KeyPressMsg{Code: 'l', Text: "l"})
+				current = applyModelMsg(t, current, tea.KeyPressMsg{Code: tea.KeyTab})
+				current = applyModelMsg(t, current, tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+				current = applyModelMsg(t, current, tea.KeyPressMsg{Code: 'a', Text: "a"})
+				current = applyModelMsg(t, current, tea.KeyPressMsg{Code: tea.KeyTab})
+				current = applyModelMsg(t, current, tea.KeyPressMsg{Code: tea.KeyEnter})
+				if rendered := fmt.Sprint(current.View().Content); !strings.Contains(rendered, "Projects") {
+					t.Fatalf("expected project picker after bootstrap save, got\n%s", rendered)
+				}
+				return current, nil
+			},
+		}
+	}
 
-	oldStdin := os.Stdin
-	readEnd, writeEnd, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("Pipe() error = %v", err)
-	}
-	if _, err := io.WriteString(writeEnd, "Lane User\n"+searchRoot+"\n\n"); err != nil {
-		t.Fatalf("WriteString() error = %v", err)
-	}
-	if err := writeEnd.Close(); err != nil {
-		t.Fatalf("Close(writeEnd) error = %v", err)
-	}
-	os.Stdin = readEnd
-	t.Cleanup(func() {
-		os.Stdin = oldStdin
-		_ = readEnd.Close()
-	})
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	dbPath := filepath.Join(workspace, "kan.db")
+	cfgPath := filepath.Join(workspace, "config.toml")
 
 	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath}, io.Discard, io.Discard); err != nil {
 		t.Fatalf("run() error = %v", err)
@@ -150,8 +194,11 @@ func TestRunBootstrapPromptsAndPersistsMissingFields(t *testing.T) {
 	if got := cfg.Identity.DisplayName; got != "Lane User" {
 		t.Fatalf("expected persisted display name Lane User, got %q", got)
 	}
-	if len(cfg.Paths.SearchRoots) != 1 || cfg.Paths.SearchRoots[0] != filepath.Clean(searchRoot) {
-		t.Fatalf("expected persisted search root %q, got %#v", filepath.Clean(searchRoot), cfg.Paths.SearchRoots)
+	if got := cfg.Identity.DefaultActorType; got != "agent" {
+		t.Fatalf("expected persisted actor type agent, got %q", got)
+	}
+	if len(cfg.Paths.SearchRoots) != 1 || cfg.Paths.SearchRoots[0] != filepath.Clean(workspace) {
+		t.Fatalf("expected persisted search root %q, got %#v", filepath.Clean(workspace), cfg.Paths.SearchRoots)
 	}
 }
 
@@ -370,6 +417,45 @@ func TestParseBoolEnv(t *testing.T) {
 	_, ok = parseBoolEnv("KAN_BOOL_TEST")
 	if ok {
 		t.Fatal("expected invalid bool env to return ok=false")
+	}
+}
+
+// TestStartupBootstrapRequired verifies startup bootstrap requirement detection from config values.
+func TestStartupBootstrapRequired(t *testing.T) {
+	cfg := config.Default("/tmp/kan.db")
+	cfg.Identity.DisplayName = ""
+	cfg.Paths.SearchRoots = []string{"/tmp/code"}
+	if !startupBootstrapRequired(cfg) {
+		t.Fatal("expected missing display name to require startup bootstrap")
+	}
+
+	cfg.Identity.DisplayName = "Lane User"
+	cfg.Paths.SearchRoots = nil
+	if !startupBootstrapRequired(cfg) {
+		t.Fatal("expected missing search roots to require startup bootstrap")
+	}
+
+	cfg.Identity.DisplayName = "Lane User"
+	cfg.Paths.SearchRoots = []string{"/tmp/code"}
+	if startupBootstrapRequired(cfg) {
+		t.Fatal("expected complete identity + search roots to bypass startup bootstrap")
+	}
+}
+
+// TestSanitizeBootstrapActorType verifies actor type normalization for bootstrap persistence.
+func TestSanitizeBootstrapActorType(t *testing.T) {
+	cases := map[string]string{
+		"user":        "user",
+		"AGENT":       "agent",
+		" system ":    "system",
+		"unexpected":  "user",
+		"":            "user",
+		"\nunknown\t": "user",
+	}
+	for input, want := range cases {
+		if got := sanitizeBootstrapActorType(input); got != want {
+			t.Fatalf("sanitizeBootstrapActorType(%q) = %q, want %q", input, got, want)
+		}
 	}
 }
 
@@ -613,7 +699,9 @@ redo = "U"
 	if len(runtimeCfg.UI.DueSoonWindows) != 1 || runtimeCfg.UI.DueSoonWindows[0] != 6*time.Hour || runtimeCfg.UI.ShowDueSummary {
 		t.Fatalf("unexpected ui runtime config %#v", runtimeCfg.UI)
 	}
-	if len(runtimeCfg.SearchRoots) != 2 || runtimeCfg.SearchRoots[0] != "/tmp/code" || runtimeCfg.SearchRoots[1] != "/tmp/docs" {
+	wantSearchRootCode := filepath.Clean("/tmp/code")
+	wantSearchRootDocs := filepath.Clean("/tmp/docs")
+	if len(runtimeCfg.SearchRoots) != 2 || runtimeCfg.SearchRoots[0] != wantSearchRootCode || runtimeCfg.SearchRoots[1] != wantSearchRootDocs {
 		t.Fatalf("unexpected search roots runtime config %#v", runtimeCfg.SearchRoots)
 	}
 	if got := runtimeCfg.Keys.CommandPalette; got != ";" {
@@ -693,7 +781,9 @@ func TestPersistSearchRootsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if len(cfg.Paths.SearchRoots) != 2 || cfg.Paths.SearchRoots[0] != "/tmp/code" || cfg.Paths.SearchRoots[1] != "/tmp/docs" {
+	wantSearchRootCode := filepath.Clean("/tmp/code")
+	wantSearchRootDocs := filepath.Clean("/tmp/docs")
+	if len(cfg.Paths.SearchRoots) != 2 || cfg.Paths.SearchRoots[0] != wantSearchRootCode || cfg.Paths.SearchRoots[1] != wantSearchRootDocs {
 		t.Fatalf("unexpected persisted search roots %#v", cfg.Paths.SearchRoots)
 	}
 }

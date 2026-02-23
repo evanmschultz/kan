@@ -11,9 +11,11 @@ Current scope:
 
 ## Features
 - Multi-project Kanban board.
+- Launches into a project picker first (no auto-created default project).
 - SQLite persistence (`modernc.org/sqlite`, no CGO).
 - Keyboard navigation (`vim` keys + arrows) and mouse support.
 - Archive-first delete flow with configurable defaults.
+- Project and work-item thread mode with markdown comments and ownership metadata.
 - JSON snapshot import/export.
 - Configurable task field visibility.
 
@@ -32,6 +34,13 @@ Or build once and run the binary:
 just build
 ./kan
 ```
+
+## Startup Behavior
+- TUI launch opens the project picker before normal board mode.
+- If no projects exist yet, the picker stays open and supports `N` to create the first project.
+- On TUI startup, missing required bootstrap fields are prompted and persisted:
+  - `identity.display_name`
+  - at least one `paths.search_roots` entry
 
 ## CLI Commands
 Export current data:
@@ -62,6 +71,8 @@ Path resolution controls:
 - `--app` / `KAN_APP_NAME` to namespace paths (default `kan`)
 - `--dev` / `KAN_DEV_MODE` to use `<app>-dev` path roots
 - `kan paths` prints the resolved config/data/db paths for the current environment
+- `identity.default_actor_type` (`user|agent|system`) + `identity.display_name` are defaults for new thread comment ownership
+- `paths.search_roots` are global fallback roots for the resource picker when no per-project root is configured
 - dev mode logging writes to workspace-local `.kan/log/` when `logging.dev_file.enabled = true`
   - relative dev log dirs are anchored to the nearest workspace root marker (`go.mod` or `.git`)
 - logging level is controlled by TOML `logging.level` (`debug|info|warn|error|fatal`)
@@ -89,6 +100,13 @@ cross_project = false
 include_archived = false
 states = ["todo", "progress", "done"] # plus optional "archived"
 
+[identity]
+display_name = "" # required at TUI startup bootstrap
+default_actor_type = "user" # user | agent | system
+
+[paths]
+search_roots = [] # required at TUI startup bootstrap
+
 [logging]
 level = "info"
 
@@ -105,8 +123,11 @@ Full template: `config.example.toml`
 - `n`: new task
 - `e`: edit task
 - `i` or `enter`: task info modal
+- `c` (in task info): open thread for the selected work item
 - `ctrl+d` or `D` (in task form due field): open due-date picker
 - `p`: project picker
+- `N` (in project picker): new project
+- `:`: command palette
 - `/`: search
 - `d`: delete using configured default mode
 - `a`: archive task
@@ -115,6 +136,17 @@ Full template: `config.example.toml`
 - `t`: toggle archived visibility
 - `?`: toggle expanded help
 - `q`: quit
+
+## Thread Mode
+- Open project thread from command palette with `thread-project` (`project-thread` alias).
+- Open selected work-item thread with `thread-item` (`item-thread` / `task-thread` aliases), or `c` from task info.
+- Supported thread targets: project, task, subtask, phase, decision, and note.
+- New comments use configured identity defaults; invalid/empty identity safely falls back to `[user] kan-user`.
+
+## Fang Context
+Fang is Charmbracelet's experimental batteries-included wrapper for Cobra CLIs.
+`kan` does not currently integrate Fang or Cobra for CLI command execution.
+Current usage is Fang-inspired help copy/style in the in-app command reference overlay.
 
 ## Developer Workflow
 Primary commands:

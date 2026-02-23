@@ -66,6 +66,7 @@ const (
 	modePathsRoots
 	modeLabelsConfig
 	modeHighlightColor
+	modeBootstrapSettings
 	modeDependencyInspector
 	modeThread
 )
@@ -152,6 +153,13 @@ var quickActionSpecs = []quickActionSpec{
 
 // canonicalSearchStates stores canonical searchable lifecycle states.
 var canonicalSearchStatesOrdered = []string{"todo", "progress", "done"}
+
+// bootstrapActorTypes stores canonical actor-type options for bootstrap settings.
+var bootstrapActorTypes = []string{
+	string(domain.ActorTypeUser),
+	string(domain.ActorTypeAgent),
+	string(domain.ActorTypeSystem),
+}
 
 // canonicalSearchStateLabels stores display labels for canonical lifecycle states.
 var canonicalSearchStateLabels = map[string]string{
@@ -258,13 +266,14 @@ type Model struct {
 	taskFields        TaskFieldConfig
 	defaultDeleteMode app.DeleteMode
 
-	projects        []domain.Project
-	selectedProject int
-	columns         []domain.Column
-	tasks           []domain.Task
-	selectedColumn  int
-	selectedTask    int
-	launchPicker    bool
+	projects                 []domain.Project
+	selectedProject          int
+	columns                  []domain.Column
+	tasks                    []domain.Task
+	selectedColumn           int
+	selectedTask             int
+	launchPicker             bool
+	startupBootstrapRequired bool
 
 	mode          inputMode
 	input         string
@@ -274,6 +283,7 @@ type Model struct {
 
 	searchInput                 textinput.Model
 	commandInput                textinput.Model
+	bootstrapDisplayInput       textinput.Model
 	pathsRootInput              textinput.Model
 	highlightColorInput         textinput.Model
 	dependencyInput             textinput.Model
@@ -290,6 +300,11 @@ type Model struct {
 	quickActionIndex            int
 	commandMatches              []commandPaletteItem
 	commandIndex                int
+	bootstrapFocus              int
+	bootstrapActorIndex         int
+	bootstrapRoots              []string
+	bootstrapRootIndex          int
+	bootstrapMandatory          bool
 	dependencyFocus             int
 	dependencyStateCursor       int
 	dependencyCrossProject      bool
@@ -373,6 +388,7 @@ type Model struct {
 
 	reloadConfig    ReloadConfigFunc
 	saveProjectRoot SaveProjectRootFunc
+	saveBootstrap   SaveBootstrapConfigFunc
 	saveLabels      SaveLabelsConfigFunc
 
 	identityDisplayName      string
@@ -452,6 +468,12 @@ type projectRootSavedMsg struct {
 	err         error
 }
 
+// bootstrapSettingsSavedMsg carries bootstrap-settings persistence results.
+type bootstrapSettingsSavedMsg struct {
+	config BootstrapConfig
+	err    error
+}
+
 // threadLoadedMsg carries comments loaded for one thread target.
 type threadLoadedMsg struct {
 	target   domain.CommentTarget
@@ -479,6 +501,10 @@ func NewModel(svc Service, opts ...Option) Model {
 	commandInput.Prompt = ": "
 	commandInput.Placeholder = "type to filter commands"
 	commandInput.CharLimit = 120
+	bootstrapDisplayInput := textinput.New()
+	bootstrapDisplayInput.Prompt = "name: "
+	bootstrapDisplayInput.Placeholder = "display name"
+	bootstrapDisplayInput.CharLimit = 120
 	pathsRootInput := textinput.New()
 	pathsRootInput.Prompt = "root: "
 	pathsRootInput.Placeholder = "absolute path (empty clears mapping)"
@@ -508,6 +534,7 @@ func NewModel(svc Service, opts ...Option) Model {
 		defaultDeleteMode:        app.DeleteModeArchive,
 		searchInput:              searchInput,
 		commandInput:             commandInput,
+		bootstrapDisplayInput:    bootstrapDisplayInput,
 		pathsRootInput:           pathsRootInput,
 		highlightColorInput:      highlightColorInput,
 		dependencyInput:          dependencyInput,
@@ -534,6 +561,8 @@ func NewModel(svc Service, opts ...Option) Model {
 		projectRoots:             map[string]string{},
 		identityDisplayName:      "kan-user",
 		identityDefaultActorType: string(domain.ActorTypeUser),
+		bootstrapActorIndex:      0,
+		bootstrapRoots:           []string{},
 	}
 	if cwd, err := os.Getwd(); err == nil {
 		m.defaultRootDir = cwd
@@ -580,6 +609,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.projectPickerIndex = 0
 			m.columns = nil
 			m.tasks = nil
+			if m.startupBootstrapRequired {
+				if m.mode != modeBootstrapSettings && m.mode != modeAddProject && m.mode != modeEditProject {
+					return m, m.startBootstrapSettingsMode(true)
+				}
+				return m, nil
+			}
 			if m.mode != modeAddProject && m.mode != modeEditProject {
 				m.mode = modeProjectPicker
 				m.status = "project picker"
@@ -607,6 +642,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.pendingFocusTaskID != "" {
 			m.focusTaskByID(m.pendingFocusTaskID)
 			m.pendingFocusTaskID = ""
+		}
+		if m.startupBootstrapRequired {
+			if m.mode != modeBootstrapSettings {
+				return m, m.startBootstrapSettingsMode(true)
+			}
+			return m, nil
 		}
 		if m.launchPicker && m.mode == modeNone {
 			m.mode = modeProjectPicker
@@ -733,6 +774,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.projectRoots[msg.projectSlug] = msg.rootPath
 		m.status = "project root saved"
+		return m, nil
+
+	case bootstrapSettingsSavedMsg:
+		if msg.err != nil {
+			m.status = "save bootstrap failed: " + msg.err.Error()
+			return m, nil
+		}
+		m.applyBootstrapConfig(msg.config)
+		m.startupBootstrapRequired = false
+		m.bootstrapMandatory = false
+		m.mode = modeNone
+		m.bootstrapDisplayInput.Blur()
+		if m.launchPicker {
+			m.mode = modeProjectPicker
+			if len(m.projects) == 0 {
+				m.projectPickerIndex = 0
+			} else {
+				m.projectPickerIndex = clamp(m.selectedProject, 0, len(m.projects)-1)
+			}
+			m.status = "project picker"
+			m.launchPicker = false
+			return m, nil
+		}
+		m.status = "bootstrap settings saved"
 		return m, nil
 
 	case threadLoadedMsg:
@@ -1273,6 +1338,123 @@ func (m *Model) startCommandPalette() tea.Cmd {
 	return m.commandInput.Focus()
 }
 
+// startBootstrapSettingsMode opens the identity + global search-roots bootstrap/settings modal.
+func (m *Model) startBootstrapSettingsMode(mandatory bool) tea.Cmd {
+	m.mode = modeBootstrapSettings
+	m.bootstrapMandatory = mandatory
+	m.bootstrapDisplayInput.SetValue(strings.TrimSpace(m.identityDisplayName))
+	m.bootstrapDisplayInput.CursorEnd()
+	m.bootstrapActorIndex = bootstrapActorTypeIndex(m.identityDefaultActorType)
+	m.bootstrapRoots = append([]string(nil), normalizeSearchRoots(m.searchRoots)...)
+	m.bootstrapRootIndex = clamp(m.bootstrapRootIndex, 0, len(m.bootstrapRoots)-1)
+	m.status = "bootstrap settings"
+	if mandatory {
+		m.status = "startup setup required"
+	}
+	return m.focusBootstrapField(0)
+}
+
+// focusBootstrapField sets focus to one bootstrap/settings modal section.
+func (m *Model) focusBootstrapField(idx int) tea.Cmd {
+	const totalFields = 4
+	idx = clamp(idx, 0, totalFields-1)
+	m.bootstrapFocus = idx
+	m.bootstrapDisplayInput.Blur()
+	if idx == 0 {
+		return m.bootstrapDisplayInput.Focus()
+	}
+	return nil
+}
+
+// bootstrapActorType returns the currently selected bootstrap actor type.
+func (m Model) bootstrapActorType() string {
+	if len(bootstrapActorTypes) == 0 {
+		return string(domain.ActorTypeUser)
+	}
+	idx := clamp(m.bootstrapActorIndex, 0, len(bootstrapActorTypes)-1)
+	return bootstrapActorTypes[idx]
+}
+
+// cycleBootstrapActor cycles bootstrap actor type selection by delta.
+func (m *Model) cycleBootstrapActor(delta int) {
+	m.bootstrapActorIndex = wrapIndex(m.bootstrapActorIndex, delta, len(bootstrapActorTypes))
+}
+
+// addBootstrapSearchRoot appends one normalized bootstrap root when it is not already present.
+func (m *Model) addBootstrapSearchRoot(root string) bool {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return false
+	}
+	root = filepath.Clean(root)
+	for _, existing := range m.bootstrapRoots {
+		if strings.EqualFold(existing, root) {
+			return false
+		}
+	}
+	m.bootstrapRoots = append(m.bootstrapRoots, root)
+	m.bootstrapRootIndex = clamp(len(m.bootstrapRoots)-1, 0, len(m.bootstrapRoots)-1)
+	return true
+}
+
+// removeSelectedBootstrapRoot removes the currently selected bootstrap root.
+func (m *Model) removeSelectedBootstrapRoot() bool {
+	if len(m.bootstrapRoots) == 0 {
+		return false
+	}
+	idx := clamp(m.bootstrapRootIndex, 0, len(m.bootstrapRoots)-1)
+	m.bootstrapRoots = append(m.bootstrapRoots[:idx], m.bootstrapRoots[idx+1:]...)
+	m.bootstrapRootIndex = clamp(idx, 0, len(m.bootstrapRoots)-1)
+	return true
+}
+
+// submitBootstrapSettings validates and persists bootstrap/settings values.
+func (m Model) submitBootstrapSettings() (tea.Model, tea.Cmd) {
+	displayName := strings.TrimSpace(m.bootstrapDisplayInput.Value())
+	if displayName == "" {
+		m.status = "display name is required"
+		return m, nil
+	}
+	roots := normalizeSearchRoots(m.bootstrapRoots)
+	if len(roots) == 0 {
+		m.status = "at least one global search root is required"
+		return m, nil
+	}
+	if m.saveBootstrap == nil {
+		m.status = "save bootstrap failed: callback unavailable"
+		return m, nil
+	}
+	cfg := BootstrapConfig{
+		DisplayName:      displayName,
+		DefaultActorType: m.bootstrapActorType(),
+		SearchRoots:      roots,
+	}
+	m.status = "saving bootstrap settings..."
+	return m, m.saveBootstrapSettingsCmd(cfg)
+}
+
+// saveBootstrapSettingsCmd persists bootstrap/settings values through the callback surface.
+func (m Model) saveBootstrapSettingsCmd(cfg BootstrapConfig) tea.Cmd {
+	return func() tea.Msg {
+		if err := m.saveBootstrap(cfg); err != nil {
+			return bootstrapSettingsSavedMsg{err: err}
+		}
+		return bootstrapSettingsSavedMsg{config: cfg}
+	}
+}
+
+// applyBootstrapConfig applies saved bootstrap settings to in-memory runtime state.
+func (m *Model) applyBootstrapConfig(cfg BootstrapConfig) {
+	m.identityDisplayName = strings.TrimSpace(cfg.DisplayName)
+	m.identityDefaultActorType = strings.TrimSpace(strings.ToLower(cfg.DefaultActorType))
+	if m.identityDefaultActorType == "" {
+		m.identityDefaultActorType = string(domain.ActorTypeUser)
+	}
+	m.searchRoots = normalizeSearchRoots(cfg.SearchRoots)
+	m.bootstrapRoots = append([]string(nil), m.searchRoots...)
+	m.bootstrapRootIndex = clamp(m.bootstrapRootIndex, 0, len(m.bootstrapRoots)-1)
+}
+
 // startPathsRootsMode opens the modal used to edit one current-project root mapping.
 func (m *Model) startPathsRootsMode() tea.Cmd {
 	project, ok := m.currentProject()
@@ -1767,6 +1949,17 @@ func wrapIndex(current int, delta int, total int) int {
 	return next
 }
 
+// bootstrapActorTypeIndex resolves one actor type to its canonical bootstrap option index.
+func bootstrapActorTypeIndex(actorType string) int {
+	actorType = strings.TrimSpace(strings.ToLower(actorType))
+	for idx, candidate := range bootstrapActorTypes {
+		if actorType == candidate {
+			return idx
+		}
+	}
+	return 0
+}
+
 // windowBounds returns an inclusive-exclusive list window that keeps selected visible.
 func windowBounds(total, selected, windowSize int) (int, int) {
 	if total <= 0 || windowSize <= 0 {
@@ -1897,6 +2090,26 @@ func normalizeProjectRootPathInput(raw string) (string, error) {
 	return rootPath, nil
 }
 
+// normalizeSearchRootPathInput validates and normalizes a required global search root path value.
+func normalizeSearchRootPathInput(raw string) (string, error) {
+	rootPath := strings.TrimSpace(raw)
+	if rootPath == "" {
+		return "", fmt.Errorf("search root path is required")
+	}
+	absPath, err := filepath.Abs(rootPath)
+	if err == nil {
+		rootPath = absPath
+	}
+	info, err := os.Stat(rootPath)
+	if err != nil {
+		return "", fmt.Errorf("search root path not found: %w", err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("search root path must be a directory")
+	}
+	return filepath.Clean(rootPath), nil
+}
+
 // normalizeSearchRoots trims, deduplicates, and cleans global search root paths.
 func normalizeSearchRoots(roots []string) []string {
 	out := make([]string, 0, len(roots))
@@ -1957,6 +2170,7 @@ func commandPaletteItems() []commandPaletteItem {
 		{Command: "redo", Aliases: []string{}, Description: "redo last undone mutation"},
 		{Command: "reload-config", Aliases: []string{"config-reload", "reload"}, Description: "reload runtime config from disk"},
 		{Command: "paths-roots", Aliases: []string{"roots", "project-root"}, Description: "edit current project root mapping"},
+		{Command: "bootstrap-settings", Aliases: []string{"setup", "identity-roots"}, Description: "edit identity defaults + global search roots"},
 		{Command: "labels-config", Aliases: []string{"labels", "edit-labels"}, Description: "edit global + project labels defaults"},
 		{Command: "highlight-color", Aliases: []string{"set-highlight", "focus-color"}, Description: "set focused-row highlight color"},
 		{Command: "activity-log", Aliases: []string{"log"}, Description: "open recent activity modal"},
@@ -2834,6 +3048,13 @@ func (m *Model) acceptCurrentLabelSuggestion() bool {
 func (m *Model) startResourcePicker(taskID string, back inputMode) tea.Cmd {
 	taskID = strings.TrimSpace(taskID)
 	root := m.resourcePickerRootForCurrentProject()
+	if back == modeBootstrapSettings {
+		if len(m.bootstrapRoots) > 0 {
+			root = strings.TrimSpace(m.bootstrapRoots[clamp(m.bootstrapRootIndex, 0, len(m.bootstrapRoots)-1)])
+		} else if strings.TrimSpace(m.defaultRootDir) != "" {
+			root = m.defaultRootDir
+		}
+	}
 	m.mode = modeResourcePicker
 	m.resourcePickerBack = back
 	m.resourcePickerTaskID = taskID
@@ -2990,6 +3211,25 @@ func (m *Model) attachSelectedResourceEntry() tea.Cmd {
 		}
 		m.status = "root path selected"
 		return nil
+	}
+
+	// Bootstrap settings flow appends one global search root.
+	if back == modeBootstrapSettings {
+		selectedDir := entry.Path
+		if !entry.IsDir {
+			selectedDir = filepath.Dir(selectedDir)
+		}
+		root, err := normalizeSearchRootPathInput(selectedDir)
+		if err != nil {
+			m.status = err.Error()
+			return m.focusBootstrapField(2)
+		}
+		if !m.addBootstrapSearchRoot(root) {
+			m.status = "search root already added"
+			return m.focusBootstrapField(2)
+		}
+		m.status = "search root added"
+		return m.focusBootstrapField(2)
 	}
 
 	// Existing task-info path persists immediately to task metadata.
@@ -3866,6 +4106,78 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.dependencyIndex = 0
 				return m, m.loadDependencyMatches
 			}
+			return m, cmd
+		}
+	}
+
+	if m.mode == modeBootstrapSettings {
+		switch {
+		case msg.Code == tea.KeyEscape || msg.String() == "esc":
+			if m.bootstrapMandatory {
+				m.status = "startup setup required"
+				return m, nil
+			}
+			m.mode = modeNone
+			m.bootstrapDisplayInput.Blur()
+			m.status = "cancelled"
+			return m, nil
+		case msg.Code == tea.KeyTab || msg.String() == "tab" || msg.String() == "ctrl+i":
+			return m, m.focusBootstrapField(wrapIndex(m.bootstrapFocus, 1, 4))
+		case msg.String() == "shift+tab" || msg.String() == "backtab":
+			return m, m.focusBootstrapField(wrapIndex(m.bootstrapFocus, -1, 4))
+		case msg.String() == "j" || msg.String() == "down":
+			if m.bootstrapFocus == 2 {
+				if m.bootstrapRootIndex < len(m.bootstrapRoots)-1 {
+					m.bootstrapRootIndex++
+				}
+				return m, nil
+			}
+			return m, m.focusBootstrapField(wrapIndex(m.bootstrapFocus, 1, 4))
+		case msg.String() == "k" || msg.String() == "up":
+			if m.bootstrapFocus == 2 {
+				if m.bootstrapRootIndex > 0 {
+					m.bootstrapRootIndex--
+				}
+				return m, nil
+			}
+			return m, m.focusBootstrapField(wrapIndex(m.bootstrapFocus, -1, 4))
+		case (msg.String() == "h" || msg.String() == "left") && m.bootstrapFocus == 1:
+			m.cycleBootstrapActor(-1)
+			return m, nil
+		case (msg.String() == "l" || msg.String() == "right") && m.bootstrapFocus == 1:
+			m.cycleBootstrapActor(1)
+			return m, nil
+		case msg.String() == "ctrl+r" && m.bootstrapFocus == 2:
+			return m, m.startResourcePicker("", modeBootstrapSettings)
+		case msg.String() == "a" && m.bootstrapFocus == 2:
+			return m, m.startResourcePicker("", modeBootstrapSettings)
+		case (msg.String() == "d" || msg.String() == "x" || msg.String() == "backspace") && m.bootstrapFocus == 2:
+			if !m.removeSelectedBootstrapRoot() {
+				m.status = "no search root selected"
+				return m, nil
+			}
+			m.status = "search root removed"
+			return m, nil
+		case msg.String() == "ctrl+u" && m.bootstrapFocus == 0:
+			m.bootstrapDisplayInput.SetValue("")
+			m.bootstrapDisplayInput.CursorEnd()
+			return m, nil
+		case msg.Code == tea.KeyEnter || msg.String() == "enter":
+			switch m.bootstrapFocus {
+			case 1:
+				m.cycleBootstrapActor(1)
+				return m, nil
+			case 2:
+				return m, m.startResourcePicker("", modeBootstrapSettings)
+			default:
+				return m.submitBootstrapSettings()
+			}
+		default:
+			if m.bootstrapFocus != 0 {
+				return m, nil
+			}
+			var cmd tea.Cmd
+			m.bootstrapDisplayInput, cmd = m.bootstrapDisplayInput.Update(msg)
 			return m, cmd
 		}
 	}
@@ -4895,6 +5207,8 @@ func (m Model) executeCommandPalette(command string) (tea.Model, tea.Cmd) {
 		return m, m.reloadRuntimeConfigCmd()
 	case "paths-roots", "roots", "project-root":
 		return m, m.startPathsRootsMode()
+	case "bootstrap-settings", "setup", "identity-roots":
+		return m, m.startBootstrapSettingsMode(false)
 	case "labels-config", "labels", "edit-labels":
 		return m, m.startLabelsConfigForm()
 	case "highlight-color", "set-highlight", "focus-color":
@@ -5437,6 +5751,22 @@ func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 			m.threadScroll = max(0, m.threadScroll-3)
 		case tea.MouseWheelDown:
 			m.threadScroll += 3
+		}
+		return m, nil
+	}
+	if m.mode == modeBootstrapSettings {
+		if m.bootstrapFocus != 2 || len(m.bootstrapRoots) == 0 {
+			return m, nil
+		}
+		switch msg.Button {
+		case tea.MouseWheelUp:
+			if m.bootstrapRootIndex > 0 {
+				m.bootstrapRootIndex--
+			}
+		case tea.MouseWheelDown:
+			if m.bootstrapRootIndex < len(m.bootstrapRoots)-1 {
+				m.bootstrapRootIndex++
+			}
 		}
 		return m, nil
 	}
@@ -6968,6 +7298,83 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		lines = append(lines, "", hintStyle.Render("e edit • s subtask • c thread • [ / ] move • b deps inspector • r attach resource • f focus subtree • esc back/close"))
 		return boxStyle.Render(strings.Join(lines, "\n"))
 
+	case modeBootstrapSettings:
+		style := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(accent).
+			Padding(0, 1)
+		if maxWidth > 0 {
+			style = style.Width(clamp(maxWidth, 52, 108))
+		}
+		titleStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
+		hintStyle := lipgloss.NewStyle().Foreground(muted)
+		focusStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
+		title := "Identity & Search Roots"
+		if m.bootstrapMandatory {
+			title = "Startup Setup Required"
+		}
+		in := m.bootstrapDisplayInput
+		in.SetWidth(max(20, maxWidth-26))
+		nameLabel := hintStyle
+		if m.bootstrapFocus == 0 {
+			nameLabel = focusStyle
+		}
+		actorLabel := hintStyle
+		if m.bootstrapFocus == 1 {
+			actorLabel = focusStyle
+		}
+		rootsLabel := hintStyle
+		if m.bootstrapFocus == 2 {
+			rootsLabel = focusStyle
+		}
+		saveLabel := hintStyle
+		if m.bootstrapFocus == 3 {
+			saveLabel = focusStyle
+		}
+		actorParts := make([]string, 0, len(bootstrapActorTypes))
+		for idx, actor := range bootstrapActorTypes {
+			label := actor
+			if idx == clamp(m.bootstrapActorIndex, 0, len(bootstrapActorTypes)-1) {
+				label = "[" + label + "]"
+			}
+			actorParts = append(actorParts, label)
+		}
+		lines := []string{
+			titleStyle.Render(title),
+			nameLabel.Render("display name:") + " " + in.View(),
+			actorLabel.Render("default actor:") + " " + strings.Join(actorParts, "  "),
+			rootsLabel.Render(fmt.Sprintf("global search roots (%d):", len(m.bootstrapRoots))),
+		}
+		if len(m.bootstrapRoots) == 0 {
+			lines = append(lines, hintStyle.Render("(none yet)"))
+		} else {
+			const rootWindowSize = 8
+			start, end := windowBounds(len(m.bootstrapRoots), m.bootstrapRootIndex, rootWindowSize)
+			for idx := start; idx < end; idx++ {
+				root := m.bootstrapRoots[idx]
+				cursor := "  "
+				if idx == m.bootstrapRootIndex {
+					cursor = "> "
+				}
+				line := cursor + truncate(root, 84)
+				if idx == m.bootstrapRootIndex && m.bootstrapFocus == 2 {
+					line = focusStyle.Render(line)
+				}
+				lines = append(lines, line)
+			}
+			if len(m.bootstrapRoots) > rootWindowSize {
+				lines = append(lines, hintStyle.Render(fmt.Sprintf("showing %d-%d of %d", start+1, end, len(m.bootstrapRoots))))
+			}
+		}
+		lines = append(lines, saveLabel.Render("[ save settings ]"))
+		lines = append(lines, hintStyle.Render("tab focus • j/k move • h/l actor • a or ctrl+r browse + add root • d remove root • enter save"))
+		if m.bootstrapMandatory {
+			lines = append(lines, hintStyle.Render("esc disabled until required settings are saved"))
+		} else {
+			lines = append(lines, hintStyle.Render("esc cancel"))
+		}
+		return style.Render(strings.Join(lines, "\n"))
+
 	case modeResourcePicker:
 		style := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
@@ -6989,6 +7396,9 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		title := "Attach Resource"
 		if m.resourcePickerBack == modeAddProject || m.resourcePickerBack == modeEditProject || m.resourcePickerBack == modePathsRoots {
 			title = "Pick Project Root"
+		}
+		if m.resourcePickerBack == modeBootstrapSettings {
+			title = "Pick Search Root"
 		}
 		filterInput := m.resourcePickerFilter
 		filterInput.SetWidth(max(20, min(72, maxWidth-18)))
@@ -7019,7 +7429,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 				}
 			}
 		}
-		if m.resourcePickerBack == modeAddProject || m.resourcePickerBack == modeEditProject || m.resourcePickerBack == modePathsRoots {
+		if m.resourcePickerBack == modeAddProject || m.resourcePickerBack == modeEditProject || m.resourcePickerBack == modePathsRoots || m.resourcePickerBack == modeBootstrapSettings {
 			lines = append(lines, hintStyle.Render("enter open dir (or choose file parent) • a choose dir • h parent • ctrl+u clear filter • esc close"))
 		} else {
 			lines = append(lines, hintStyle.Render("enter open dir • enter/a attach file • a attach dir • h parent • ctrl+u clear filter • esc close"))
@@ -7756,6 +8166,8 @@ func (m Model) modeLabel() string {
 		return "labels-config"
 	case modeHighlightColor:
 		return "highlight-color"
+	case modeBootstrapSettings:
+		return "bootstrap"
 	case modeDependencyInspector:
 		return "deps"
 	case modeThread:
@@ -7806,6 +8218,8 @@ func (m Model) modePrompt() string {
 		return "labels config: enter save, esc cancel"
 	case modeHighlightColor:
 		return "highlight color: enter save, esc cancel"
+	case modeBootstrapSettings:
+		return "bootstrap settings: tab focus, a browse/add root, d remove root, enter save"
 	case modeDependencyInspector:
 		return "deps inspector: tab focus, d/b toggle, x switch active, enter jump, a apply, esc cancel"
 	case modeThread:

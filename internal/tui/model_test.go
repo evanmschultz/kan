@@ -2011,6 +2011,138 @@ func TestModelLaunchStartsInProjectPicker(t *testing.T) {
 	}
 }
 
+// TestModelStartupBootstrapPrecedesLaunchPicker verifies startup bootstrap modal ordering and completion.
+func TestModelStartupBootstrapPrecedesLaunchPicker(t *testing.T) {
+	now := time.Date(2026, 2, 23, 12, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, nil)
+
+	root := t.TempDir()
+	saveCalls := 0
+	var saved BootstrapConfig
+	initial := NewModel(
+		svc,
+		WithLaunchProjectPicker(true),
+		WithStartupBootstrap(true),
+		WithSaveBootstrapConfigCallback(func(cfg BootstrapConfig) error {
+			saveCalls++
+			saved = cfg
+			return nil
+		}),
+	)
+	ready := applyMsg(t, applyCmd(t, initial, initial.Init()), tea.WindowSizeMsg{Width: 120, Height: 40})
+	if ready.mode != modeBootstrapSettings {
+		t.Fatalf("expected startup bootstrap mode, got %v", ready.mode)
+	}
+	ready = applyMsg(t, ready, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if ready.mode != modeBootstrapSettings {
+		t.Fatalf("expected mandatory bootstrap modal to ignore esc, got %v", ready.mode)
+	}
+
+	ready.bootstrapDisplayInput.SetValue("Lane User")
+	ready.bootstrapActorIndex = bootstrapActorTypeIndex("agent")
+	ready.bootstrapRoots = []string{root}
+	ready.bootstrapFocus = 3
+	ready = applyMsg(t, ready, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if saveCalls != 1 {
+		t.Fatalf("expected one bootstrap save call, got %d", saveCalls)
+	}
+	if saved.DisplayName != "Lane User" || saved.DefaultActorType != "agent" {
+		t.Fatalf("unexpected saved bootstrap config %#v", saved)
+	}
+	if ready.mode != modeProjectPicker {
+		t.Fatalf("expected project picker after bootstrap save, got %v", ready.mode)
+	}
+}
+
+// TestModelBootstrapSettingsCommandPaletteRootsEditing verifies command-palette bootstrap settings editing and fuzzy root add.
+func TestModelBootstrapSettingsCommandPaletteRootsEditing(t *testing.T) {
+	now := time.Date(2026, 2, 23, 12, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	rootA := t.TempDir()
+	rootB := t.TempDir()
+	if err := os.WriteFile(filepath.Join(rootB, "notes.txt"), []byte("ok"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	saveCalls := 0
+	var saved BootstrapConfig
+	m := loadReadyModel(t, NewModel(
+		newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task}),
+		WithIdentityConfig(IdentityConfig{
+			DisplayName:      "Lane User",
+			DefaultActorType: "user",
+		}),
+		WithSearchRoots([]string{rootA}),
+		WithSaveBootstrapConfigCallback(func(cfg BootstrapConfig) error {
+			saveCalls++
+			saved = cfg
+			return nil
+		}),
+	))
+	m.defaultRootDir = rootB
+
+	updated, cmd := m.executeCommandPalette("bootstrap-settings")
+	m = applyResult(t, updated, cmd)
+	if m.mode != modeBootstrapSettings {
+		t.Fatalf("expected bootstrap settings mode from command palette, got %v", m.mode)
+	}
+	if got := m.bootstrapDisplayInput.Value(); got != "Lane User" {
+		t.Fatalf("expected display name prefill Lane User, got %q", got)
+	}
+	if len(m.bootstrapRoots) != 1 || m.bootstrapRoots[0] != filepath.Clean(rootA) {
+		t.Fatalf("expected root prefill %q, got %#v", filepath.Clean(rootA), m.bootstrapRoots)
+	}
+
+	m = applyCmd(t, m, m.focusBootstrapField(2))
+	m = applyMsg(t, m, keyRune('d'))
+	if len(m.bootstrapRoots) != 0 {
+		t.Fatalf("expected root removal from bootstrap modal, got %#v", m.bootstrapRoots)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+	if m.mode != modeResourcePicker {
+		t.Fatalf("expected resource picker for bootstrap root browse, got %v", m.mode)
+	}
+	m = applyMsg(t, m, keyRune('a'))
+	if m.mode != modeBootstrapSettings {
+		t.Fatalf("expected return to bootstrap modal after root attach, got %v", m.mode)
+	}
+	if len(m.bootstrapRoots) != 1 || m.bootstrapRoots[0] != filepath.Clean(rootB) {
+		t.Fatalf("expected root picker add %q, got %#v", filepath.Clean(rootB), m.bootstrapRoots)
+	}
+
+	m.bootstrapDisplayInput.SetValue("Lane Agent")
+	m.bootstrapActorIndex = bootstrapActorTypeIndex("system")
+	m = applyCmd(t, m, m.focusBootstrapField(3))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if saveCalls != 1 {
+		t.Fatalf("expected one bootstrap save call, got %d", saveCalls)
+	}
+	if m.mode != modeNone {
+		t.Fatalf("expected bootstrap modal to close after save, got %v", m.mode)
+	}
+	if m.identityDisplayName != "Lane Agent" || m.identityDefaultActorType != "system" {
+		t.Fatalf("expected in-memory bootstrap settings update, got name=%q actor=%q", m.identityDisplayName, m.identityDefaultActorType)
+	}
+	if len(m.searchRoots) != 1 || m.searchRoots[0] != filepath.Clean(rootB) {
+		t.Fatalf("expected in-memory search roots update %q, got %#v", filepath.Clean(rootB), m.searchRoots)
+	}
+	if saved.DisplayName != "Lane Agent" || saved.DefaultActorType != "system" {
+		t.Fatalf("unexpected callback bootstrap payload %#v", saved)
+	}
+}
+
 // TestModelInputModePaths verifies behavior for the covered scenario.
 func TestModelInputModePaths(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)

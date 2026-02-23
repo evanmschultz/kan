@@ -1,10 +1,8 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -134,12 +132,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if dbOverridden {
 		cfg.Database.Path = dbPath
 	}
-	if command == "" {
-		cfg, err = ensureStartupBootstrap(configPath, cfg, defaultCfg, dbPath, dbOverridden, os.Stdin, stderr)
-		if err != nil {
-			return fmt.Errorf("startup bootstrap: %w", err)
-		}
-	}
+	bootstrapRequired := startupBootstrapRequired(cfg)
 
 	logger, err := newRuntimeLogger(stderr, appName, devMode, cfg.Logging, time.Now)
 	if err != nil {
@@ -156,7 +149,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 	}()
 
-	logger.Info("startup configuration resolved", "app", appName, "dev_mode", devMode, "command", command)
+	logger.Info("startup configuration resolved", "app", appName, "dev_mode", devMode, "command", command, "bootstrap_required", bootstrapRequired)
 	logger.Debug("runtime paths resolved", "config_path", configPath, "data_dir", paths.DataDir, "db_path", dbPath)
 	logger.Info("configuration loaded", "config_path", configPath, "db_path", cfg.Database.Path, "log_level", cfg.Logging.Level)
 	if devPath := logger.DevLogPath(); devPath != "" {
@@ -208,6 +201,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	m := tui.NewModel(
 		svc,
 		tui.WithLaunchProjectPicker(true),
+		tui.WithStartupBootstrap(bootstrapRequired),
 		tui.WithRuntimeConfig(toTUIRuntimeConfig(cfg)),
 		tui.WithReloadConfigCallback(func() (tui.RuntimeConfig, error) {
 			logger.Info("runtime config reload requested", "config_path", configPath)
@@ -235,6 +229,22 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 				return err
 			}
 			logger.Info("labels config update complete", "project_slug", projectSlug, "global_count", len(globalLabels), "project_count", len(projectLabels), "config_path", configPath)
+			return nil
+		}),
+		tui.WithSaveBootstrapConfigCallback(func(cfg tui.BootstrapConfig) error {
+			displayName := strings.TrimSpace(cfg.DisplayName)
+			actorType := sanitizeBootstrapActorType(cfg.DefaultActorType)
+			searchRoots := cloneSearchRoots(cfg.SearchRoots)
+			logger.Info("bootstrap settings update requested", "config_path", configPath, "display_name", displayName, "default_actor_type", actorType, "search_roots_count", len(searchRoots))
+			if err := persistIdentity(configPath, displayName, actorType); err != nil {
+				logger.Error("bootstrap identity update failed", "config_path", configPath, "display_name", displayName, "default_actor_type", actorType, "err", err)
+				return err
+			}
+			if err := persistSearchRoots(configPath, searchRoots); err != nil {
+				logger.Error("bootstrap search roots update failed", "config_path", configPath, "search_roots_count", len(searchRoots), "err", err)
+				return err
+			}
+			logger.Info("bootstrap settings update complete", "config_path", configPath, "display_name", displayName, "default_actor_type", actorType, "search_roots_count", len(searchRoots))
 			return nil
 		}),
 	)
@@ -328,179 +338,22 @@ func firstArg(args []string) string {
 	return args[0]
 }
 
-// startupBootstrapValues captures required first-run bootstrap answers.
-type startupBootstrapValues struct {
-	DisplayName string
-	SearchRoots []string
+// startupBootstrapRequired reports whether startup must collect required identity/root settings in TUI.
+func startupBootstrapRequired(cfg config.Config) bool {
+	if strings.TrimSpace(cfg.Identity.DisplayName) == "" {
+		return true
+	}
+	return len(cfg.Paths.SearchRoots) == 0
 }
 
-// ensureStartupBootstrap collects and persists required startup fields before TUI launch.
-func ensureStartupBootstrap(configPath string, cfg config.Config, defaults config.Config, dbPath string, dbOverridden bool, input io.Reader, output io.Writer) (config.Config, error) {
-	if strings.TrimSpace(cfg.Identity.DisplayName) != "" && len(cfg.Paths.SearchRoots) > 0 {
-		return cfg, nil
-	}
-	values, err := promptStartupBootstrapValues(input, output, cfg)
-	if err != nil {
-		return config.Config{}, err
-	}
-	actorType := strings.TrimSpace(cfg.Identity.DefaultActorType)
-	if actorType == "" {
-		actorType = "user"
-	}
-	if err := persistIdentity(configPath, values.DisplayName, actorType); err != nil {
-		return config.Config{}, fmt.Errorf("persist identity: %w", err)
-	}
-	if err := persistSearchRoots(configPath, values.SearchRoots); err != nil {
-		return config.Config{}, fmt.Errorf("persist search roots: %w", err)
-	}
-	reloaded, err := config.Load(configPath, defaults)
-	if err != nil {
-		return config.Config{}, fmt.Errorf("reload config %q: %w", configPath, err)
-	}
-	if dbOverridden {
-		reloaded.Database.Path = dbPath
-	}
-	return reloaded, nil
-}
-
-// promptStartupBootstrapValues runs interactive prompts for required startup fields.
-func promptStartupBootstrapValues(input io.Reader, output io.Writer, existing config.Config) (startupBootstrapValues, error) {
-	if input == nil {
-		return startupBootstrapValues{}, errors.New("bootstrap input is required")
-	}
-	if output == nil {
-		output = io.Discard
-	}
-
-	reader := bufio.NewReader(input)
-	_, _ = fmt.Fprintln(output, "kan setup required")
-	_, _ = fmt.Fprintln(output, "Please provide required identity and search root settings.")
-	displayName := strings.TrimSpace(existing.Identity.DisplayName)
-	if displayName == "" {
-		var err error
-		displayName, err = promptRequiredBootstrapValue(reader, output, "Display name: ", "display name is required")
-		if err != nil {
-			return startupBootstrapValues{}, err
-		}
-	}
-	searchRoots := append([]string(nil), existing.Paths.SearchRoots...)
-	if len(searchRoots) == 0 {
-		var err error
-		searchRoots, err = promptBootstrapSearchRoots(reader, output)
-		if err != nil {
-			return startupBootstrapValues{}, err
-		}
-	}
-	_, _ = fmt.Fprintln(output)
-	return startupBootstrapValues{
-		DisplayName: displayName,
-		SearchRoots: searchRoots,
-	}, nil
-}
-
-// promptRequiredBootstrapValue reads one non-empty prompt value.
-func promptRequiredBootstrapValue(reader *bufio.Reader, output io.Writer, prompt, emptyErr string) (string, error) {
-	for {
-		value, err := readBootstrapLine(reader, output, prompt)
-		if err != nil {
-			return "", err
-		}
-		if value != "" {
-			return value, nil
-		}
-		_, _ = fmt.Fprintln(output, emptyErr)
-	}
-}
-
-// promptBootstrapSearchRoots prompts for one-or-more valid root directory paths.
-func promptBootstrapSearchRoots(reader *bufio.Reader, output io.Writer) ([]string, error) {
-	roots := make([]string, 0, 1)
-	seen := map[string]struct{}{}
-	for {
-		rawRoot, err := promptRequiredBootstrapValue(reader, output, "Search root path: ", "search root path is required")
-		if err != nil {
-			return nil, err
-		}
-		root, err := normalizeBootstrapSearchRoot(rawRoot)
-		if err != nil {
-			_, _ = fmt.Fprintln(output, "invalid search root:", err)
-			continue
-		}
-		if _, ok := seen[root]; ok {
-			_, _ = fmt.Fprintln(output, "search root already added")
-			continue
-		}
-		seen[root] = struct{}{}
-		roots = append(roots, root)
-
-		more, err := promptBootstrapYesNo(reader, output, "Add another root? [y/N]: ", false)
-		if err != nil {
-			return nil, err
-		}
-		if !more {
-			break
-		}
-	}
-	return roots, nil
-}
-
-// promptBootstrapYesNo reads a y/n answer with a configurable default.
-func promptBootstrapYesNo(reader *bufio.Reader, output io.Writer, prompt string, defaultYes bool) (bool, error) {
-	for {
-		value, err := readBootstrapLine(reader, output, prompt)
-		if err != nil {
-			return false, err
-		}
-		switch strings.ToLower(strings.TrimSpace(value)) {
-		case "":
-			return defaultYes, nil
-		case "y", "yes":
-			return true, nil
-		case "n", "no":
-			return false, nil
-		default:
-			_, _ = fmt.Fprintln(output, "please answer y or n")
-		}
-	}
-}
-
-// readBootstrapLine renders one prompt and returns the trimmed response.
-func readBootstrapLine(reader *bufio.Reader, output io.Writer, prompt string) (string, error) {
-	if _, err := fmt.Fprint(output, prompt); err != nil {
-		return "", fmt.Errorf("write prompt: %w", err)
-	}
-	line, err := reader.ReadString('\n')
-	switch {
-	case err == nil:
-		return strings.TrimSpace(line), nil
-	case errors.Is(err, io.EOF):
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
-			return "", io.EOF
-		}
-		return trimmed, nil
+// sanitizeBootstrapActorType normalizes bootstrap actor type values to supported options.
+func sanitizeBootstrapActorType(raw string) string {
+	switch strings.TrimSpace(strings.ToLower(raw)) {
+	case "user", "agent", "system":
+		return strings.TrimSpace(strings.ToLower(raw))
 	default:
-		return "", fmt.Errorf("read prompt value: %w", err)
+		return "user"
 	}
-}
-
-// normalizeBootstrapSearchRoot validates one input path and canonicalizes it.
-func normalizeBootstrapSearchRoot(raw string) (string, error) {
-	root := strings.TrimSpace(raw)
-	if root == "" {
-		return "", errors.New("search root path is required")
-	}
-	if absRoot, err := filepath.Abs(root); err == nil {
-		root = absRoot
-	}
-	info, err := os.Stat(root)
-	if err != nil {
-		return "", fmt.Errorf("path not found: %w", err)
-	}
-	if !info.IsDir() {
-		return "", fmt.Errorf("path must be a directory")
-	}
-	return filepath.Clean(root), nil
 }
 
 // parseBoolEnv parses input into a normalized form.

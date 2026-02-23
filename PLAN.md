@@ -2428,3 +2428,58 @@ Single-branch parallel execution is now bootstrapped. This section is the source
         - `just ci` -> pass
     - next step:
         - commit checkpoint, then launch subagent waves for remaining UX scope (TUI first-run modal bootstrap, fuzzy root picker UX, README/Fang lane), followed by new targeted manual worksheet creation.
+- [x] 2026-02-23: Windows search-root assertion portability fix (targeted)
+    - objective:
+        - fix `windows-latest` CI failures in `cmd/kan` caused by OS-specific path separator assertions in search-root tests.
+    - Context7 evidence (required pre-edit):
+        - `resolve-library-id` `go standard library filepath` -> pass (`/websites/pkg_go_dev_go1_25_3`)
+        - `query-docs` `/websites/pkg_go_dev_go1_25_3` (filepath.Clean cross-platform behavior) -> pass
+    - files updated:
+        - `cmd/kan/main_test.go`
+    - implementation notes:
+        - updated two search-root assertions to compare against `filepath.Clean("/tmp/code")` and `filepath.Clean("/tmp/docs")` instead of hardcoded `/tmp/...` strings.
+    - command/test evidence:
+        - `just test-pkg ./cmd/kan` -> fail
+            - failure observed at `TestRunBootstrapPromptsAndPersistsMissingFields` with empty persisted display name.
+        - `git status --short` -> pass; concurrent in-flight edits present in:
+            - `README.md`
+            - `cmd/kan/main.go`
+            - `cmd/kan/main_test.go`
+            - `internal/tui/model.go`
+            - `internal/tui/options.go`
+        - `git diff --stat` -> pass; substantial concurrent diff detected, likely affecting bootstrap test flow.
+        - `just test-pkg ./cmd/kan` (rerun after concurrent updates settled) -> pass
+        - `just ci` -> pass
+    - status:
+        - complete; portability assertion fix verified with repository gate.
+- [x] 2026-02-23: Ordered checkpoint B (subagent completion wave: native bootstrap modal + fuzzy roots + README/Fang + delta worksheet)
+    - objective:
+        - complete remaining user-requested UX/docs scope after checkpoint A commit:
+            - replace startup stdin bootstrap prompts with native TUI modal flow,
+            - make global search-root setup/editing fuzzy and low-friction,
+            - update README with accurate current behavior and Fang context,
+            - produce a new targeted manual worksheet for only changed/fixed areas.
+    - subagent lane results:
+        - `W12-DE` (cmd+tui startup/bootstrap/root UX) -> pass handoff
+            - key changes:
+                - removed `cmd/kan` stdin bootstrap prompt flow,
+                - introduced TUI `modeBootstrapSettings` (mandatory on first run when required fields missing),
+                - added bootstrap save callback wiring in `cmd/kan/main.go` and TUI options,
+                - added fuzzy root add/remove flow via resource picker integration,
+                - added command-palette command `bootstrap-settings` (`setup`, `identity-roots`).
+            - worker verification:
+                - `just test-pkg ./cmd/kan` -> pass
+                - `just test-pkg ./internal/tui` -> pass
+        - `W12-F` (README/Fang docs lane) -> pass handoff
+            - key changes:
+                - `README.md` updated for picker-first startup, bootstrap identity/search roots, thread mode/ownership details, and accurate Fang status/context.
+            - verification:
+                - `test_not_applicable` (docs-only lane)
+    - integrator verification:
+        - `just test-pkg ./cmd/kan` -> pass
+        - `just test-pkg ./internal/tui` -> pass
+        - `just ci` -> pass
+    - docs/worksheet outputs:
+        - created `TUI_MANUAL_TEST_WORKSHEET_DELTA_BOOTSTRAP_THREADS.md` for post-change targeted manual validation.
+    - status:
+        - complete for this ordered wave; ready for user manual delta pass.
