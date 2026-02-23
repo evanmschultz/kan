@@ -124,6 +124,7 @@ Expected:
 - Focused row uses fuchsia highlight.
 - Focused+selected row keeps selection cue (does not lose selected style).
 - Selection styling is distinct from plain focus.
+- Selection marker/cursor symbol appears on title line only (not duplicated on secondary/meta line).
 
 ### USER NOTES S1.3-N1
 
@@ -361,13 +362,15 @@ Actions:
 1. Press `:`.
 2. Try fuzzy/abbrev queries (for example `ns` for `new-subtask`).
 3. Execute `search-all` and `search-project` from palette.
-4. Scroll through palette list beyond first page.
+4. Execute `highlight-color` and set a custom value (for example `201`).
+5. Scroll through palette list beyond first page.
 
 Expected:
 
 - Fuzzy command ranking behaves predictably.
 - Enter executes highlighted command.
 - `search-all` and `search-project` open search mode with correct scope.
+- `highlight-color` updates focused-row highlight color at runtime.
 - Windowed scrolling keeps highlighted command visible.
 
 ### USER NOTES S5.2-N1

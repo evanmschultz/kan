@@ -63,6 +63,7 @@ const (
 	modeLabelPicker
 	modePathsRoots
 	modeLabelsConfig
+	modeHighlightColor
 )
 
 // taskFormFields stores task-form field keys in display/update order.
@@ -96,6 +97,7 @@ const (
 const (
 	activityLogMaxItems   = 200
 	activityLogViewWindow = 14
+	defaultHighlightColor = "212"
 )
 
 // priorityOptions stores a package-level helper value.
@@ -262,6 +264,7 @@ type Model struct {
 	searchInput                 textinput.Model
 	commandInput                textinput.Model
 	pathsRootInput              textinput.Model
+	highlightColorInput         textinput.Model
 	searchFocus                 int
 	searchStateCursor           int
 	searchCrossProject          bool
@@ -313,6 +316,7 @@ type Model struct {
 	showDueSummary  bool
 	projectRoots    map[string]string
 	defaultRootDir  string
+	highlightColor  string
 
 	projectionRootTaskID string
 
@@ -418,6 +422,10 @@ func NewModel(svc Service, opts ...Option) Model {
 	pathsRootInput.Prompt = "root: "
 	pathsRootInput.Placeholder = "absolute path (empty clears mapping)"
 	pathsRootInput.CharLimit = 512
+	highlightColorInput := textinput.New()
+	highlightColorInput.Prompt = "color: "
+	highlightColorInput.Placeholder = "ansi index (e.g. 212) or #RRGGBB"
+	highlightColorInput.CharLimit = 32
 	resourcePickerFilter := textinput.New()
 	resourcePickerFilter.Prompt = "filter: "
 	resourcePickerFilter.Placeholder = "type to fuzzy-filter files/dirs"
@@ -432,6 +440,7 @@ func NewModel(svc Service, opts ...Option) Model {
 		searchInput:          searchInput,
 		commandInput:         commandInput,
 		pathsRootInput:       pathsRootInput,
+		highlightColorInput:  highlightColorInput,
 		resourcePickerFilter: resourcePickerFilter,
 		searchStates:         []string{"todo", "progress", "done"},
 		searchDefaultStates:  []string{"todo", "progress", "done"},
@@ -439,6 +448,7 @@ func NewModel(svc Service, opts ...Option) Model {
 		showWIPWarnings:      true,
 		dueSoonWindows:       []time.Duration{24 * time.Hour, time.Hour},
 		showDueSummary:       true,
+		highlightColor:       defaultHighlightColor,
 		selectedTaskIDs:      map[string]struct{}{},
 		activityLog:          []activityEntry{},
 		confirmDelete:        true,
@@ -754,8 +764,9 @@ func (m Model) View() tea.View {
 	normColStyle := baseColStyle.Copy()
 	colTitle := lipgloss.NewStyle().Bold(true).Foreground(accent)
 	archivedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
-	selectedTaskStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
-	selectedMultiTaskStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true).Underline(true)
+	highlight := m.selectedTaskHighlightColor()
+	selectedTaskStyle := lipgloss.NewStyle().Foreground(highlight).Bold(true)
+	selectedMultiTaskStyle := lipgloss.NewStyle().Foreground(highlight).Bold(true).Underline(true)
 	multiSelectedTaskStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Background(lipgloss.Color("237")).Bold(true)
 	itemSubStyle := lipgloss.NewStyle().Foreground(muted)
 	groupStyle := lipgloss.NewStyle().Bold(true).Foreground(muted)
@@ -840,15 +851,8 @@ func (m Model) View() tea.View {
 				rowStart := len(taskLines)
 				taskLines = append(taskLines, title)
 				if sub != "" {
+					// Keep selection/focus markers on the title row only to avoid duplicate stars/cursor bars.
 					subPrefix := "   "
-					switch {
-					case selected && multiSelected:
-						subPrefix = "│* "
-					case selected:
-						subPrefix = "│  "
-					case multiSelected:
-						subPrefix = " * "
-					}
 					taskLines = append(taskLines, subPrefix+itemSubStyle.Render(sub))
 				}
 				if taskIdx < len(colTasks)-1 {
@@ -1156,6 +1160,15 @@ func (m *Model) startPathsRootsMode() tea.Cmd {
 	m.pathsRootInput.CursorEnd()
 	m.status = "paths/roots"
 	return m.pathsRootInput.Focus()
+}
+
+// startHighlightColorMode opens a modal for updating focused-row highlight color.
+func (m *Model) startHighlightColorMode() tea.Cmd {
+	m.mode = modeHighlightColor
+	m.highlightColorInput.SetValue(strings.TrimSpace(m.highlightColor))
+	m.highlightColorInput.CursorEnd()
+	m.status = "highlight color"
+	return m.highlightColorInput.Focus()
 }
 
 // startQuickActions starts quick actions.
@@ -1794,6 +1807,7 @@ func commandPaletteItems() []commandPaletteItem {
 		{Command: "reload-config", Aliases: []string{"config-reload", "reload"}, Description: "reload runtime config from disk"},
 		{Command: "paths-roots", Aliases: []string{"roots", "project-root"}, Description: "edit current project root mapping"},
 		{Command: "labels-config", Aliases: []string{"labels", "edit-labels"}, Description: "edit global + project labels defaults"},
+		{Command: "highlight-color", Aliases: []string{"set-highlight", "focus-color"}, Description: "set focused-row highlight color"},
 		{Command: "activity-log", Aliases: []string{"log"}, Description: "open recent activity modal"},
 		{Command: "help", Aliases: []string{}, Description: "open help modal"},
 		{Command: "quit", Aliases: []string{"exit"}, Description: "quit kan"},
@@ -3508,6 +3522,22 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	if m.mode == modeHighlightColor {
+		switch {
+		case msg.Code == tea.KeyEscape || msg.String() == "esc":
+			m.mode = modeNone
+			m.highlightColorInput.Blur()
+			m.status = "cancelled"
+			return m, nil
+		case msg.Code == tea.KeyEnter || msg.String() == "enter":
+			return m.submitInputMode()
+		default:
+			var cmd tea.Cmd
+			m.highlightColorInput, cmd = m.highlightColorInput.Update(msg)
+			return m, cmd
+		}
+	}
+
 	switch msg.String() {
 	case "esc":
 		m.mode = modeNone
@@ -3752,6 +3782,16 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 			}
 			return actionMsg{status: "labels config saved"}
 		}
+	case modeHighlightColor:
+		value := strings.TrimSpace(m.highlightColorInput.Value())
+		if value == "" {
+			value = defaultHighlightColor
+		}
+		m.highlightColor = value
+		m.mode = modeNone
+		m.highlightColorInput.Blur()
+		m.status = "highlight color updated"
+		return m, nil
 	case modeAddProject, modeEditProject:
 		isAdd := m.mode == modeAddProject
 		vals := m.projectFormValues()
@@ -3943,6 +3983,8 @@ func (m Model) executeCommandPalette(command string) (tea.Model, tea.Cmd) {
 		return m, m.startPathsRootsMode()
 	case "labels-config", "labels", "edit-labels":
 		return m, m.startLabelsConfigForm()
+	case "highlight-color", "set-highlight", "focus-color":
+		return m, m.startHighlightColorMode()
 	case "activity-log", "log":
 		return m, m.openActivityLog()
 	case "help":
@@ -5304,6 +5346,15 @@ func projectAccentColor(project domain.Project) color.Color {
 	return lipgloss.Color(value)
 }
 
+// selectedTaskHighlightColor returns the configured board-selection highlight color.
+func (m Model) selectedTaskHighlightColor() color.Color {
+	value := strings.TrimSpace(m.highlightColor)
+	if value == "" {
+		value = defaultHighlightColor
+	}
+	return lipgloss.Color(value)
+}
+
 // renderOverviewPanel renders output for the current model state.
 func (m Model) renderOverviewPanel(project domain.Project, accent, muted, dim color.Color) string {
 	lines := []string{
@@ -6091,7 +6142,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		lines = append(lines, hintStyle.Render("j/k navigate • enter run • esc close"))
 		return style.Render(strings.Join(lines, "\n"))
 
-	case modeAddTask, modeSearch, modeRenameTask, modeEditTask, modeAddProject, modeEditProject, modeLabelsConfig:
+	case modeAddTask, modeSearch, modeRenameTask, modeEditTask, modeAddProject, modeEditProject, modeLabelsConfig, modeHighlightColor:
 		boxStyle := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(accent).
@@ -6120,6 +6171,9 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 			title = "Edit Project"
 		case modeLabelsConfig:
 			title = "Labels Config"
+		case modeHighlightColor:
+			title = "Highlight Color"
+			hint = "enter save • esc cancel • empty resets to default"
 		}
 
 		titleStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
@@ -6259,6 +6313,12 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 				lines = append(lines, labelStyle.Render(fmt.Sprintf("%-12s", label+":"))+" "+in.View())
 			}
 			lines = append(lines, hintStyle.Render("global applies across projects; project applies to current project only"))
+		case modeHighlightColor:
+			in := m.highlightColorInput
+			in.SetWidth(max(18, maxWidth-24))
+			lines = append(lines, hintStyle.Render("focused-row color (ansi index or #RRGGBB)"))
+			lines = append(lines, "value: "+in.View())
+			lines = append(lines, hintStyle.Render("example: 212 (fuchsia)"))
 		default:
 			lines = append(lines, m.input)
 		}
@@ -6408,6 +6468,8 @@ func (m Model) modeLabel() string {
 		return "paths/roots"
 	case modeLabelsConfig:
 		return "labels-config"
+	case modeHighlightColor:
+		return "highlight-color"
 	default:
 		return "normal"
 	}
@@ -6452,6 +6514,8 @@ func (m Model) modePrompt() string {
 		return "paths/roots: enter save, ctrl+r browse dirs, esc cancel"
 	case modeLabelsConfig:
 		return "labels config: enter save, esc cancel"
+	case modeHighlightColor:
+		return "highlight color: enter save, esc cancel"
 	default:
 		return ""
 	}

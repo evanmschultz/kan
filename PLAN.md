@@ -2029,3 +2029,40 @@ Single-branch parallel execution is now bootstrapped. This section is the source
       - note: non-fatal Go module stat-cache permission warning surfaced under sandbox restrictions; command exited 0 and all gates passed.
   - status:
     - in progress (implementation + worksheet refresh complete; awaiting user manual worksheet run for final closeout sign-off).
+  - progress update (2026-02-23, orchestrator, Wave C visual polish + runtime highlight control):
+    - objective:
+      - address live QA feedback on focused-row marker rendering and provide command-palette control for highlight color.
+    - Context7 evidence (required pre-edit):
+      - `resolve-library-id` `charmbracelet/lipgloss` -> pass (`/charmbracelet/lipgloss`)
+      - `resolve-library-id` `charmbracelet/bubbletea` -> pass (`/charmbracelet/bubbletea`)
+      - `query-docs` `/charmbracelet/lipgloss` (dynamic foreground style patterns) -> pass
+      - `query-docs` `/charmbracelet/bubbletea` (input-mode key handling patterns) -> pass
+    - implementation updates:
+      - `internal/tui/model.go`:
+        - removed duplicate marker rendering on secondary/meta lines (marker now title-line only).
+        - added runtime-configurable focused-row highlight color model state with default `212`.
+        - added command-palette command:
+          - `highlight-color` (aliases: `set-highlight`, `focus-color`).
+        - added highlight-color modal/input mode (`enter` save, `esc` cancel, blank resets to default).
+        - selected-row styles now use configured highlight color instead of hardcoded `212`.
+      - `internal/tui/model_test.go`:
+        - added `TestModelCommandPaletteHighlightColorApplies`.
+        - added `TestModelSelectionMarkerOnlyOnTitleLine`.
+      - `internal/tui/testdata/TestModelGoldenBoardOutput.golden` and `internal/tui/testdata/TestModelGoldenHelpExpandedOutput.golden`:
+        - refreshed to match marker-on-title-only rendering.
+      - `TUI_MANUAL_TEST_WORKSHEET.md`:
+        - updated section checks for:
+          - single marker on title row only,
+          - command-palette `highlight-color` runtime verification.
+    - failure/remediation log:
+      - `just test-pkg ./internal/tui` initially failed due sandbox cache permission (`~/Library/Caches/go-build` write denied).
+      - reran with approval outside sandbox; tests then failed only on expected golden snapshots after marker behavior change.
+      - mandatory Context7 re-consult completed after failed test run.
+      - resolved by running `just test-golden-update` and re-running `just test-pkg ./internal/tui`.
+  - verification log (2026-02-23, orchestrator, Wave C):
+    - `just fmt` -> pass
+    - `just test-golden-update` -> pass
+    - `just test-pkg ./internal/tui` -> pass
+    - `just ci` -> pass
+  - status:
+    - in progress (code + worksheet updated; awaiting full user worksheet pass to close re-opened pre-Phase-11 remediation item).

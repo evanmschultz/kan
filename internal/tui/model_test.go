@@ -775,6 +775,39 @@ func TestModelCommandPaletteFuzzyAbbreviationExecutesNewSubtask(t *testing.T) {
 	}
 }
 
+// TestModelCommandPaletteHighlightColorApplies verifies highlight-color command updates focused-row styling.
+func TestModelCommandPaletteHighlightColorApplies(t *testing.T) {
+	now := time.Date(2026, 2, 23, 11, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Styled task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	m := loadReadyModel(t, NewModel(svc))
+
+	updated, cmd := m.executeCommandPalette("highlight-color")
+	m = applyResult(t, updated, cmd)
+	if m.mode != modeHighlightColor {
+		t.Fatalf("expected highlight-color modal mode, got %v", m.mode)
+	}
+	m.highlightColorInput.SetValue("201")
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	if got := m.highlightColor; got != "201" {
+		t.Fatalf("expected stored highlight color 201, got %q", got)
+	}
+	rendered := fmt.Sprint(m.View().Content)
+	if !strings.Contains(rendered, "38;5;201") {
+		t.Fatalf("expected focused row rendered with ansi color 201, got\n%s", rendered)
+	}
+}
+
 // TestModelLabelsConfigCommandSave verifies labels-config command flow updates runtime labels and calls persistence callback.
 func TestModelLabelsConfigCommandSave(t *testing.T) {
 	now := time.Date(2026, 2, 23, 9, 30, 0, 0, time.UTC)
@@ -1506,6 +1539,30 @@ func TestModelFocusedAndSelectedStyling(t *testing.T) {
 	plain := stripANSI(rendered)
 	if !strings.Contains(plain, "│* Styled task") {
 		t.Fatalf("expected focused+selected marker to preserve selection cue, got\n%s", plain)
+	}
+}
+
+// TestModelSelectionMarkerOnlyOnTitleLine verifies marker symbols are not repeated on secondary card lines.
+func TestModelSelectionMarkerOnlyOnTitleLine(t *testing.T) {
+	now := time.Date(2026, 2, 23, 11, 30, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Has metadata line",
+		Priority:  domain.PriorityMedium,
+	}, now)
+
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	m := loadReadyModel(t, NewModel(svc))
+	m.selectedTaskIDs = map[string]struct{}{task.ID: {}}
+
+	plain := stripANSI(fmt.Sprint(m.View().Content))
+	if strings.Count(plain, "│* ") != 1 {
+		t.Fatalf("expected exactly one focused+selected marker on title line, got\n%s", plain)
 	}
 }
 
