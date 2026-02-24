@@ -20,6 +20,20 @@ just ci
 - `just check`: cross-platform smoke gate (`verify-sources`, `fmt-check`, `test`, `build`)
 - `just ci`: full gate (`verify-sources`, `fmt-check`, coverage-enforced test run, `build`)
 
+## Windows Note (Line Endings)
+
+`gofmt` checks require LF line endings for Go files. This repository includes `.gitattributes` rules to enforce that on checkout.
+
+If a local Windows clone still reports mass `gofmt required for:` failures, fix Git EOL settings and refresh files:
+
+```bash
+git config --global core.autocrlf false
+git config --global core.eol lf
+git add --renormalize .
+```
+
+If line endings are still stale after renormalization, re-clone the repository.
+
 ## Recommended Pre-Push Hook
 
 Install a local hook so pushes fail fast if `just ci` fails:

@@ -1,0 +1,14 @@
+# Keep line endings deterministic across operating systems.
+* text=auto
+
+# Go source and module files must stay LF so gofmt checks are stable on Windows.
+*.go text eol=lf
+go.mod text eol=lf
+go.sum text eol=lf
+
+# Keep CI/config/docs scripts consistent across platforms.
+*.md text eol=lf
+*.toml text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.sh text eol=lf

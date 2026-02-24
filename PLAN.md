@@ -2859,3 +2859,26 @@ Single-branch parallel execution is now bootstrapped. This section is the source
         - `just ci` -> pass
     - status:
         - complete; contributor and agent docs now match current workflow behavior.
+- [x] 2026-02-24: Windows fmt-check EOL stabilization (CI + repo attributes)
+    - objective:
+        - fix Windows-only `just check` failures where `gofmt -l` reported nearly all `.go` files due checkout line-ending drift.
+    - Context7 evidence (required):
+        - pre-edit consult:
+            - `resolve-library-id` `git` -> pass (`/websites/git-scm`)
+            - `query-docs` `/websites/git-scm` (`gitattributes` `text`/`eol` behavior and precedence over `core.autocrlf`) -> pass
+            - `resolve-library-id` `github actions` -> pass (`/websites/github_en_actions`)
+    - files updated:
+        - `.gitattributes`
+        - `.github/workflows/ci.yml`
+        - `CONTRIBUTING.md`
+    - implementation notes:
+        - added `.gitattributes` with deterministic LF rules for Go/module files and common text/config/docs files.
+        - added Windows-only pre-checkout Git config step in CI matrix job:
+            - `core.autocrlf=false`
+            - `core.eol=lf`
+        - documented local Windows remediation in `CONTRIBUTING.md`.
+    - verification log:
+        - `just check` -> pass
+        - `just ci` -> pass
+    - status:
+        - complete; line-ending policy is now explicit in repo and enforced in CI setup.
