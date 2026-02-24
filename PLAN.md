@@ -2843,3 +2843,19 @@ Single-branch parallel execution is now bootstrapped. This section is the source
         - `just ci` -> pass
     - status:
         - complete; agent policy text now matches workflow and Justfile behavior.
+- [x] 2026-02-24: Contributor CI-playbook docs alignment
+    - objective:
+        - document the local-before-remote CI policy so contributors catch failures with `just` before GitHub Actions.
+    - files updated:
+        - `AGENTS.md`
+        - `CONTRIBUTING.md`
+        - `README.md`
+    - implementation notes:
+        - added explicit AGENTS requirements for `just check` in iteration loops and `just ci` before push/PR updates.
+        - added `CONTRIBUTING.md` with local gate flow, pre-push hook installation, GitHub Actions gate split, and branch-protection recommendations.
+        - updated README to point to `CONTRIBUTING.md` and reflect current CI job split (`just check` matrix + Linux `just ci` full gate).
+    - verification log:
+        - `just check` -> pass
+        - `just ci` -> pass
+    - status:
+        - complete; contributor and agent docs now match current workflow behavior.

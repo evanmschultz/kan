@@ -12,7 +12,10 @@ You are a senior Go dev. YOU ALWAYS:
 - Run tests/checks through `just` recipes only; do not run `go test` directly from the agent.
 - Run `just` recipes directly (for example `just ci`) without `GOCACHE=...` or other cache-path env overrides unless the user explicitly asks for an override.
 - Do not create workspace-local ad-hoc Go cache directories (for example `.go-cache-*`) during normal test/check execution.
+- During normal implementation loops, run `just check` after meaningful increments to catch local regressions early.
 - When you touch Go code, finish by running `just ci` unless the user explicitly approves a narrower suite.
+- Before asking the user to push or before opening/refreshing a PR, run `just ci` and report results.
+- If you touch `.github/workflows/` or `Justfile`, run both `just check` and `just ci` before handoff.
 - In subagent parallel mode (single-branch orchestration), worker lanes may run scoped checks (`just test-pkg ...`), but the integrator must run `just ci` before marking a lane integrated/closed.
 - In subagent prompts, explicitly require: Context7 before any code change, Context7 again after any failed test/runtime error, and package-scoped `just test-pkg` checks for touched packages.
 - Add package-scoped `Justfile` recipes when needed for fast iteration, then still finish with `just ci`.

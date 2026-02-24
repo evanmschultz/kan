@@ -10,6 +10,8 @@ Current scope:
 - pre-MCP design-readiness planning for future MCP/HTTP contracts.
 - MCP/HTTP transports/tools are roadmap items and are not implemented in this phase.
 
+Contributor workflow and CI policy: `CONTRIBUTING.md`
+
 ## Features
 - Multi-project Kanban board.
 - Launches into a project picker first (no auto-created default project).
@@ -175,9 +177,12 @@ Primary commands:
 ```bash
 just fmt
 just test-pkg ./internal/app
+just check
 just test
 just ci
 ```
+
+For contribution policy, pre-push expectations, and branch-protection recommendations, see `CONTRIBUTING.md`.
 
 VHS visual regression captures:
 ```bash
@@ -193,4 +198,7 @@ just test-golden-update
 ```
 
 ## CI
-GitHub Actions runs matrix CI on macOS, Linux, and Windows via `just ci`, plus a Goreleaser snapshot validation job.
+GitHub Actions runs split gates:
+- matrix smoke checks on macOS/Linux/Windows via `just check`
+- full Linux gate via `just ci`
+- Goreleaser snapshot validation after the full Linux gate
