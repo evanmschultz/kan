@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	serveradapter "github.com/evanschultz/kan/internal/adapters/server"
 	"github.com/evanschultz/kan/internal/app"
 	"github.com/evanschultz/kan/internal/config"
 	"github.com/evanschultz/kan/internal/domain"
@@ -215,6 +217,99 @@ func TestRunUnknownCommand(t *testing.T) {
 	err := run(context.Background(), []string{"unknown-command"}, io.Discard, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "unknown command") {
 		t.Fatalf("expected unknown command error, got %v", err)
+	}
+}
+
+// TestRunServeCommandWiresDefaults verifies serve command wiring with default endpoint flags.
+func TestRunServeCommandWiresDefaults(t *testing.T) {
+	origRunner := serveCommandRunner
+	t.Cleanup(func() { serveCommandRunner = origRunner })
+
+	var gotCfg serveradapter.Config
+	var gotDeps serveradapter.Dependencies
+	serveCommandRunner = func(_ context.Context, cfg serveradapter.Config, deps serveradapter.Dependencies) error {
+		gotCfg = cfg
+		gotDeps = deps
+		return nil
+	}
+
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "kan.db")
+	cfgPath := filepath.Join(tmp, "kan.toml")
+	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "serve"}, io.Discard, io.Discard); err != nil {
+		t.Fatalf("run(serve) error = %v", err)
+	}
+	if gotCfg.HTTPBind != "127.0.0.1:8080" {
+		t.Fatalf("serve http bind = %q, want 127.0.0.1:8080", gotCfg.HTTPBind)
+	}
+	if gotCfg.APIEndpoint != "/api/v1" {
+		t.Fatalf("serve api endpoint = %q, want /api/v1", gotCfg.APIEndpoint)
+	}
+	if gotCfg.MCPEndpoint != "/mcp" {
+		t.Fatalf("serve mcp endpoint = %q, want /mcp", gotCfg.MCPEndpoint)
+	}
+	if gotDeps.CaptureState == nil {
+		t.Fatal("expected capture_state dependency to be wired")
+	}
+	if gotDeps.Attention == nil {
+		t.Fatal("expected attention dependency to be wired")
+	}
+}
+
+// TestRunServeCommandWiresFlags verifies serve command forwards endpoint flag overrides.
+func TestRunServeCommandWiresFlags(t *testing.T) {
+	origRunner := serveCommandRunner
+	t.Cleanup(func() { serveCommandRunner = origRunner })
+
+	var gotCfg serveradapter.Config
+	serveCommandRunner = func(_ context.Context, cfg serveradapter.Config, _ serveradapter.Dependencies) error {
+		gotCfg = cfg
+		return nil
+	}
+
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "kan.db")
+	cfgPath := filepath.Join(tmp, "kan.toml")
+	args := []string{
+		"--db", dbPath,
+		"--config", cfgPath,
+		"serve",
+		"--http", "127.0.0.1:9090",
+		"--api-endpoint", "/custom-api",
+		"--mcp-endpoint", "/custom-mcp",
+	}
+	if err := run(context.Background(), args, io.Discard, io.Discard); err != nil {
+		t.Fatalf("run(serve with flags) error = %v", err)
+	}
+	if gotCfg.HTTPBind != "127.0.0.1:9090" {
+		t.Fatalf("serve http bind = %q, want 127.0.0.1:9090", gotCfg.HTTPBind)
+	}
+	if gotCfg.APIEndpoint != "/custom-api" {
+		t.Fatalf("serve api endpoint = %q, want /custom-api", gotCfg.APIEndpoint)
+	}
+	if gotCfg.MCPEndpoint != "/custom-mcp" {
+		t.Fatalf("serve mcp endpoint = %q, want /custom-mcp", gotCfg.MCPEndpoint)
+	}
+}
+
+// TestRunServeCommandPropagatesErrors verifies serve runner failures are returned to callers.
+func TestRunServeCommandPropagatesErrors(t *testing.T) {
+	origRunner := serveCommandRunner
+	t.Cleanup(func() { serveCommandRunner = origRunner })
+
+	serveCommandRunner = func(_ context.Context, _ serveradapter.Config, _ serveradapter.Dependencies) error {
+		return errors.New("listen failed")
+	}
+
+	tmp := t.TempDir()
+	dbPath := filepath.Join(tmp, "kan.db")
+	cfgPath := filepath.Join(tmp, "kan.toml")
+	err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "serve"}, io.Discard, io.Discard)
+	if err == nil {
+		t.Fatal("expected serve command error")
+	}
+	if !strings.Contains(err.Error(), "run serve command") {
+		t.Fatalf("expected wrapped serve error, got %v", err)
 	}
 }
 

@@ -205,6 +205,28 @@ func (r *Repository) migrate(ctx context.Context) error {
 			revoke_reason TEXT NOT NULL DEFAULT '',
 			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
 		);`,
+		`CREATE TABLE IF NOT EXISTS attention_items (
+			id TEXT PRIMARY KEY,
+			project_id TEXT NOT NULL,
+			branch_id TEXT NOT NULL DEFAULT '',
+			scope_type TEXT NOT NULL,
+			scope_id TEXT NOT NULL,
+			state TEXT NOT NULL,
+			kind TEXT NOT NULL,
+			summary TEXT NOT NULL,
+			body_markdown TEXT NOT NULL DEFAULT '',
+			requires_user_action INTEGER NOT NULL DEFAULT 0,
+			created_by_actor TEXT NOT NULL DEFAULT 'kan-user',
+			created_by_type TEXT NOT NULL DEFAULT 'user',
+			created_at TEXT NOT NULL,
+			acknowledged_by_actor TEXT NOT NULL DEFAULT '',
+			acknowledged_by_type TEXT NOT NULL DEFAULT '',
+			acknowledged_at TEXT,
+			resolved_by_actor TEXT NOT NULL DEFAULT '',
+			resolved_by_type TEXT NOT NULL DEFAULT '',
+			resolved_at TEXT,
+			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+		);`,
 		`CREATE INDEX IF NOT EXISTS idx_columns_project_position ON columns_v1(project_id, position);`,
 		`CREATE INDEX IF NOT EXISTS idx_tasks_project_column_position ON tasks(project_id, column_id, position);`,
 		`CREATE INDEX IF NOT EXISTS idx_work_items_project_column_position ON work_items(project_id, column_id, position);`,
@@ -215,6 +237,8 @@ func (r *Repository) migrate(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_project_allowed_kinds_project ON project_allowed_kinds(project_id, kind_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_capability_leases_scope ON capability_leases(project_id, scope_type, scope_id, role);`,
 		`CREATE INDEX IF NOT EXISTS idx_capability_leases_expiry ON capability_leases(expires_at, revoked_at);`,
+		`CREATE INDEX IF NOT EXISTS idx_attention_scope_state_created_at ON attention_items(project_id, scope_type, scope_id, state, requires_user_action, created_at DESC, id DESC);`,
+		`CREATE INDEX IF NOT EXISTS idx_attention_project_state_kind_created_at ON attention_items(project_id, state, kind, created_at DESC, id DESC);`,
 	}
 
 	for _, stmt := range stmts {
@@ -333,11 +357,11 @@ func (r *Repository) seedDefaultKindCatalog(ctx context.Context) error {
 	records := []seedRecord{
 		{id: domain.DefaultProjectKind, displayName: "Project", description: "Built-in project kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToProject}},
 		{id: domain.KindID(domain.WorkKindTask), displayName: "Task", description: "Built-in task kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask}},
-		{id: domain.KindID(domain.WorkKindSubtask), displayName: "Subtask", description: "Built-in subtask kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}, parentScope: []domain.KindAppliesTo{domain.KindAppliesToTask, domain.KindAppliesToSubtask, domain.KindAppliesToPhase, domain.KindAppliesToBranch}},
-		{id: domain.KindID(domain.WorkKindPhase), displayName: "Phase", description: "Built-in phase kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase, domain.KindAppliesToTask}, parentScope: []domain.KindAppliesTo{domain.KindAppliesToBranch, domain.KindAppliesToPhase, domain.KindAppliesToTask}},
+		{id: domain.KindID(domain.WorkKindSubtask), displayName: "Subtask", description: "Built-in subtask kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}, parentScope: []domain.KindAppliesTo{domain.KindAppliesToTask, domain.KindAppliesToSubtask, domain.KindAppliesToSubphase, domain.KindAppliesToPhase, domain.KindAppliesToBranch}},
+		{id: domain.KindID(domain.WorkKindPhase), displayName: "Phase", description: "Built-in phase kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase, domain.KindAppliesToSubphase, domain.KindAppliesToTask}, parentScope: []domain.KindAppliesTo{domain.KindAppliesToBranch, domain.KindAppliesToPhase, domain.KindAppliesToSubphase, domain.KindAppliesToTask}},
 		{id: domain.KindID("branch"), displayName: "Branch", description: "Built-in branch kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToBranch}, parentScope: []domain.KindAppliesTo{domain.KindAppliesToBranch}},
-		{id: domain.KindID(domain.WorkKindDecision), displayName: "Decision", description: "Built-in decision kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask, domain.KindAppliesToSubtask}},
-		{id: domain.KindID(domain.WorkKindNote), displayName: "Note", description: "Built-in note kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask, domain.KindAppliesToSubtask}},
+		{id: domain.KindID(domain.WorkKindDecision), displayName: "Decision", description: "Built-in decision kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask, domain.KindAppliesToSubphase, domain.KindAppliesToSubtask}},
+		{id: domain.KindID(domain.WorkKindNote), displayName: "Note", description: "Built-in note kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask, domain.KindAppliesToSubphase, domain.KindAppliesToSubtask}},
 	}
 
 	now := time.Now().UTC()
@@ -363,8 +387,76 @@ func (r *Repository) seedDefaultKindCatalog(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("seed kind_catalog %q: %w", record.id, err)
 		}
+
+		existing, err := r.GetKindDefinition(ctx, record.id)
+		if err != nil {
+			return fmt.Errorf("load seeded kind_catalog %q: %w", record.id, err)
+		}
+		mergedApplies := mergeKindAppliesTo(existing.AppliesTo, record.appliesTo)
+		mergedParentScopes := mergeKindAppliesTo(existing.AllowedParentScopes, record.parentScope)
+		if kindAppliesToEqual(existing.AppliesTo, mergedApplies) && kindAppliesToEqual(existing.AllowedParentScopes, mergedParentScopes) {
+			continue
+		}
+
+		appliesJSON, err = json.Marshal(mergedApplies)
+		if err != nil {
+			return fmt.Errorf("encode merged kind applies_to for %q: %w", record.id, err)
+		}
+		parentJSON, err = json.Marshal(mergedParentScopes)
+		if err != nil {
+			return fmt.Errorf("encode merged kind parent scopes for %q: %w", record.id, err)
+		}
+		if _, err = r.db.ExecContext(ctx, `
+			UPDATE kind_catalog
+			SET applies_to_json = ?, allowed_parent_scopes_json = ?, updated_at = ?
+			WHERE id = ?
+		`, string(appliesJSON), string(parentJSON), ts(now), string(record.id)); err != nil {
+			return fmt.Errorf("update seeded kind_catalog %q: %w", record.id, err)
+		}
 	}
 	return nil
+}
+
+// mergeKindAppliesTo appends required values into existing values without duplicates.
+func mergeKindAppliesTo(existing, required []domain.KindAppliesTo) []domain.KindAppliesTo {
+	out := make([]domain.KindAppliesTo, 0, len(existing)+len(required))
+	seen := map[domain.KindAppliesTo]struct{}{}
+	for _, raw := range existing {
+		scope := domain.NormalizeKindAppliesTo(raw)
+		if scope == "" {
+			continue
+		}
+		if _, ok := seen[scope]; ok {
+			continue
+		}
+		seen[scope] = struct{}{}
+		out = append(out, scope)
+	}
+	for _, raw := range required {
+		scope := domain.NormalizeKindAppliesTo(raw)
+		if scope == "" {
+			continue
+		}
+		if _, ok := seen[scope]; ok {
+			continue
+		}
+		seen[scope] = struct{}{}
+		out = append(out, scope)
+	}
+	return out
+}
+
+// kindAppliesToEqual reports whether two applies_to slices are identical.
+func kindAppliesToEqual(a, b []domain.KindAppliesTo) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if domain.NormalizeKindAppliesTo(a[i]) != domain.NormalizeKindAppliesTo(b[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 // CreateProject creates project.
@@ -1089,6 +1181,197 @@ func (r *Repository) ListProjectChangeEvents(ctx context.Context, projectID stri
 	return out, rows.Err()
 }
 
+// CreateAttentionItem creates one scoped attention-item row.
+func (r *Repository) CreateAttentionItem(ctx context.Context, item domain.AttentionItem) error {
+	item.ID = strings.TrimSpace(item.ID)
+	if item.ID == "" {
+		return domain.ErrInvalidID
+	}
+	level, err := domain.NewLevelTuple(domain.LevelTupleInput{
+		ProjectID: item.ProjectID,
+		BranchID:  item.BranchID,
+		ScopeType: item.ScopeType,
+		ScopeID:   item.ScopeID,
+	})
+	if err != nil {
+		return err
+	}
+
+	state := domain.NormalizeAttentionState(item.State)
+	if state == "" {
+		state = domain.AttentionStateOpen
+	}
+	if !domain.IsValidAttentionState(state) {
+		return domain.ErrInvalidAttentionState
+	}
+	kind := domain.NormalizeAttentionKind(item.Kind)
+	if !domain.IsValidAttentionKind(kind) {
+		return domain.ErrInvalidAttentionKind
+	}
+	summary := strings.TrimSpace(item.Summary)
+	if summary == "" {
+		return domain.ErrInvalidSummary
+	}
+
+	createdBy := strings.TrimSpace(item.CreatedByActor)
+	if createdBy == "" {
+		createdBy = "kan-user"
+	}
+	createdByType := normalizeActorType(item.CreatedByType)
+	createdAt := item.CreatedAt.UTC()
+	if createdAt.IsZero() {
+		createdAt = time.Now().UTC()
+	}
+
+	ackBy := strings.TrimSpace(item.AcknowledgedByActor)
+	ackByType := normalizeOptionalActorType(item.AcknowledgedByType)
+	resolvedBy := strings.TrimSpace(item.ResolvedByActor)
+	resolvedByType := normalizeOptionalActorType(item.ResolvedByType)
+
+	_, err = r.db.ExecContext(ctx, `
+		INSERT INTO attention_items(
+			id, project_id, branch_id, scope_type, scope_id, state, kind, summary, body_markdown, requires_user_action,
+			created_by_actor, created_by_type, created_at, acknowledged_by_actor, acknowledged_by_type, acknowledged_at,
+			resolved_by_actor, resolved_by_type, resolved_at
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`,
+		item.ID,
+		level.ProjectID,
+		level.BranchID,
+		string(level.ScopeType),
+		level.ScopeID,
+		string(state),
+		string(kind),
+		summary,
+		strings.TrimSpace(item.BodyMarkdown),
+		boolToInt(item.RequiresUserAction),
+		createdBy,
+		string(createdByType),
+		ts(createdAt),
+		ackBy,
+		ackByType,
+		nullableTS(item.AcknowledgedAt),
+		resolvedBy,
+		resolvedByType,
+		nullableTS(item.ResolvedAt),
+	)
+	if err != nil {
+		return fmt.Errorf("insert attention item: %w", err)
+	}
+	return nil
+}
+
+// GetAttentionItem returns one attention-item row by id.
+func (r *Repository) GetAttentionItem(ctx context.Context, attentionID string) (domain.AttentionItem, error) {
+	return getAttentionItemByID(ctx, r.db, attentionID)
+}
+
+// ListAttentionItems lists scoped attention items in deterministic order.
+func (r *Repository) ListAttentionItems(ctx context.Context, filter domain.AttentionListFilter) ([]domain.AttentionItem, error) {
+	filter, err := domain.NormalizeAttentionListFilter(filter)
+	if err != nil {
+		return nil, err
+	}
+
+	query := `
+		SELECT
+			id, project_id, branch_id, scope_type, scope_id, state, kind, summary, body_markdown, requires_user_action,
+			created_by_actor, created_by_type, created_at, acknowledged_by_actor, acknowledged_by_type, acknowledged_at,
+			resolved_by_actor, resolved_by_type, resolved_at
+		FROM attention_items
+		WHERE project_id = ? AND scope_type = ? AND scope_id = ?
+	`
+	args := []any{filter.ProjectID, string(filter.ScopeType), filter.ScopeID}
+
+	if filter.UnresolvedOnly {
+		query += ` AND state != ?`
+		args = append(args, string(domain.AttentionStateResolved))
+	}
+	if len(filter.States) > 0 {
+		query += ` AND state IN (` + queryPlaceholders(len(filter.States)) + `)`
+		for _, state := range filter.States {
+			args = append(args, string(state))
+		}
+	}
+	if len(filter.Kinds) > 0 {
+		query += ` AND kind IN (` + queryPlaceholders(len(filter.Kinds)) + `)`
+		for _, kind := range filter.Kinds {
+			args = append(args, string(kind))
+		}
+	}
+	if filter.RequiresUserAction != nil {
+		query += ` AND requires_user_action = ?`
+		args = append(args, boolToInt(*filter.RequiresUserAction))
+	}
+
+	query += ` ORDER BY created_at DESC, id DESC`
+	if filter.Limit > 0 {
+		query += ` LIMIT ?`
+		args = append(args, filter.Limit)
+	}
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]domain.AttentionItem, 0)
+	for rows.Next() {
+		item, scanErr := scanAttentionItem(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+// ResolveAttentionItem resolves one attention item by id and returns the updated row.
+func (r *Repository) ResolveAttentionItem(ctx context.Context, attentionID string, resolvedBy string, resolvedByType domain.ActorType, resolvedAt time.Time) (domain.AttentionItem, error) {
+	attentionID = strings.TrimSpace(attentionID)
+	if attentionID == "" {
+		return domain.AttentionItem{}, domain.ErrInvalidID
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.AttentionItem{}, err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	item, err := getAttentionItemByID(ctx, tx, attentionID)
+	if err != nil {
+		return domain.AttentionItem{}, err
+	}
+	if err := item.Resolve(resolvedBy, resolvedByType, resolvedAt); err != nil {
+		return domain.AttentionItem{}, err
+	}
+
+	res, err := tx.ExecContext(ctx, `
+		UPDATE attention_items
+		SET state = ?, resolved_by_actor = ?, resolved_by_type = ?, resolved_at = ?
+		WHERE id = ?
+	`, string(item.State), item.ResolvedByActor, string(normalizeActorType(item.ResolvedByType)), nullableTS(item.ResolvedAt), attentionID)
+	if err != nil {
+		return domain.AttentionItem{}, err
+	}
+	if err := translateNoRows(res); err != nil {
+		return domain.AttentionItem{}, err
+	}
+
+	err = tx.Commit()
+	if err != nil {
+		return domain.AttentionItem{}, err
+	}
+	return item, nil
+}
+
 // CreateCapabilityLease creates one capability lease row.
 func (r *Repository) CreateCapabilityLease(ctx context.Context, lease domain.CapabilityLease) error {
 	_, err := r.db.ExecContext(ctx, `
@@ -1225,6 +1508,19 @@ func getTaskByID(ctx context.Context, q queryRower, id string) (domain.Task, err
 		WHERE id = ?
 	`, id)
 	return scanTask(row)
+}
+
+// getAttentionItemByID returns one attention item using the canonical attention_items table.
+func getAttentionItemByID(ctx context.Context, q queryRower, attentionID string) (domain.AttentionItem, error) {
+	row := q.QueryRowContext(ctx, `
+		SELECT
+			id, project_id, branch_id, scope_type, scope_id, state, kind, summary, body_markdown, requires_user_action,
+			created_by_actor, created_by_type, created_at, acknowledged_by_actor, acknowledged_by_type, acknowledged_at,
+			resolved_by_actor, resolved_by_type, resolved_at
+		FROM attention_items
+		WHERE id = ?
+	`, strings.TrimSpace(attentionID))
+	return scanAttentionItem(row)
 }
 
 // execerContext represents a write-only DB contract used by DB and Tx implementations.
@@ -1694,6 +1990,62 @@ func scanCapabilityLease(s scanner) (domain.CapabilityLease, error) {
 	return lease, nil
 }
 
+// scanAttentionItem decodes one attention_items row.
+func scanAttentionItem(s scanner) (domain.AttentionItem, error) {
+	var (
+		item               domain.AttentionItem
+		scopeTypeRaw       string
+		stateRaw           string
+		kindRaw            string
+		requiresUserAction int
+		createdByTypeRaw   string
+		createdRaw         string
+		ackByTypeRaw       string
+		ackAtRaw           sql.NullString
+		resolvedByTypeRaw  string
+		resolvedAtRaw      sql.NullString
+	)
+	if err := s.Scan(
+		&item.ID,
+		&item.ProjectID,
+		&item.BranchID,
+		&scopeTypeRaw,
+		&item.ScopeID,
+		&stateRaw,
+		&kindRaw,
+		&item.Summary,
+		&item.BodyMarkdown,
+		&requiresUserAction,
+		&item.CreatedByActor,
+		&createdByTypeRaw,
+		&createdRaw,
+		&item.AcknowledgedByActor,
+		&ackByTypeRaw,
+		&ackAtRaw,
+		&item.ResolvedByActor,
+		&resolvedByTypeRaw,
+		&resolvedAtRaw,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.AttentionItem{}, app.ErrNotFound
+		}
+		return domain.AttentionItem{}, err
+	}
+
+	item.ScopeType = domain.NormalizeScopeLevel(domain.ScopeLevel(scopeTypeRaw))
+	item.State = domain.NormalizeAttentionState(domain.AttentionState(stateRaw))
+	item.Kind = domain.NormalizeAttentionKind(domain.AttentionKind(kindRaw))
+	item.RequiresUserAction = requiresUserAction != 0
+	item.CreatedByType = normalizeActorType(domain.ActorType(createdByTypeRaw))
+	item.CreatedAt = parseTS(createdRaw)
+	item.AcknowledgedByType = domain.ActorType(normalizeOptionalActorType(domain.ActorType(ackByTypeRaw)))
+	item.AcknowledgedAt = parseNullTS(ackAtRaw)
+	item.ResolvedByType = domain.ActorType(normalizeOptionalActorType(domain.ActorType(resolvedByTypeRaw)))
+	item.ResolvedAt = parseNullTS(resolvedAtRaw)
+
+	return item, nil
+}
+
 // translateNoRows handles translate no rows.
 func translateNoRows(res sql.Result) error {
 	affected, err := res.RowsAffected()
@@ -1712,6 +2064,28 @@ func boolToInt(value bool) int {
 		return 1
 	}
 	return 0
+}
+
+// queryPlaceholders returns a comma-separated list of SQL parameter placeholders.
+func queryPlaceholders(count int) string {
+	if count <= 0 {
+		return ""
+	}
+	return strings.TrimPrefix(strings.Repeat(",?", count), ",")
+}
+
+// normalizeOptionalActorType canonicalizes optional actor-type fields without defaults.
+func normalizeOptionalActorType(actorType domain.ActorType) string {
+	switch strings.TrimSpace(strings.ToLower(string(actorType))) {
+	case string(domain.ActorTypeUser):
+		return string(domain.ActorTypeUser)
+	case string(domain.ActorTypeAgent):
+		return string(domain.ActorTypeAgent)
+	case string(domain.ActorTypeSystem):
+		return string(domain.ActorTypeSystem)
+	default:
+		return ""
+	}
 }
 
 // ts handles ts.

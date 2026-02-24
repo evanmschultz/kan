@@ -1450,8 +1450,8 @@ func TestModelPathsRootsModalValidationAndSaveError(t *testing.T) {
 	}
 }
 
-// TestModelResourcePickerUsesSearchRootFallback verifies global search roots back resource picker defaults.
-func TestModelResourcePickerUsesSearchRootFallback(t *testing.T) {
+// TestModelResourcePickerRequiresProjectRootForTaskAttach verifies task attachment does not fall back when project root is missing.
+func TestModelResourcePickerRequiresProjectRootForTaskAttach(t *testing.T) {
 	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
@@ -1469,13 +1469,16 @@ func TestModelResourcePickerUsesSearchRootFallback(t *testing.T) {
 		newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task}),
 		WithSearchRoots([]string{root}),
 	))
-	got := m.resourcePickerRootForCurrentProject()
-	want, err := filepath.Abs(root)
-	if err != nil {
-		t.Fatalf("Abs() error = %v", err)
+	if got := m.resourcePickerRootForCurrentProject(); got != "" {
+		t.Fatalf("expected empty project root lookup when mapping is missing, got %q", got)
 	}
-	if got != want {
-		t.Fatalf("expected search-root fallback %q, got %q", want, got)
+	m = applyMsg(t, m, keyRune('i'))
+	m = applyMsg(t, m, keyRune('r'))
+	if m.mode != modeTaskInfo {
+		t.Fatalf("expected to remain in task info mode when project root is missing, got %v", m.mode)
+	}
+	if !strings.Contains(m.status, "set project root first") {
+		t.Fatalf("expected missing project-root status, got %q", m.status)
 	}
 }
 
@@ -2975,6 +2978,7 @@ func TestSearchAndCommandPaletteFlow(t *testing.T) {
 	if m.isSearchStateEnabled("todo") {
 		t.Fatalf("expected todo filter disabled, got %#v", m.searchStates)
 	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab}) // levels
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab}) // scope
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab}) // archived
@@ -3663,8 +3667,8 @@ func TestProjectionAndRollupHelpers(t *testing.T) {
 	}
 }
 
-// TestProjectRootFallback verifies configured root and fallback behavior.
-func TestProjectRootFallback(t *testing.T) {
+// TestProjectRootLookup verifies strict project-root lookup and non-task browse fallback behavior.
+func TestProjectRootLookup(t *testing.T) {
 	root := t.TempDir()
 	p := domain.Project{ID: "p1", Slug: "inbox", Name: "Inbox"}
 	m := Model{
@@ -3677,8 +3681,11 @@ func TestProjectRootFallback(t *testing.T) {
 
 	m.projectRoots = map[string]string{}
 	m.defaultRootDir = "."
-	if got := m.resourcePickerRootForCurrentProject(); got == "" {
-		t.Fatalf("expected non-empty fallback root")
+	if got := m.resourcePickerRootForCurrentProject(); got != "" {
+		t.Fatalf("expected empty project-root lookup when mapping is unset, got %q", got)
+	}
+	if got := m.resourcePickerBrowseRoot(); got == "" {
+		t.Fatal("expected non-empty browse root fallback")
 	}
 }
 
@@ -3854,6 +3861,51 @@ func TestModelResourcePickerAttachFromTaskInfoAndEdit(t *testing.T) {
 	}
 }
 
+// TestModelResourcePickerBlockedWithoutProjectRoot verifies task attachment flows fail closed when project root mapping is missing.
+func TestModelResourcePickerBlockedWithoutProjectRoot(t *testing.T) {
+	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	m := loadReadyModel(t, NewModel(
+		svc,
+		WithSearchRoots([]string{t.TempDir()}),
+	))
+
+	m = applyMsg(t, m, keyRune('i'))
+	if m.mode != modeTaskInfo {
+		t.Fatalf("expected task info mode, got %v", m.mode)
+	}
+	m = applyMsg(t, m, keyRune('r'))
+	if m.mode != modeTaskInfo {
+		t.Fatalf("expected task info mode after blocked attach, got %v", m.mode)
+	}
+	if !strings.Contains(m.status, "set project root first") {
+		t.Fatalf("expected blocked-attach status in task info mode, got %q", m.status)
+	}
+
+	m.mode = modeNone
+	m = applyMsg(t, m, keyRune('e'))
+	if m.mode != modeEditTask {
+		t.Fatalf("expected edit mode, got %v", m.mode)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+	if m.mode != modeEditTask {
+		t.Fatalf("expected edit mode after blocked ctrl+r attach, got %v", m.mode)
+	}
+	if !strings.Contains(m.status, "set project root first") {
+		t.Fatalf("expected blocked-attach status in edit mode, got %q", m.status)
+	}
+}
+
 // TestModelLabelInheritanceSourcesAndPicker verifies inherited label UX in task info/form flows.
 func TestModelLabelInheritanceSourcesAndPicker(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
@@ -3976,6 +4028,13 @@ func TestModelProjectionFocusBreadcrumbMode(t *testing.T) {
 	if got := m.projectionBreadcrumb(); got != "Parent / Child" {
 		t.Fatalf("expected breadcrumb Parent / Child, got %q", got)
 	}
+	focusedView := stripANSI(fmt.Sprint(m.View().Content))
+	if !strings.Contains(focusedView, "path: Inbox -> Parent -> Child") {
+		t.Fatalf("expected explicit focus path line in view, got\n%s", focusedView)
+	}
+	if !strings.Contains(focusedView, "parent: Parent") {
+		t.Fatalf("expected explicit focus parent line in view, got\n%s", focusedView)
+	}
 	if m.modePrompt() != "" {
 		t.Fatalf("expected normal-mode prompt while projected, got %q", m.modePrompt())
 	}
@@ -3986,6 +4045,299 @@ func TestModelProjectionFocusBreadcrumbMode(t *testing.T) {
 	}
 	if len(m.currentColumnTasks()) != 4 {
 		t.Fatalf("expected full board tasks after clearing focus, got %d", len(m.currentColumnTasks()))
+	}
+	fullBoardView := stripANSI(fmt.Sprint(m.View().Content))
+	if strings.Contains(fullBoardView, "path: Inbox -> Parent -> Child") {
+		t.Fatalf("expected focus path hidden after clearing focus, got\n%s", fullBoardView)
+	}
+}
+
+// TestModelFocusSubtreeRendersBoardForHierarchyLevels verifies branch/phase/subphase focus keeps project-board columns visible.
+func TestModelFocusSubtreeRendersBoardForHierarchyLevels(t *testing.T) {
+	now := time.Date(2026, 2, 24, 9, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Roadmap", "", now)
+	todo, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	progress, _ := domain.NewColumn("c2", p.ID, "In Progress", 1, 0, now)
+	done, _ := domain.NewColumn("c3", p.ID, "Done", 2, 0, now)
+
+	branch, _ := domain.NewTask(domain.TaskInput{
+		ID:        "w-branch",
+		ProjectID: p.ID,
+		ColumnID:  todo.ID,
+		Position:  0,
+		Title:     "Branch",
+		Priority:  domain.PriorityMedium,
+		Kind:      domain.WorkKind("branch"),
+		Scope:     domain.KindAppliesToBranch,
+	}, now)
+	phase, _ := domain.NewTask(domain.TaskInput{
+		ID:        "w-phase",
+		ProjectID: p.ID,
+		ParentID:  branch.ID,
+		ColumnID:  progress.ID,
+		Position:  0,
+		Title:     "Phase",
+		Priority:  domain.PriorityMedium,
+		Kind:      domain.WorkKindPhase,
+		Scope:     domain.KindAppliesToPhase,
+	}, now)
+	subphase, _ := domain.NewTask(domain.TaskInput{
+		ID:        "w-subphase",
+		ProjectID: p.ID,
+		ParentID:  phase.ID,
+		ColumnID:  done.ID,
+		Position:  0,
+		Title:     "Subphase",
+		Priority:  domain.PriorityMedium,
+		Kind:      domain.WorkKindPhase,
+		Scope:     domain.KindAppliesToPhase,
+	}, now)
+	leafTask, _ := domain.NewTask(domain.TaskInput{
+		ID:        "w-task",
+		ProjectID: p.ID,
+		ParentID:  subphase.ID,
+		ColumnID:  done.ID,
+		Position:  1,
+		Title:     "Task",
+		Priority:  domain.PriorityLow,
+		Kind:      domain.WorkKindTask,
+		Scope:     domain.KindAppliesToTask,
+	}, now)
+	unrelated, _ := domain.NewTask(domain.TaskInput{
+		ID:        "w-other",
+		ProjectID: p.ID,
+		ColumnID:  todo.ID,
+		Position:  1,
+		Title:     "Other",
+		Priority:  domain.PriorityLow,
+		Kind:      domain.WorkKindTask,
+		Scope:     domain.KindAppliesToTask,
+	}, now)
+
+	svc := newFakeService(
+		[]domain.Project{p},
+		[]domain.Column{todo, progress, done},
+		[]domain.Task{branch, phase, subphase, leafTask, unrelated},
+	)
+	m := loadReadyModel(t, NewModel(svc))
+	visibleIDs := func(in Model) []string {
+		out := make([]string, 0)
+		for _, column := range in.columns {
+			for _, task := range in.boardTasksForColumn(column.ID) {
+				out = append(out, task.ID)
+			}
+		}
+		return out
+	}
+	assertVisible := func(in Model, expected []string) {
+		t.Helper()
+		got := strings.Join(visibleIDs(in), ",")
+		want := strings.Join(expected, ",")
+		if got != want {
+			t.Fatalf("unexpected focused board ids\nwant: %s\ngot:  %s", want, got)
+		}
+		rendered := stripANSI(fmt.Sprint(in.View().Content))
+		if !strings.Contains(rendered, "To Do (") || !strings.Contains(rendered, "In Progress (") || !strings.Contains(rendered, "Done (") {
+			t.Fatalf("expected project-board columns while focused, got\n%s", rendered)
+		}
+	}
+
+	m.focusTaskByID(branch.ID)
+	m = applyMsg(t, m, keyRune('f'))
+	assertVisible(m, []string{branch.ID, phase.ID, subphase.ID, leafTask.ID})
+
+	m = applyMsg(t, m, keyRune('F'))
+	m.focusTaskByID(phase.ID)
+	m = applyMsg(t, m, keyRune('f'))
+	assertVisible(m, []string{phase.ID, subphase.ID, leafTask.ID})
+
+	m = applyMsg(t, m, keyRune('F'))
+	m.focusTaskByID(subphase.ID)
+	m = applyMsg(t, m, keyRune('f'))
+	assertVisible(m, []string{subphase.ID, leafTask.ID})
+}
+
+// TestModelViewShowsAttentionMarkersAndSummary verifies unresolved-attention markers and compact scope totals in board view.
+func TestModelViewShowsAttentionMarkersAndSummary(t *testing.T) {
+	now := time.Date(2026, 2, 24, 10, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	todo, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	progress, _ := domain.NewColumn("c2", p.ID, "In Progress", 1, 0, now)
+	done, _ := domain.NewColumn("c3", p.ID, "Done", 2, 0, now)
+
+	doneTask, _ := domain.NewTask(domain.TaskInput{
+		ID:             "t-done",
+		ProjectID:      p.ID,
+		ColumnID:       done.ID,
+		Position:       0,
+		Title:          "Done Task",
+		Priority:       domain.PriorityLow,
+		Kind:           domain.WorkKindTask,
+		Scope:          domain.KindAppliesToTask,
+		LifecycleState: domain.StateDone,
+	}, now)
+	blockedTask, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-blocked",
+		ProjectID: p.ID,
+		ColumnID:  todo.ID,
+		Position:  0,
+		Title:     "Blocked Task",
+		Priority:  domain.PriorityHigh,
+		Kind:      domain.WorkKindTask,
+		Scope:     domain.KindAppliesToTask,
+		Metadata: domain.TaskMetadata{
+			DependsOn:     []string{"t-missing"},
+			BlockedReason: "waiting on partner team",
+		},
+	}, now)
+	waitingTask, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-waiting",
+		ProjectID: p.ID,
+		ColumnID:  progress.ID,
+		Position:  0,
+		Title:     "Waiting Task",
+		Priority:  domain.PriorityMedium,
+		Kind:      domain.WorkKindTask,
+		Scope:     domain.KindAppliesToTask,
+		Metadata: domain.TaskMetadata{
+			BlockedBy: []string{"t-not-found"},
+		},
+	}, now)
+
+	m := loadReadyModel(t, NewModel(newFakeService(
+		[]domain.Project{p},
+		[]domain.Column{todo, progress, done},
+		[]domain.Task{doneTask, blockedTask, waitingTask},
+	)))
+	rendered := stripANSI(fmt.Sprint(m.View().Content))
+	if !strings.Contains(rendered, "attention: 3") {
+		t.Fatalf("expected header attention count, got\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "attention scope: 2 items • unresolved 3 • blocked 1") {
+		t.Fatalf("expected attention summary line, got\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "attention panel:") {
+		t.Fatalf("expected compact attention panel line, got\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "Blocked Task !2") {
+		t.Fatalf("expected row marker for blocked task, got\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "Waiting Task !1") {
+		t.Fatalf("expected row marker for waiting task, got\n%s", rendered)
+	}
+}
+
+// TestSearchLevelFiltering verifies level-scoped filtering for project, branch, phase, subphase, task, and subtask.
+func TestSearchLevelFiltering(t *testing.T) {
+	now := time.Date(2026, 2, 24, 11, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Hierarchy", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	branch, _ := domain.NewTask(domain.TaskInput{
+		ID:        "l-branch",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Branch",
+		Priority:  domain.PriorityLow,
+		Kind:      domain.WorkKind("branch"),
+		Scope:     domain.KindAppliesToBranch,
+	}, now)
+	phase, _ := domain.NewTask(domain.TaskInput{
+		ID:        "l-phase",
+		ProjectID: p.ID,
+		ParentID:  branch.ID,
+		ColumnID:  c.ID,
+		Position:  1,
+		Title:     "Phase",
+		Priority:  domain.PriorityLow,
+		Kind:      domain.WorkKindPhase,
+		Scope:     domain.KindAppliesToPhase,
+	}, now)
+	subphase, _ := domain.NewTask(domain.TaskInput{
+		ID:        "l-subphase",
+		ProjectID: p.ID,
+		ParentID:  phase.ID,
+		ColumnID:  c.ID,
+		Position:  2,
+		Title:     "Subphase",
+		Priority:  domain.PriorityLow,
+		Kind:      domain.WorkKindPhase,
+		Scope:     domain.KindAppliesToPhase,
+	}, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "l-task",
+		ProjectID: p.ID,
+		ParentID:  subphase.ID,
+		ColumnID:  c.ID,
+		Position:  3,
+		Title:     "Task",
+		Priority:  domain.PriorityLow,
+		Kind:      domain.WorkKindTask,
+		Scope:     domain.KindAppliesToTask,
+	}, now)
+	subtask, _ := domain.NewTask(domain.TaskInput{
+		ID:        "l-subtask",
+		ProjectID: p.ID,
+		ParentID:  task.ID,
+		ColumnID:  c.ID,
+		Position:  4,
+		Title:     "Subtask",
+		Priority:  domain.PriorityLow,
+		Kind:      domain.WorkKindSubtask,
+		Scope:     domain.KindAppliesToSubtask,
+	}, now)
+
+	m := Model{
+		tasks: []domain.Task{branch, phase, subphase, task, subtask},
+	}
+	matches := []app.TaskMatch{
+		{Project: p, Task: branch, StateID: "todo"},
+		{Project: p, Task: phase, StateID: "todo"},
+		{Project: p, Task: subphase, StateID: "todo"},
+		{Project: p, Task: task, StateID: "todo"},
+		{Project: p, Task: subtask, StateID: "todo"},
+	}
+	ids := func(in []app.TaskMatch) string {
+		out := make([]string, 0, len(in))
+		for _, match := range in {
+			out = append(out, match.Task.ID)
+		}
+		return strings.Join(out, ",")
+	}
+
+	cases := []struct {
+		name   string
+		levels []string
+		want   string
+	}{
+		{name: "project", levels: []string{"project"}, want: "l-branch,l-phase,l-subphase,l-task,l-subtask"},
+		{name: "branch", levels: []string{"branch"}, want: "l-branch"},
+		{name: "phase", levels: []string{"phase"}, want: "l-phase"},
+		{name: "subphase", levels: []string{"subphase"}, want: "l-subphase"},
+		{name: "task", levels: []string{"task"}, want: "l-task"},
+		{name: "subtask", levels: []string{"subtask"}, want: "l-subtask"},
+	}
+	for _, tc := range cases {
+		m.searchLevels = tc.levels
+		got := ids(m.filterTaskMatchesBySearchLevels(matches))
+		if got != tc.want {
+			t.Fatalf("%s level filter mismatch: want %q, got %q", tc.name, tc.want, got)
+		}
+	}
+
+	ready := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{branch, phase, subphase, task, subtask})))
+	ready = applyMsg(t, ready, keyRune('/'))
+	ready = applyMsg(t, ready, tea.KeyPressMsg{Code: tea.KeyTab}) // states
+	ready = applyMsg(t, ready, tea.KeyPressMsg{Code: tea.KeyTab}) // levels
+	if ready.searchFocus != 2 {
+		t.Fatalf("expected levels focus slot in search modal, got %d", ready.searchFocus)
+	}
+	if !ready.isSearchLevelEnabled("project") {
+		t.Fatalf("expected project level enabled by default, got %#v", ready.searchLevels)
+	}
+	ready = applyMsg(t, ready, keyRune(' '))
+	if ready.isSearchLevelEnabled("project") {
+		t.Fatalf("expected project level toggle to disable via level-scoped controls, got %#v", ready.searchLevels)
 	}
 }
 
@@ -4721,5 +5073,15 @@ func TestNormalizeAttachmentPathWithinRoot(t *testing.T) {
 
 	if _, err := normalizeAttachmentPathWithinRoot(root, outside); err == nil {
 		t.Fatal("expected outside-root path to be rejected")
+	}
+	if _, err := normalizeAttachmentPathWithinRoot("", inside); err == nil {
+		t.Fatal("expected empty-root attachment normalization to fail")
+	}
+	rootFile := filepath.Join(t.TempDir(), "root.txt")
+	if err := os.WriteFile(rootFile, []byte("root"), 0o644); err != nil {
+		t.Fatalf("WriteFile(rootFile) error = %v", err)
+	}
+	if _, err := normalizeAttachmentPathWithinRoot(rootFile, inside); err == nil {
+		t.Fatal("expected non-directory root to be rejected")
 	}
 }

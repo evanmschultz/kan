@@ -428,6 +428,9 @@ func (s *Service) MoveTask(ctx context.Context, taskID, toColumnID string, posit
 		if unmet := task.CompletionCriteriaUnmet(children); len(unmet) > 0 {
 			return domain.Task{}, fmt.Errorf("%w: completion criteria unmet (%s)", domain.ErrTransitionBlocked, strings.Join(unmet, ", "))
 		}
+		if blockErr := s.ensureTaskCompletionAttentionClear(ctx, task); blockErr != nil {
+			return domain.Task{}, blockErr
+		}
 	}
 	if err := task.Move(toColumnID, position, s.clock()); err != nil {
 		return domain.Task{}, err

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +18,7 @@ type fakeRepo struct {
 	columns             map[string]domain.Column
 	tasks               map[string]domain.Task
 	comments            map[string][]domain.Comment
+	attentionItems      map[string]domain.AttentionItem
 	changeEvents        map[string][]domain.ChangeEvent
 	kindDefs            map[domain.KindID]domain.KindDefinition
 	projectAllowedKinds map[string][]domain.KindID
@@ -30,6 +32,7 @@ func newFakeRepo() *fakeRepo {
 		columns:             map[string]domain.Column{},
 		tasks:               map[string]domain.Task{},
 		comments:            map[string][]domain.Comment{},
+		attentionItems:      map[string]domain.AttentionItem{},
 		changeEvents:        map[string][]domain.ChangeEvent{},
 		kindDefs:            map[domain.KindID]domain.KindDefinition{},
 		projectAllowedKinds: map[string][]domain.KindID{},
@@ -203,6 +206,99 @@ func (f *fakeRepo) CreateComment(_ context.Context, comment domain.Comment) erro
 func (f *fakeRepo) ListCommentsByTarget(_ context.Context, target domain.CommentTarget) ([]domain.Comment, error) {
 	key := target.ProjectID + "|" + string(target.TargetType) + "|" + target.TargetID
 	return append([]domain.Comment(nil), f.comments[key]...), nil
+}
+
+// CreateAttentionItem creates one attention item row.
+func (f *fakeRepo) CreateAttentionItem(_ context.Context, item domain.AttentionItem) error {
+	f.attentionItems[item.ID] = item
+	return nil
+}
+
+// GetAttentionItem returns one attention item row by id.
+func (f *fakeRepo) GetAttentionItem(_ context.Context, attentionID string) (domain.AttentionItem, error) {
+	item, ok := f.attentionItems[attentionID]
+	if !ok {
+		return domain.AttentionItem{}, ErrNotFound
+	}
+	return item, nil
+}
+
+// ListAttentionItems lists scoped attention items in deterministic order.
+func (f *fakeRepo) ListAttentionItems(_ context.Context, filter domain.AttentionListFilter) ([]domain.AttentionItem, error) {
+	filter, err := domain.NormalizeAttentionListFilter(filter)
+	if err != nil {
+		return nil, err
+	}
+
+	matchesState := func(item domain.AttentionItem) bool {
+		if len(filter.States) == 0 {
+			return true
+		}
+		for _, state := range filter.States {
+			if item.State == state {
+				return true
+			}
+		}
+		return false
+	}
+	matchesKind := func(item domain.AttentionItem) bool {
+		if len(filter.Kinds) == 0 {
+			return true
+		}
+		for _, kind := range filter.Kinds {
+			if item.Kind == kind {
+				return true
+			}
+		}
+		return false
+	}
+
+	out := make([]domain.AttentionItem, 0)
+	for _, item := range f.attentionItems {
+		if item.ProjectID != filter.ProjectID {
+			continue
+		}
+		if filter.ScopeType != "" && item.ScopeType != filter.ScopeType {
+			continue
+		}
+		if filter.ScopeType != "" && item.ScopeID != filter.ScopeID {
+			continue
+		}
+		if filter.UnresolvedOnly && !item.IsUnresolved() {
+			continue
+		}
+		if filter.RequiresUserAction != nil && item.RequiresUserAction != *filter.RequiresUserAction {
+			continue
+		}
+		if !matchesState(item) || !matchesKind(item) {
+			continue
+		}
+		out = append(out, item)
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].ID > out[j].ID
+		}
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	if filter.Limit > 0 && len(out) > filter.Limit {
+		out = out[:filter.Limit]
+	}
+	return out, nil
+}
+
+// ResolveAttentionItem resolves one attention item row and returns the updated value.
+func (f *fakeRepo) ResolveAttentionItem(_ context.Context, attentionID string, resolvedBy string, resolvedByType domain.ActorType, resolvedAt time.Time) (domain.AttentionItem, error) {
+	item, ok := f.attentionItems[attentionID]
+	if !ok {
+		return domain.AttentionItem{}, ErrNotFound
+	}
+	if err := item.Resolve(resolvedBy, resolvedByType, resolvedAt); err != nil {
+		return domain.AttentionItem{}, err
+	}
+	f.attentionItems[attentionID] = item
+	return item, nil
 }
 
 // ListProjectChangeEvents lists change events.

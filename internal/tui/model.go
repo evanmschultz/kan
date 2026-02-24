@@ -154,6 +154,9 @@ var quickActionSpecs = []quickActionSpec{
 // canonicalSearchStates stores canonical searchable lifecycle states.
 var canonicalSearchStatesOrdered = []string{"todo", "progress", "done"}
 
+// canonicalSearchLevelsOrdered stores canonical searchable hierarchy levels.
+var canonicalSearchLevelsOrdered = []string{"project", "branch", "phase", "subphase", "task", "subtask"}
+
 // bootstrapActorTypes stores canonical actor-type options for bootstrap settings.
 var bootstrapActorTypes = []string{
 	string(domain.ActorTypeUser),
@@ -166,6 +169,16 @@ var canonicalSearchStateLabels = map[string]string{
 	"todo":     "To Do",
 	"progress": "In Progress",
 	"done":     "Done",
+}
+
+// canonicalSearchLevelLabels stores display labels for canonical hierarchy levels.
+var canonicalSearchLevelLabels = map[string]string{
+	"project":  "Project",
+	"branch":   "Branch",
+	"phase":    "Phase",
+	"subphase": "Subphase",
+	"task":     "Task",
+	"subtask":  "Subtask",
 }
 
 // commandPaletteItem describes one command-palette command.
@@ -290,11 +303,14 @@ type Model struct {
 	threadInput                 textinput.Model
 	searchFocus                 int
 	searchStateCursor           int
+	searchLevelCursor           int
 	searchCrossProject          bool
 	searchDefaultCrossProject   bool
 	searchDefaultIncludeArchive bool
 	searchStates                []string
 	searchDefaultStates         []string
+	searchLevels                []string
+	searchDefaultLevels         []string
 	searchMatches               []app.TaskMatch
 	searchResultIndex           int
 	quickActionIndex            int
@@ -542,6 +558,8 @@ func NewModel(svc Service, opts ...Option) Model {
 		resourcePickerFilter:     resourcePickerFilter,
 		searchStates:             []string{"todo", "progress", "done"},
 		searchDefaultStates:      []string{"todo", "progress", "done"},
+		searchLevels:             []string{"project", "branch", "phase", "subphase", "task", "subtask"},
+		searchDefaultLevels:      []string{"project", "branch", "phase", "subphase", "task", "subtask"},
 		dependencyStates:         []string{"todo", "progress", "done"},
 		launchPicker:             false,
 		boardGroupBy:             "none",
@@ -924,6 +942,8 @@ func (m Model) View() tea.View {
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("252"))
 	helpStyle := lipgloss.NewStyle().Foreground(muted)
 	statusStyle := lipgloss.NewStyle().Foreground(dim)
+	taskByID := m.tasksByID()
+	attentionItems, attentionTotal, attentionBlocked, attentionTop := m.scopeAttentionSummary(taskByID)
 
 	header := titleStyle.Render("kan") + "  " + project.Name
 	header += statusStyle.Render("  [" + m.modeLabel() + "]")
@@ -933,6 +953,11 @@ func (m Model) View() tea.View {
 	if m.searchApplied && m.searchCrossProject {
 		header += statusStyle.Render("  scope: all-projects")
 	}
+	if m.searchApplied {
+		if levelsSummary := m.searchLevelsSummary(); levelsSummary != "" {
+			header += statusStyle.Render("  levels: " + levelsSummary)
+		}
+	}
 	if m.showArchived {
 		header += statusStyle.Render("  showing archived")
 	}
@@ -941,6 +966,9 @@ func (m Model) View() tea.View {
 	}
 	if breadcrumb := m.projectionBreadcrumb(); breadcrumb != "" {
 		header += statusStyle.Render("  focus: " + truncate(breadcrumb, 48))
+	}
+	if attentionTotal > 0 {
+		header += statusStyle.Render(fmt.Sprintf("  attention: %d", attentionTotal))
 	}
 	if count := len(m.selectedTaskIDs); count > 0 {
 		header += statusStyle.Render(fmt.Sprintf("  selected: %d", count))
@@ -1025,7 +1053,13 @@ func (m Model) View() tea.View {
 				}
 				depth := taskDepth(task.ID, parentByID, 0)
 				indent := strings.Repeat("  ", min(depth, 4))
-				title := prefix + indent + truncate(task.Title, max(1, colWidth-(10+2*min(depth, 4))))
+				attentionCount := m.taskAttentionCount(task, taskByID)
+				attentionSuffix := ""
+				if attentionCount > 0 {
+					attentionSuffix = fmt.Sprintf(" !%d", attentionCount)
+				}
+				titleWidth := max(1, colWidth-(10+2*min(depth, 4))-utf8.RuneCountInString(attentionSuffix))
+				title := prefix + indent + truncate(task.Title, titleWidth) + attentionSuffix
 				sub := m.taskListSecondary(task)
 				if sub != "" {
 					sub = indent + truncate(sub, max(1, colWidth-(10+2*min(depth, 4))))
@@ -1105,9 +1139,19 @@ func (m Model) View() tea.View {
 	if tabs != "" {
 		sections = append(sections, tabs)
 	}
+	if path, parent := m.projectionPathWithProject(project.Name); path != "" {
+		sections = append(sections, statusStyle.Render("path: "+truncate(path, max(24, m.width-6))))
+		sections = append(sections, statusStyle.Render("parent: "+truncate(parent, max(24, m.width-10))))
+	}
 	sections = append(sections, "", mainArea)
 	if infoLine != "" {
 		sections = append(sections, infoLine)
+	}
+	if attentionTotal > 0 {
+		sections = append(sections, statusStyle.Render(fmt.Sprintf("attention scope: %d items • unresolved %d • blocked %d", attentionItems, attentionTotal, attentionBlocked)))
+		if len(attentionTop) > 0 {
+			sections = append(sections, statusStyle.Render("attention panel: "+strings.Join(attentionTop, " • ")))
+		}
 	}
 	sections = append(sections, statusStyle.Render(m.dependencyRollupSummary()))
 	if strings.TrimSpace(m.projectionRootTaskID) != "" {
@@ -1196,6 +1240,7 @@ func (m Model) loadData() tea.Msg {
 		if searchErr != nil {
 			return loadedMsg{err: searchErr}
 		}
+		matches = m.filterTaskMatchesBySearchLevels(matches)
 		tasks = make([]domain.Task, 0, len(matches))
 		for _, match := range matches {
 			if match.Project.ID == projectID {
@@ -1235,6 +1280,7 @@ func (m Model) loadSearchMatches() tea.Msg {
 	if err != nil {
 		return searchResultsMsg{err: err}
 	}
+	matches = m.filterTaskMatchesBySearchLevels(matches)
 	return searchResultsMsg{matches: matches}
 }
 
@@ -1322,10 +1368,12 @@ func (m *Model) startSearchMode() tea.Cmd {
 	m.mode = modeSearch
 	m.input = ""
 	m.searchStates = canonicalSearchStates(m.searchStates)
+	m.searchLevels = canonicalSearchLevels(m.searchLevels)
 	m.searchInput.SetValue(m.searchQuery)
 	m.searchInput.CursorEnd()
 	m.searchFocus = 0
 	m.searchStateCursor = 0
+	m.searchLevelCursor = 0
 	m.status = "search"
 	return m.searchInput.Focus()
 }
@@ -1912,6 +1960,30 @@ func canonicalSearchStates(states []string) []string {
 	return out
 }
 
+// canonicalSearchLevels normalizes configured and user-selected search hierarchy levels.
+func canonicalSearchLevels(levels []string) []string {
+	out := make([]string, 0, len(canonicalSearchLevelsOrdered))
+	seen := map[string]struct{}{}
+	for _, raw := range levels {
+		level := strings.TrimSpace(strings.ToLower(raw))
+		if level == "" {
+			continue
+		}
+		if !slices.Contains(canonicalSearchLevelsOrdered, level) {
+			continue
+		}
+		if _, ok := seen[level]; ok {
+			continue
+		}
+		seen[level] = struct{}{}
+		out = append(out, level)
+	}
+	if len(out) == 0 {
+		return append([]string(nil), canonicalSearchLevelsOrdered...)
+	}
+	return out
+}
+
 // toggleSearchState toggles one canonical search state.
 func (m *Model) toggleSearchState(state string) {
 	state = strings.TrimSpace(strings.ToLower(state))
@@ -1939,6 +2011,39 @@ func (m Model) isSearchStateEnabled(state string) bool {
 	state = strings.TrimSpace(strings.ToLower(state))
 	for _, item := range m.searchStates {
 		if strings.TrimSpace(strings.ToLower(item)) == state {
+			return true
+		}
+	}
+	return false
+}
+
+// toggleSearchLevel toggles one canonical search hierarchy level.
+func (m *Model) toggleSearchLevel(level string) {
+	level = strings.TrimSpace(strings.ToLower(level))
+	if level == "" {
+		return
+	}
+	levels := canonicalSearchLevels(m.searchLevels)
+	next := make([]string, 0, len(levels))
+	found := false
+	for _, item := range levels {
+		if item == level {
+			found = true
+			continue
+		}
+		next = append(next, item)
+	}
+	if !found {
+		next = append(next, level)
+	}
+	m.searchLevels = canonicalSearchLevels(next)
+}
+
+// isSearchLevelEnabled reports whether a search hierarchy level is currently enabled.
+func (m Model) isSearchLevelEnabled(level string) bool {
+	level = strings.TrimSpace(strings.ToLower(level))
+	for _, item := range m.searchLevels {
+		if strings.TrimSpace(strings.ToLower(item)) == level {
 			return true
 		}
 	}
@@ -1999,6 +2104,7 @@ func (m *Model) applySearchFilter() tea.Cmd {
 	m.searchInput.Blur()
 	m.searchQuery = strings.TrimSpace(m.searchInput.Value())
 	m.searchStates = canonicalSearchStates(m.searchStates)
+	m.searchLevels = canonicalSearchLevels(m.searchLevels)
 	m.searchApplied = true
 	m.selectedTask = 0
 	m.status = "search updated"
@@ -2027,6 +2133,7 @@ func (m *Model) resetSearchFilters() tea.Cmd {
 	m.searchCrossProject = m.searchDefaultCrossProject
 	m.showArchived = m.searchDefaultIncludeArchive
 	m.searchStates = canonicalSearchStates(m.searchDefaultStates)
+	m.searchLevels = canonicalSearchLevels(m.searchDefaultLevels)
 	m.searchApplied = false
 	m.status = "filters reset"
 	return m.loadData
@@ -3058,13 +3165,29 @@ func (m *Model) acceptCurrentLabelSuggestion() bool {
 // startResourcePicker opens filesystem resource selection for a task.
 func (m *Model) startResourcePicker(taskID string, back inputMode) tea.Cmd {
 	taskID = strings.TrimSpace(taskID)
-	root := m.resourcePickerRootForCurrentProject()
-	if back == modeBootstrapSettings {
+	root := ""
+	switch back {
+	case modeTaskInfo, modeAddTask, modeEditTask:
+		root = m.resourcePickerRootForCurrentProject()
+		if strings.TrimSpace(root) == "" {
+			m.status = "resource attach blocked: set project root first"
+			return nil
+		}
+	case modeBootstrapSettings:
 		if len(m.bootstrapRoots) > 0 {
 			root = strings.TrimSpace(m.bootstrapRoots[clamp(m.bootstrapRootIndex, 0, len(m.bootstrapRoots)-1)])
 		} else if strings.TrimSpace(m.defaultRootDir) != "" {
 			root = m.defaultRootDir
 		}
+	default:
+		root = m.resourcePickerRootForCurrentProject()
+	}
+	if strings.TrimSpace(root) == "" {
+		root = m.resourcePickerBrowseRoot()
+	}
+	if strings.TrimSpace(root) == "" {
+		m.status = "resource picker root unavailable"
+		return nil
 	}
 	m.mode = modeResourcePicker
 	m.resourcePickerBack = back
@@ -3084,9 +3207,12 @@ func (m *Model) startResourcePicker(taskID string, back inputMode) tea.Cmd {
 func (m Model) openResourcePickerDir(dir string) tea.Cmd {
 	root := strings.TrimSpace(m.resourcePickerRoot)
 	if root == "" {
-		root = m.resourcePickerRootForCurrentProject()
+		root = m.resourcePickerBrowseRoot()
 	}
 	return func() tea.Msg {
+		if strings.TrimSpace(root) == "" {
+			return resourcePickerLoadedMsg{err: fmt.Errorf("resource picker: root path unavailable")}
+		}
 		entries, current, err := listResourcePickerEntries(root, dir)
 		if err != nil {
 			return resourcePickerLoadedMsg{err: fmt.Errorf("resource picker: %w", err)}
@@ -3187,7 +3313,8 @@ func (m *Model) attachCurrentResourcePickerDir() tea.Cmd {
 		current = strings.TrimSpace(m.resourcePickerRoot)
 	}
 	if current == "" {
-		current = "."
+		m.status = "resource path is required"
+		return nil
 	}
 	entry := resourcePickerEntry{
 		Name:  filepath.Base(current),
@@ -3320,7 +3447,7 @@ func (m Model) attachResourceEntry(path string, isDir bool) tea.Cmd {
 	}
 }
 
-// resourcePickerRootForCurrentProject returns configured project root or cwd fallback.
+// resourcePickerRootForCurrentProject returns the configured project root for the active project.
 func (m Model) resourcePickerRootForCurrentProject() string {
 	if project, ok := m.currentProject(); ok {
 		slug := strings.TrimSpace(strings.ToLower(project.Slug))
@@ -3331,6 +3458,11 @@ func (m Model) resourcePickerRootForCurrentProject() string {
 			return root
 		}
 	}
+	return ""
+}
+
+// resourcePickerBrowseRoot returns a best-effort browse root for non-task picker flows.
+func (m Model) resourcePickerBrowseRoot() string {
 	for _, root := range m.searchRoots {
 		root = strings.TrimSpace(root)
 		if root == "" {
@@ -3341,13 +3473,16 @@ func (m Model) resourcePickerRootForCurrentProject() string {
 		}
 		return root
 	}
-	if strings.TrimSpace(m.defaultRootDir) != "" {
-		if abs, err := filepath.Abs(m.defaultRootDir); err == nil {
+	if root := strings.TrimSpace(m.defaultRootDir); root != "" {
+		if abs, err := filepath.Abs(root); err == nil {
 			return abs
 		}
-		return m.defaultRootDir
+		return root
 	}
-	return "."
+	if cwd, err := os.Getwd(); err == nil {
+		return cwd
+	}
+	return ""
 }
 
 // summarizeTaskRefs renders dependency IDs with known task titles when available.
@@ -3529,19 +3664,19 @@ func normalizeAttachmentPathWithinRoot(root, path string) (string, error) {
 	root = strings.TrimSpace(root)
 	path = strings.TrimSpace(path)
 	if root == "" {
-		if path == "" {
-			return "", fmt.Errorf("resource path is required")
-		}
-		abs, err := filepath.Abs(path)
-		if err != nil {
-			return "", fmt.Errorf("resource path invalid: %w", err)
-		}
-		return abs, nil
+		return "", fmt.Errorf("project root path is required for resource attachments")
 	}
 
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		return "", fmt.Errorf("allowed root path invalid: %w", err)
+	}
+	info, err := os.Stat(absRoot)
+	if err != nil {
+		return "", fmt.Errorf("allowed root path invalid: %w", err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("allowed root path invalid: not a directory")
 	}
 	if path == "" {
 		path = absRoot
@@ -4312,6 +4447,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.mode == modeSearch {
+		const searchFocusSlots = 6
 		switch {
 		case msg.Code == tea.KeyEscape || msg.String() == "esc":
 			m.mode = modeNone
@@ -4319,42 +4455,42 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.status = "cancelled"
 			return m, nil
 		case msg.Code == tea.KeyTab || msg.String() == "tab" || msg.String() == "ctrl+i":
-			m.searchFocus = wrapIndex(m.searchFocus, 1, 5)
+			m.searchFocus = wrapIndex(m.searchFocus, 1, searchFocusSlots)
 			if m.searchFocus == 0 {
 				return m, m.searchInput.Focus()
 			}
 			m.searchInput.Blur()
 			return m, nil
 		case msg.String() == "shift+tab" || msg.String() == "backtab":
-			m.searchFocus = wrapIndex(m.searchFocus, -1, 5)
+			m.searchFocus = wrapIndex(m.searchFocus, -1, searchFocusSlots)
 			if m.searchFocus == 0 {
 				return m, m.searchInput.Focus()
 			}
 			m.searchInput.Blur()
 			return m, nil
 		case msg.String() == "down":
-			m.searchFocus = wrapIndex(m.searchFocus, 1, 5)
+			m.searchFocus = wrapIndex(m.searchFocus, 1, searchFocusSlots)
 			if m.searchFocus == 0 {
 				return m, m.searchInput.Focus()
 			}
 			m.searchInput.Blur()
 			return m, nil
 		case msg.String() == "up":
-			m.searchFocus = wrapIndex(m.searchFocus, -1, 5)
+			m.searchFocus = wrapIndex(m.searchFocus, -1, searchFocusSlots)
 			if m.searchFocus == 0 {
 				return m, m.searchInput.Focus()
 			}
 			m.searchInput.Blur()
 			return m, nil
 		case msg.String() == "j" && m.searchFocus != 0:
-			m.searchFocus = wrapIndex(m.searchFocus, 1, 5)
+			m.searchFocus = wrapIndex(m.searchFocus, 1, searchFocusSlots)
 			if m.searchFocus == 0 {
 				return m, m.searchInput.Focus()
 			}
 			m.searchInput.Blur()
 			return m, nil
 		case msg.String() == "k" && m.searchFocus != 0:
-			m.searchFocus = wrapIndex(m.searchFocus, -1, 5)
+			m.searchFocus = wrapIndex(m.searchFocus, -1, searchFocusSlots)
 			if m.searchFocus == 0 {
 				return m, m.searchInput.Focus()
 			}
@@ -4375,8 +4511,10 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			case 1:
 				m.searchStateCursor = wrapIndex(m.searchStateCursor, -1, len(canonicalSearchStatesOrdered))
 			case 2:
-				m.searchCrossProject = !m.searchCrossProject
+				m.searchLevelCursor = wrapIndex(m.searchLevelCursor, -1, len(canonicalSearchLevelsOrdered))
 			case 3:
+				m.searchCrossProject = !m.searchCrossProject
+			case 4:
 				m.showArchived = !m.showArchived
 			}
 			return m, nil
@@ -4385,8 +4523,10 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			case 1:
 				m.searchStateCursor = wrapIndex(m.searchStateCursor, 1, len(canonicalSearchStatesOrdered))
 			case 2:
-				m.searchCrossProject = !m.searchCrossProject
+				m.searchLevelCursor = wrapIndex(m.searchLevelCursor, 1, len(canonicalSearchLevelsOrdered))
 			case 3:
+				m.searchCrossProject = !m.searchCrossProject
+			case 4:
 				m.showArchived = !m.showArchived
 			}
 			return m, nil
@@ -4398,8 +4538,13 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 					m.toggleSearchState(canonicalSearchStatesOrdered[idx])
 				}
 			case 2:
-				m.searchCrossProject = !m.searchCrossProject
+				if len(canonicalSearchLevelsOrdered) > 0 {
+					idx := clamp(m.searchLevelCursor, 0, len(canonicalSearchLevelsOrdered)-1)
+					m.toggleSearchLevel(canonicalSearchLevelsOrdered[idx])
+				}
 			case 3:
+				m.searchCrossProject = !m.searchCrossProject
+			case 4:
 				m.showArchived = !m.showArchived
 			}
 			return m, nil
@@ -4412,9 +4557,15 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			case 2:
-				m.searchCrossProject = !m.searchCrossProject
+				if len(canonicalSearchLevelsOrdered) > 0 {
+					idx := clamp(m.searchLevelCursor, 0, len(canonicalSearchLevelsOrdered)-1)
+					m.toggleSearchLevel(canonicalSearchLevelsOrdered[idx])
+				}
 				return m, nil
 			case 3:
+				m.searchCrossProject = !m.searchCrossProject
+				return m, nil
+			case 4:
 				m.showArchived = !m.showArchived
 				return m, nil
 			default:
@@ -6452,6 +6603,131 @@ func (m Model) tasksForColumn(columnID string) []domain.Task {
 	return ordered
 }
 
+// baseSearchLevelForTask infers a canonical hierarchy level from one task's scope/kind.
+func baseSearchLevelForTask(task domain.Task) string {
+	switch domain.NormalizeKindAppliesTo(task.Scope) {
+	case domain.KindAppliesToBranch:
+		return "branch"
+	case domain.KindAppliesToPhase:
+		return "phase"
+	case domain.KindAppliesToTask:
+		return "task"
+	case domain.KindAppliesToSubtask:
+		return "subtask"
+	}
+	switch strings.TrimSpace(strings.ToLower(string(task.Kind))) {
+	case "branch":
+		return "branch"
+	case "phase":
+		return "phase"
+	case "subphase":
+		return "subphase"
+	case "subtask":
+		return "subtask"
+	case "task":
+		return "task"
+	}
+	if strings.TrimSpace(task.ParentID) != "" {
+		return "subtask"
+	}
+	return "task"
+}
+
+// searchLevelByTaskID resolves one canonical hierarchy level per task ID.
+func (m Model) searchLevelByTaskID(tasks []domain.Task) map[string]string {
+	byID := map[string]domain.Task{}
+	for _, task := range m.tasks {
+		byID[task.ID] = task
+	}
+	for _, task := range tasks {
+		byID[task.ID] = task
+	}
+	if len(byID) == 0 {
+		return map[string]string{}
+	}
+	out := map[string]string{}
+	var resolve func(string, map[string]struct{}) string
+	resolve = func(taskID string, visiting map[string]struct{}) string {
+		taskID = strings.TrimSpace(taskID)
+		if taskID == "" {
+			return "task"
+		}
+		if level, ok := out[taskID]; ok {
+			return level
+		}
+		task, ok := byID[taskID]
+		if !ok {
+			return "task"
+		}
+		if _, seen := visiting[taskID]; seen {
+			return "task"
+		}
+		visiting[taskID] = struct{}{}
+		level := baseSearchLevelForTask(task)
+		// Nested phase nodes represent subphases in board/search level filters.
+		if level == "phase" {
+			parentLevel := resolve(task.ParentID, visiting)
+			if parentLevel == "phase" || parentLevel == "subphase" {
+				level = "subphase"
+			}
+		}
+		delete(visiting, taskID)
+		out[taskID] = level
+		return level
+	}
+	for taskID := range byID {
+		resolve(taskID, map[string]struct{}{})
+	}
+	return out
+}
+
+// taskMatchesSearchLevels reports whether one task passes active search level filters.
+func (m Model) taskMatchesSearchLevels(task domain.Task, levelByTaskID map[string]string) bool {
+	enabled := canonicalSearchLevels(m.searchLevels)
+	enabledSet := make(map[string]struct{}, len(enabled))
+	for _, level := range enabled {
+		enabledSet[level] = struct{}{}
+	}
+	if _, ok := enabledSet["project"]; ok {
+		return true
+	}
+	level := strings.TrimSpace(strings.ToLower(levelByTaskID[task.ID]))
+	if level == "" {
+		level = baseSearchLevelForTask(task)
+	}
+	_, ok := enabledSet[level]
+	return ok
+}
+
+// filterTaskMatchesBySearchLevels keeps only search matches that satisfy level filters.
+func (m Model) filterTaskMatchesBySearchLevels(matches []app.TaskMatch) []app.TaskMatch {
+	if len(matches) == 0 {
+		return nil
+	}
+	tasks := make([]domain.Task, 0, len(matches))
+	for _, match := range matches {
+		tasks = append(tasks, match.Task)
+	}
+	levelByTaskID := m.searchLevelByTaskID(tasks)
+	out := make([]app.TaskMatch, 0, len(matches))
+	for _, match := range matches {
+		if !m.taskMatchesSearchLevels(match.Task, levelByTaskID) {
+			continue
+		}
+		out = append(out, match)
+	}
+	return out
+}
+
+// tasksByID builds a lookup map for loaded tasks keyed by task ID.
+func (m Model) tasksByID() map[string]domain.Task {
+	out := make(map[string]domain.Task, len(m.tasks))
+	for _, task := range m.tasks {
+		out[task.ID] = task
+	}
+	return out
+}
+
 // projectedTaskSet returns every task ID visible in focused subtree mode.
 func (m Model) projectedTaskSet() map[string]struct{} {
 	rootID := strings.TrimSpace(m.projectionRootTaskID)
@@ -6514,6 +6790,118 @@ func (m Model) projectionBreadcrumb() string {
 	}
 	slices.Reverse(path)
 	return strings.Join(path, " / ")
+}
+
+// projectionPathWithProject returns focus path and direct parent labels for the active subtree root.
+func (m Model) projectionPathWithProject(projectName string) (string, string) {
+	rootID := strings.TrimSpace(m.projectionRootTaskID)
+	if rootID == "" {
+		return "", ""
+	}
+	root, ok := m.taskByID(rootID)
+	if !ok {
+		return "", ""
+	}
+	chain := []string{root.Title}
+	visited := map[string]struct{}{root.ID: {}}
+	parentLabel := strings.TrimSpace(projectName)
+	parentID := strings.TrimSpace(root.ParentID)
+	if parentID == "" && parentLabel == "" {
+		parentLabel = "(project)"
+	}
+	for parentID != "" {
+		if _, seen := visited[parentID]; seen {
+			break
+		}
+		parent, found := m.taskByID(parentID)
+		if !found {
+			break
+		}
+		if parentLabel == "" || parentLabel == strings.TrimSpace(projectName) {
+			parentLabel = parent.Title
+		}
+		visited[parentID] = struct{}{}
+		chain = append(chain, parent.Title)
+		parentID = strings.TrimSpace(parent.ParentID)
+	}
+	slices.Reverse(chain)
+	projectName = strings.TrimSpace(projectName)
+	if projectName != "" {
+		chain = append([]string{projectName}, chain...)
+		if parentLabel == "" {
+			parentLabel = projectName
+		}
+	}
+	return strings.Join(chain, " -> "), parentLabel
+}
+
+// searchLevelsSummary returns a compact list of active non-project search levels.
+func (m Model) searchLevelsSummary() string {
+	levels := canonicalSearchLevels(m.searchLevels)
+	if len(levels) == len(canonicalSearchLevelsOrdered) {
+		return ""
+	}
+	items := make([]string, 0, len(levels))
+	for _, level := range levels {
+		if level == "project" {
+			continue
+		}
+		label := canonicalSearchLevelLabels[level]
+		if label == "" {
+			label = level
+		}
+		items = append(items, strings.ToLower(label))
+	}
+	if len(items) == 0 {
+		return "project"
+	}
+	return strings.Join(items, ",")
+}
+
+// taskAttentionCount returns unresolved attention signals for one board-visible task.
+func (m Model) taskAttentionCount(task domain.Task, byID map[string]domain.Task) int {
+	count := 0
+	for _, depID := range uniqueTrimmed(task.Metadata.DependsOn) {
+		depTask, ok := byID[depID]
+		if !ok || m.lifecycleStateForTask(depTask) != domain.StateDone {
+			count++
+		}
+	}
+	for _, blockerID := range uniqueTrimmed(task.Metadata.BlockedBy) {
+		blockerTask, ok := byID[blockerID]
+		if !ok || m.lifecycleStateForTask(blockerTask) != domain.StateDone {
+			count++
+		}
+	}
+	if strings.TrimSpace(task.Metadata.BlockedReason) != "" {
+		count++
+	}
+	return count
+}
+
+// scopeAttentionSummary computes compact unresolved-attention totals for the current board scope.
+func (m Model) scopeAttentionSummary(byID map[string]domain.Task) (int, int, int, []string) {
+	items := 0
+	total := 0
+	blocked := 0
+	top := make([]string, 0, 3)
+	for _, column := range m.columns {
+		for _, task := range m.boardTasksForColumn(column.ID) {
+			count := m.taskAttentionCount(task, byID)
+			if count <= 0 {
+				continue
+			}
+			items++
+			total += count
+			if strings.TrimSpace(task.Metadata.BlockedReason) != "" {
+				blocked++
+			}
+			if len(top) < 3 {
+				top = append(top, fmt.Sprintf("%s !%d", truncate(task.Title, 24), count))
+			}
+		}
+	}
+	return items, total, blocked, top
 }
 
 // dependencyRollupSummary returns compact project dependency totals for board rendering.
@@ -6795,10 +7183,10 @@ func (m Model) renderHelpOverlay(accent, muted, dim color.Color, _ lipgloss.Styl
 		"4. f focus selected subtree  •  F return full board  •  breadcrumb shows active focus",
 		"5. z undo  •  Z redo  •  g activity log",
 		"6. N new project  •  M edit project  •  p switch project",
-		"7. / search: query -> states -> scope -> archived -> apply",
+		"7. / search: query -> states -> levels -> scope -> archived -> apply",
 		"8. search hotkeys: ctrl+u clear query • ctrl+r reset filters",
 		"9. task form: h/l priority  •  ctrl+d due picker  •  ctrl+l labels  •  ctrl+o deps  •  ctrl+r resources",
-		"10. task info: b dependency inspector  •  r attach file/dir from project root (or cwd fallback)",
+		"10. task info: b dependency inspector  •  r attach file/dir from project root",
 	}
 	lines := []string{
 		title,
@@ -7659,12 +8047,22 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		if len(m.searchMatches) == 0 {
 			lines = append(lines, hintStyle.Render("(empty)"))
 		} else {
+			tasks := make([]domain.Task, 0, len(m.searchMatches))
+			for _, match := range m.searchMatches {
+				tasks = append(tasks, match.Task)
+			}
+			levelByTaskID := m.searchLevelByTaskID(tasks)
 			for idx, match := range m.searchMatches {
 				cursor := "  "
 				if idx == m.searchResultIndex {
 					cursor = "> "
 				}
-				row := fmt.Sprintf("%s%s • %s • %s", cursor, match.Project.Name, match.StateID, truncate(match.Task.Title, 48))
+				level := strings.TrimSpace(strings.ToLower(levelByTaskID[match.Task.ID]))
+				levelLabel := canonicalSearchLevelLabels[level]
+				if levelLabel == "" {
+					levelLabel = "-"
+				}
+				row := fmt.Sprintf("%s%s • %s • %s • %s", cursor, match.Project.Name, levelLabel, match.StateID, truncate(match.Task.Title, 40))
 				lines = append(lines, row)
 			}
 		}
@@ -8035,14 +8433,36 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 			}
 			lines = append(lines, stateLabel.Render("states:")+" "+strings.Join(stateParts, "   "))
 
-			scopeLabel := lipgloss.NewStyle().Foreground(muted)
+			levelLabel := lipgloss.NewStyle().Foreground(muted)
 			if m.searchFocus == 2 {
+				levelLabel = lipgloss.NewStyle().Bold(true).Foreground(accent)
+			}
+			levelParts := make([]string, 0, len(canonicalSearchLevelsOrdered))
+			for idx, level := range canonicalSearchLevelsOrdered {
+				check := " "
+				if m.isSearchLevelEnabled(level) {
+					check = "x"
+				}
+				name := canonicalSearchLevelLabels[level]
+				if name == "" {
+					name = level
+				}
+				item := fmt.Sprintf("[%s] %s", check, name)
+				if idx == clamp(m.searchLevelCursor, 0, len(canonicalSearchLevelsOrdered)-1) && m.searchFocus == 2 {
+					item = lipgloss.NewStyle().Bold(true).Foreground(accent).Render(item)
+				}
+				levelParts = append(levelParts, item)
+			}
+			lines = append(lines, levelLabel.Render("levels:")+" "+strings.Join(levelParts, "   "))
+
+			scopeLabel := lipgloss.NewStyle().Foreground(muted)
+			if m.searchFocus == 3 {
 				scopeLabel = lipgloss.NewStyle().Bold(true).Foreground(accent)
 			}
 			lines = append(lines, scopeLabel.Render("scope: "+scope))
 
 			archivedLabel := lipgloss.NewStyle().Foreground(muted)
-			if m.searchFocus == 3 {
+			if m.searchFocus == 4 {
 				archivedLabel = lipgloss.NewStyle().Bold(true).Foreground(accent)
 			}
 			if m.showArchived {
@@ -8051,7 +8471,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 				lines = append(lines, archivedLabel.Render("archived: hidden"))
 			}
 			applyLabel := hintStyle
-			if m.searchFocus == 4 {
+			if m.searchFocus == 5 {
 				applyLabel = lipgloss.NewStyle().Bold(true).Foreground(accent)
 			}
 			lines = append(lines, applyLabel.Render("[ apply search ]"))

@@ -1,12 +1,16 @@
 # Pre-MCP Execution Waves (Consensus Lock)
 
 Date: 2026-02-23
-Status: Locked for execution planning
-Scope: Pre-MCP only (local app, no MCP/HTTP transport)
+Status: Historical pre-MCP execution lock (baseline reference)
+Scope: Pre-MCP baseline only; active MCP/HTTP wave execution is tracked in `MCP_DESIGN_AND_PLAN.md`
+
+Active-wave clarification (2026-02-24):
+- locked non-roadmap MCP/HTTP delivery now runs in `MCP_DESIGN_AND_PLAN.md`;
+- advanced import/export transport-closure concerns remain roadmap-only unless user re-prioritizes.
 
 ## 1) Objective
 
-Implement the remaining product-intent UX/data capabilities before MCP work starts:
+This document captured the remaining product-intent UX/data capabilities before MCP execution started:
 
 - Always-open project picker on app launch with first-class project creation in that picker.
 - First-run configuration bootstrap for user identity + global root-search base path(s).
@@ -320,13 +324,15 @@ Then:
 
 ## 8) Out of Scope (Still Locked)
 
-- MCP/HTTP transport and external connector execution.
+- This section applies to the historical pre-MCP wave captured in this document.
+- Active MCP/HTTP execution now occurs in `MCP_DESIGN_AND_PLAN.md` (locked non-roadmap slices only).
+- Advanced import/export transport-closure concerns remain roadmap-only (branch/commit-aware divergence reconciliation and richer conflict tooling).
 - external service synchronization logic.
 - non-local backend migrations beyond current pre-MCP scope.
 
 ## 9) MCP-Phase Addendum: Node Attention/Blocker Signaling
 
-This addendum is design direction for later MCP/HTTP implementation; it is not a transport build task in this wave.
+This addendum is design direction for later MCP/HTTP implementation; it was not a transport build task in the historical pre-MCP wave documented here.
 
 - Required data-model direction:
   - add DB-backed node-scoped attention/blocker records (project/branch/phase/task/subtask).
@@ -347,19 +353,5 @@ Open design items to settle in MCP planning:
 - final state/kind enum taxonomy and override semantics.
 - default pagination window and cursor contract for attention listing.
 
-## 7) Current Execution Note (2026-02-23)
-
-Implementation has started with subagent lanes and produced integrated changes for:
-- config identity + search roots,
-- startup bootstrap logic,
-- picker-first launch behavior,
-- comments domain/app/sqlite plumbing,
-- initial thread-mode markdown rendering.
-
-Current known gaps before closeout:
-- startup bootstrap must move from terminal prompt UX into a first-run TUI modal flow consistent with existing overlays,
-- search-root selection UX needs fuzzy, low-friction picker interactions,
-- README needs an explicit update lane aligned with newly added `fang` dependency/usage direction,
-- regression failures from the latest integrated TUI test run must be cleared and `just ci` must pass.
-
-Execution is continuing in ordered checkpoints captured in `PLAN.md`.
+Historical execution notes were intentionally removed from this file to keep it design-focused.
+For current MCP-wave execution status, use `MCP_DESIGN_AND_PLAN.md`.

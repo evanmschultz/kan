@@ -1,7 +1,11 @@
 # Pre-MCP Consensus Register (Active)
 
 Date: 2026-02-23
-Status: Active consensus register for pre-MCP planning.
+Status: Active consensus register for pre-MCP locks; MCP-wave execution is tracked separately.
+
+Execution handoff note (2026-02-24):
+- this file remains the locked decision register;
+- MCP/HTTP implementation execution is now tracked in `MCP_DESIGN_AND_PLAN.md` under the temporary wave directive.
 
 ## 1) Purpose
 
@@ -18,8 +22,9 @@ This file is meant to replace ambiguity and reduce context loss between discussi
 
 ## 3) Scope Guard
 
-- Pre-MCP scope is local app + local HTTP/MCP design planning only.
-- MCP/HTTP transports and tools are not being implemented in this phase.
+- This register captures decisions locked before MCP implementation started.
+- MCP/HTTP transport/tool execution now occurs in the active wave tracked by `MCP_DESIGN_AND_PLAN.md`.
+- Advanced import/export transport-closure concerns remain roadmap-only during the active wave unless user re-prioritizes.
 - No remote auth/tenancy implementation in this phase.
 - Build now with extension points for future team-sharing and remote operation.
 
@@ -137,7 +142,7 @@ This file is meant to replace ambiguity and reduce context loss between discussi
 - Summary-by-default responses with explicit expansion args.
 - Comment/thread responses should carry enough task context for agent usefulness (description + relevant metadata + comments window).
 - Descriptions/comments are markdown text fields and should be documented as markdown-write fields in tool contracts.
-- This section is design-readiness only in pre-MCP (no transport implementation in this phase).
+- This section remains the lock baseline; execution now proceeds in `MCP_DESIGN_AND_PLAN.md`.
 
 ### 4.11 Standards/Policy Profile in DB
 
@@ -188,6 +193,7 @@ This file is meant to replace ambiguity and reduce context loss between discussi
 - Build MVP with export/import extensibility in mind.
 - Later project export must include closure bundle of referenced kinds/templates (not IDs only).
 - Import should fail on unresolved required root mappings and unresolved required references.
+- Advanced MCP/HTTP transport closure concerns for import/export remain roadmap-only in the current wave (branch/commit divergence reconciliation and richer conflict tooling).
 - Cross-OS guidance:
   - SQLite files are generally portable,
   - safest sharing path is snapshot/export workflows with explicit resolution steps.
@@ -265,165 +271,21 @@ This file is meant to replace ambiguity and reduce context loss between discussi
 
 ## 8) Final Task (Do Last)
 
-- [ ] Create `MCP_DESIGN_AND_PLAN.md` only after this pre-MCP register is sufficiently locked.
-- [ ] That MCP design/planning file must explicitly reconcile:
+- [x] Create `MCP_DESIGN_AND_PLAN.md` only after this pre-MCP register is sufficiently locked.
+- [x] That MCP design/planning file must explicitly reconcile:
   - `PLAN.md`,
   - `PRE_PHASE11_CLOSEOUT_DISCUSSION.md`,
   - `PRE_MCP_EXECUTION_WAVES.md`,
   - `PRE_MCP_CONSENSUS.md`,
   - `Pre_MCP_User_NOTES.md`,
   - and current code/runtime state.
-- [ ] The MCP design file must include: contract shape, tool boundaries, gating/locking model, payload sizing rules, portability/import behavior assumptions, roadmap tie-ins, explicit open risks, and explicit explanation of kind-template purpose for auto-actions and `AGENTS.md`/`CLAUDE.md` autofill workflows.
+- [x] The MCP design file must include: contract shape, tool boundaries, gating/locking model, payload sizing rules, portability/import behavior assumptions, roadmap tie-ins, explicit open risks, and explicit explanation of kind-template purpose for auto-actions and `AGENTS.md`/`CLAUDE.md` autofill workflows.
 
-## 9) Execution Protocol (Current Wave)
+## 9) Canonical Sources (Locked)
 
-### 9.1 Orchestrator Ownership
+Use this source-of-truth split going forward:
+- `PLAN.md`: primary roadmap and project intent ledger.
+- `PRE_MCP_CONSENSUS.md` (this file): locked pre-MCP consensus decisions.
+- `MCP_DESIGN_AND_PLAN.md`: Phase 11.0 design gate, open questions, and transport planning.
 
-- Orchestrator is the only writer for checkpoint/state progression updates in this file for this wave.
-- Update checkpoints only after:
-  - reviewing implementation completeness,
-  - verifying quality checks,
-  - confirming lane non-interference/lock compliance.
-
-### 9.2 Parallel Lane Plan (Non-Interference)
-
-- Lane A: backend fuzzy-parity work
-  - lock scope: `internal/app/*.go`, `internal/app/*_test.go`
-  - out-of-scope: TUI rendering files and sqlite adapter files.
-- Lane B: docs/policy updates
-  - lock scope: `PRE_MCP_CONSENSUS.md`, `README.md`, `AGENTS.md`
-  - out-of-scope: Go runtime code.
-- Lane C: manual worksheet refresh
-  - lock scope: `TUI_MANUAL_TEST_WORKSHEET.md`
-  - out-of-scope: runtime code and adapters.
-
-### 9.3 Test-Gate Contract
-
-- Worker lanes run package-scoped checks only via `just test-pkg <pkg>` for touched Go packages.
-- No lane runs repo-wide gate during worker execution.
-- Orchestrator/integrator runs final `just ci` after integration.
-
-### 9.4 Checkpoint Status (2026-02-24, Orchestrator)
-
-- Lane `L-A-FUZZY-BACKEND` (worker id `019c8d0a-c069-7dd0-9f2c-a3cf0a48cf9c`):
-  - status: integrated
-  - files: `internal/app/service.go`, `internal/app/service_test.go`
-  - result: backend task search now uses fuzzy matching path instead of substring-only checks.
-  - worker gate: `just test-pkg ./internal/app` -> pass.
-- Lane `L-B-README-ALIGN` (worker id `019c8d0a-c08e-7233-a87e-65de5b99d2d8`):
-  - status: integrated
-  - files: `README.md`
-  - result: README now clearly separates implemented pre-MCP behavior from design-readiness and dangerous limitations.
-  - worker gate: `test_not_applicable` (docs-only).
-- Lane `L-C-WORKSHEET-REFRESH` (worker id `019c8d0a-c0a3-7063-a34b-e72ab6e0208b`):
-  - status: integrated
-  - files: `TUI_MANUAL_TEST_WORKSHEET.md`
-  - result: worksheet refreshed with carry-forward requirements and fuzzy-parity validation anchors.
-  - worker gate: `test_not_applicable` (docs-only).
-- Integrator verification:
-  - `just test-pkg ./internal/app` -> pass
-  - `just ci` -> pass
-
-### 9.5 Checkpoint Status (2026-02-24, Orchestrator, Readiness Implementation Wave)
-
-- Lane `L-D-KINDS-CAPABILITY-CORE`:
-  - status: integrated
-  - files:
-    - `internal/domain/kind.go`
-    - `internal/domain/capability.go`
-    - `internal/domain/errors.go`
-    - `internal/domain/project.go`
-    - `internal/domain/task.go`
-    - `internal/domain/workitem.go`
-    - `internal/domain/kind_capability_test.go`
-    - `internal/app/mutation_guard.go`
-    - `internal/app/schema_validator.go`
-    - `internal/app/kind_capability.go`
-    - `internal/app/ports.go`
-    - `internal/app/service.go`
-    - `internal/app/service_test.go`
-    - `internal/app/snapshot.go`
-    - `internal/adapters/storage/sqlite/repo.go`
-    - `internal/adapters/storage/sqlite/repo_test.go`
-  - result:
-    - kind-catalog + project allowlist runtime enforcement implemented.
-    - runtime JSON-schema payload validation with compiled-schema caching implemented.
-    - project `kind` and task `scope` persistence/migrations implemented.
-    - capability leases + mutation guard enforcement implemented (strict pre-write blocking for non-user actors).
-    - template-driven child/checklist auto-action path implemented for kind templates.
-  - worker package gates:
-    - `just test-pkg ./internal/domain` -> pass
-    - `just test-pkg ./internal/app` -> pass
-    - `just test-pkg ./internal/adapters/storage/sqlite` -> pass
-- Lane `L-E-TUI-ROOT-GATE`:
-  - status: integrated
-  - files:
-    - `internal/tui/model.go`
-    - `internal/tui/model_test.go`
-  - result:
-    - resource attachment now rejects out-of-root paths (`resource path is outside allowed root`) while preserving picker navigation.
-  - worker package gate:
-    - `just test-pkg ./internal/tui` -> pass
-- Lane `L-F-DOCS-AND-WORKSHEETS`:
-  - status: integrated
-  - files:
-    - `README.md`
-    - `TUI_MANUAL_TEST_WORKSHEET.md`
-  - result:
-    - README aligned to implemented readiness features and current transport scope guard.
-    - manual worksheet expanded for root-boundary attachment verification and carry-forward anchors.
-  - worker gate: `test_not_applicable` (docs-only)
-- Additional package checks for touched startup/config surfaces:
-  - `just test-pkg ./cmd/kan` -> pass
-  - `just test-pkg ./internal/config` -> pass
-- Integrator verification:
-  - `just fmt` -> pass
-  - `just ci` -> pass
-
-### 9.6 Checkpoint Status (2026-02-24, Orchestrator, Pre-MCP Closeout Audit)
-
-- Lane `L-G-PLAN-MCP-ATTENTION-UPDATE`:
-  - status: integrated
-  - files:
-    - `PLAN.md`
-    - `PRE_MCP_CONSENSUS.md`
-    - `PRE_MCP_EXECUTION_WAVES.md`
-    - `README.md`
-    - `AGENTS.md`
-  - result:
-    - MCP-phase plan now includes node-scoped attention/blocker signaling requirements (DB model, TUI warning/panel behavior, query pagination, tool-doc obligations, template guidance).
-    - added roadmap open questions for final attention schema/taxonomy/pagination decisions.
-- Lane `L-H-STRICT-LEASE-ENFORCEMENT`:
-  - status: integrated
-  - files:
-    - `internal/app/kind_capability.go`
-    - `internal/app/service_test.go`
-    - `internal/app/kind_capability_test.go`
-  - result:
-    - non-user mutation writes are lease-gated by default (strict pre-write failure on missing guard).
-    - tests updated to reflect strict enforcement behavior and keep explicit guard-branch coverage.
-  - worker package gate:
-    - `just test-pkg ./internal/app` -> pass
-- Integrator verification:
-  - `just fmt` -> pass
-  - `just test-pkg ./internal/app` -> pass
-  - `just test-pkg ./internal/tui` -> pass
-  - `just test-pkg ./internal/adapters/storage/sqlite` -> pass
-  - `just test-pkg ./cmd/kan` -> pass
-  - `just test-pkg ./internal/config` -> pass
-  - `just ci` -> pass
-
-## 10) Near-Term Closeout Tasks
-
-- [x] Implement kind-catalog + project allowlist runtime enforcement and schema-validation pipeline.
-- [x] Implement capability-lease primitives + strict mutation-guard write blocking.
-- [x] Enforce project-root attachment boundary in TUI attachment flows.
-- [x] Complete docs updates aligned to implemented readiness behavior.
-- [x] Refresh `TUI_MANUAL_TEST_WORKSHEET.md` for current behavior and new locks.
-- [x] Consolidate delta carry-forward checks into `TUI_MANUAL_TEST_WORKSHEET.md` so one worksheet is authoritative.
-- [x] Execute package-scoped `just test-pkg` checks per touched-package lanes.
-- [x] Run final integrator gate `just ci`.
-- [x] Refresh and synchronize manual worksheet artifacts for current behavior and handoff.
-
-External/manual follow-up (not an orchestrator-coded gate):
-- User-run worksheet outcomes are still required to capture real interactive validation evidence.
+Execution checkpoint history was intentionally trimmed from this file to reduce context overload.

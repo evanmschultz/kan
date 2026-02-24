@@ -1,0 +1,429 @@
+package common
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"slices"
+	"strings"
+
+	"github.com/evanschultz/kan/internal/app"
+	"github.com/evanschultz/kan/internal/domain"
+)
+
+// AppServiceAdapter maps transport contracts onto app.Service capture_state and attention APIs.
+type AppServiceAdapter struct {
+	service *app.Service
+}
+
+// NewAppServiceAdapter builds one common adapter over an app.Service instance.
+func NewAppServiceAdapter(service *app.Service) *AppServiceAdapter {
+	return &AppServiceAdapter{service: service}
+}
+
+// CaptureState resolves one summary-first capture_state snapshot through app-level APIs.
+func (a *AppServiceAdapter) CaptureState(ctx context.Context, in CaptureStateRequest) (CaptureState, error) {
+	if a == nil || a.service == nil {
+		return CaptureState{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+	}
+
+	req, err := normalizeCaptureStateRequest(in)
+	if err != nil {
+		return CaptureState{}, err
+	}
+
+	summary, err := a.service.CaptureState(ctx, app.CaptureStateInput{
+		Level: domain.LevelTupleInput{
+			ProjectID: req.ProjectID,
+			ScopeType: domain.ScopeLevel(req.ScopeType),
+			ScopeID:   req.ScopeID,
+		},
+		View: app.CaptureStateView(req.View),
+	})
+	if err != nil {
+		return CaptureState{}, mapAppError("capture state", err)
+	}
+
+	project, err := a.lookupProject(ctx, req.ProjectID)
+	if err != nil {
+		return CaptureState{}, err
+	}
+
+	out, err := convertCaptureStateSummary(summary, req, project)
+	if err != nil {
+		return CaptureState{}, err
+	}
+	return out, nil
+}
+
+// ListAttentionItems lists scoped attention items through app-level APIs.
+func (a *AppServiceAdapter) ListAttentionItems(ctx context.Context, in ListAttentionItemsRequest) ([]AttentionItem, error) {
+	if a == nil || a.service == nil {
+		return nil, fmt.Errorf("app service adapter is not configured: %w", ErrAttentionUnavailable)
+	}
+
+	req, err := normalizeAttentionListRequest(in)
+	if err != nil {
+		return nil, err
+	}
+
+	listInput := app.ListAttentionItemsInput{
+		Level: domain.LevelTupleInput{
+			ProjectID: req.ProjectID,
+			ScopeType: domain.ScopeLevel(req.ScopeType),
+			ScopeID:   req.ScopeID,
+		},
+	}
+	if req.State != "" {
+		listInput.States = []domain.AttentionState{domain.AttentionState(req.State)}
+	}
+
+	items, err := a.service.ListAttentionItems(ctx, listInput)
+	if err != nil {
+		return nil, mapAppError("list attention items", err)
+	}
+	return mapDomainAttentionItems(items), nil
+}
+
+// RaiseAttentionItem creates one scoped attention item through app-level APIs.
+func (a *AppServiceAdapter) RaiseAttentionItem(ctx context.Context, in RaiseAttentionItemRequest) (AttentionItem, error) {
+	if a == nil || a.service == nil {
+		return AttentionItem{}, fmt.Errorf("app service adapter is not configured: %w", ErrAttentionUnavailable)
+	}
+
+	req, err := normalizeRaiseAttentionItemRequest(in)
+	if err != nil {
+		return AttentionItem{}, err
+	}
+
+	item, err := a.service.RaiseAttentionItem(ctx, app.RaiseAttentionItemInput{
+		Level: domain.LevelTupleInput{
+			ProjectID: req.ProjectID,
+			ScopeType: domain.ScopeLevel(req.ScopeType),
+			ScopeID:   req.ScopeID,
+		},
+		Kind:               domain.AttentionKind(req.Kind),
+		Summary:            req.Summary,
+		BodyMarkdown:       req.BodyMarkdown,
+		RequiresUserAction: req.RequiresUserAction,
+		CreatedBy:          "kan-serve",
+		CreatedType:        domain.ActorTypeUser,
+	})
+	if err != nil {
+		return AttentionItem{}, mapAppError("raise attention item", err)
+	}
+	return mapDomainAttentionItem(item), nil
+}
+
+// ResolveAttentionItem resolves one attention item through app-level APIs.
+func (a *AppServiceAdapter) ResolveAttentionItem(ctx context.Context, in ResolveAttentionItemRequest) (AttentionItem, error) {
+	if a == nil || a.service == nil {
+		return AttentionItem{}, fmt.Errorf("app service adapter is not configured: %w", ErrAttentionUnavailable)
+	}
+
+	req, err := normalizeResolveAttentionItemRequest(in)
+	if err != nil {
+		return AttentionItem{}, err
+	}
+
+	item, err := a.service.ResolveAttentionItem(ctx, app.ResolveAttentionItemInput{
+		AttentionID:  req.ID,
+		ResolvedBy:   req.ResolvedBy,
+		ResolvedType: domain.ActorTypeUser,
+	})
+	if err != nil {
+		return AttentionItem{}, mapAppError("resolve attention item", err)
+	}
+	return mapDomainAttentionItem(item), nil
+}
+
+// lookupProject resolves one project by id for response decoration.
+func (a *AppServiceAdapter) lookupProject(ctx context.Context, projectID string) (domain.Project, error) {
+	projects, err := a.service.ListProjects(ctx, true)
+	if err != nil {
+		return domain.Project{}, mapAppError("list projects", err)
+	}
+	project, ok := findProjectByID(projects, projectID)
+	if !ok {
+		return domain.Project{}, fmt.Errorf("project %q: %w", projectID, ErrNotFound)
+	}
+	return project, nil
+}
+
+// normalizeAttentionListRequest validates and canonicalizes list_attention_items input.
+func normalizeAttentionListRequest(in ListAttentionItemsRequest) (ListAttentionItemsRequest, error) {
+	projectID, scopeType, scopeID, err := normalizeScopeTuple(in.ProjectID, in.ScopeType, in.ScopeID)
+	if err != nil {
+		return ListAttentionItemsRequest{}, err
+	}
+
+	state, err := normalizeAttentionStateFilter(in.State)
+	if err != nil {
+		return ListAttentionItemsRequest{}, err
+	}
+	return ListAttentionItemsRequest{
+		ProjectID: projectID,
+		ScopeType: scopeType,
+		ScopeID:   scopeID,
+		State:     state,
+	}, nil
+}
+
+// normalizeRaiseAttentionItemRequest validates and canonicalizes raise_attention_item input.
+func normalizeRaiseAttentionItemRequest(in RaiseAttentionItemRequest) (RaiseAttentionItemRequest, error) {
+	projectID, scopeType, scopeID, err := normalizeScopeTuple(in.ProjectID, in.ScopeType, in.ScopeID)
+	if err != nil {
+		return RaiseAttentionItemRequest{}, err
+	}
+
+	kind := string(domain.NormalizeAttentionKind(domain.AttentionKind(in.Kind)))
+	if kind == "" {
+		return RaiseAttentionItemRequest{}, fmt.Errorf("kind is required: %w", ErrInvalidCaptureStateRequest)
+	}
+	summary := strings.TrimSpace(in.Summary)
+	if summary == "" {
+		return RaiseAttentionItemRequest{}, fmt.Errorf("summary is required: %w", ErrInvalidCaptureStateRequest)
+	}
+
+	return RaiseAttentionItemRequest{
+		ProjectID:          projectID,
+		ScopeType:          scopeType,
+		ScopeID:            scopeID,
+		Kind:               kind,
+		Summary:            summary,
+		BodyMarkdown:       strings.TrimSpace(in.BodyMarkdown),
+		RequiresUserAction: in.RequiresUserAction,
+	}, nil
+}
+
+// normalizeResolveAttentionItemRequest validates and canonicalizes resolve_attention_item input.
+func normalizeResolveAttentionItemRequest(in ResolveAttentionItemRequest) (ResolveAttentionItemRequest, error) {
+	itemID := strings.TrimSpace(in.ID)
+	if itemID == "" {
+		return ResolveAttentionItemRequest{}, fmt.Errorf("id is required: %w", ErrInvalidCaptureStateRequest)
+	}
+	return ResolveAttentionItemRequest{
+		ID:         itemID,
+		ResolvedBy: strings.TrimSpace(in.ResolvedBy),
+		Reason:     strings.TrimSpace(in.Reason),
+	}, nil
+}
+
+// normalizeScopeTuple validates and canonicalizes one project/scope tuple.
+func normalizeScopeTuple(projectID, scopeType, scopeID string) (string, string, string, error) {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return "", "", "", fmt.Errorf("project_id is required: %w", ErrInvalidCaptureStateRequest)
+	}
+
+	scopeType = strings.ToLower(strings.TrimSpace(scopeType))
+	if scopeType == "" {
+		scopeType = ScopeTypeProject
+	}
+	if !slices.Contains(supportedScopeTypes, scopeType) {
+		return "", "", "", fmt.Errorf("scope_type %q is unsupported: %w", scopeType, ErrUnsupportedScope)
+	}
+
+	scopeID = strings.TrimSpace(scopeID)
+	switch scopeType {
+	case ScopeTypeProject:
+		if scopeID == "" {
+			scopeID = projectID
+		}
+		if scopeID != projectID {
+			return "", "", "", fmt.Errorf("scope_id %q must equal project_id %q for project scope: %w", scopeID, projectID, ErrUnsupportedScope)
+		}
+	default:
+		if scopeID == "" {
+			return "", "", "", fmt.Errorf("scope_id is required for scope_type %q: %w", scopeType, ErrUnsupportedScope)
+		}
+	}
+	return projectID, scopeType, scopeID, nil
+}
+
+// normalizeAttentionStateFilter validates and canonicalizes one optional attention-state filter.
+func normalizeAttentionStateFilter(raw string) (string, error) {
+	state := strings.ToLower(strings.TrimSpace(raw))
+	switch state {
+	case "", AttentionStateOpen, AttentionStateAcknowledged, AttentionStateResolved:
+		return state, nil
+	default:
+		return "", fmt.Errorf("state %q is unsupported: %w", state, ErrInvalidCaptureStateRequest)
+	}
+}
+
+// convertCaptureStateSummary maps app.CaptureStateSummary into transport-facing CaptureState.
+func convertCaptureStateSummary(summary app.CaptureStateSummary, req CaptureStateRequest, project domain.Project) (CaptureState, error) {
+	stateHash, err := computeCaptureSummaryHash(summary)
+	if err != nil {
+		return CaptureState{}, fmt.Errorf("compute capture summary hash: %w", err)
+	}
+
+	scopePath := buildScopePathFromLevel(summary.Level, project.Name)
+	attentionOverview := AttentionOverview{
+		Available:          true,
+		OpenCount:          summary.AttentionOverview.UnresolvedCount,
+		RequiresUserAction: summary.AttentionOverview.RequiresUserActionCount,
+		Items:              make([]AttentionItem, 0, len(summary.AttentionOverview.Items)),
+	}
+	for _, item := range summary.AttentionOverview.Items {
+		attentionOverview.Items = append(attentionOverview.Items, AttentionItem{
+			ID:                 item.ID,
+			ProjectID:          summary.Level.ProjectID,
+			ScopeType:          string(summary.Level.ScopeType),
+			ScopeID:            summary.Level.ScopeID,
+			State:              string(item.State),
+			Kind:               string(item.Kind),
+			Summary:            item.Summary,
+			RequiresUserAction: item.RequiresUserAction,
+			CreatedAt:          item.CreatedAt.UTC(),
+		})
+	}
+
+	todoTasks := summary.WorkOverview.ActiveItems - summary.WorkOverview.InProgressItems - summary.WorkOverview.DoneItems
+	if todoTasks < 0 {
+		todoTasks = 0
+	}
+	archivedTasks := summary.WorkOverview.TotalItems - summary.WorkOverview.ActiveItems
+	if archivedTasks < 0 {
+		archivedTasks = 0
+	}
+	workOverview := WorkOverview{
+		TotalTasks:                   summary.WorkOverview.TotalItems,
+		TodoTasks:                    todoTasks,
+		InProgressTasks:              summary.WorkOverview.InProgressItems,
+		DoneTasks:                    summary.WorkOverview.DoneItems,
+		ArchivedTasks:                archivedTasks,
+		TasksWithOpenBlockers:        summary.WorkOverview.BlockedItems,
+		IncompleteCompletionCriteria: summary.WorkOverview.OpenChildItems,
+	}
+
+	return CaptureState{
+		CapturedAt:         summary.CapturedAt.UTC(),
+		ScopePath:          scopePath,
+		StateHash:          stateHash,
+		GoalOverview:       GoalOverview{ProjectID: project.ID, ProjectName: project.Name, ProjectDescription: project.Description},
+		AttentionOverview:  attentionOverview,
+		WorkOverview:       workOverview,
+		CommentOverview:    CommentOverview{RecentCount: 0, ImportantCount: 0},
+		WarningsOverview:   buildWarningsOverview(workOverview, attentionOverview),
+		ResumeHints:        buildResumeHintsFromFollowUps(summary.FollowUpPointers),
+		RequestedView:      req.View,
+		RequestedScopeType: req.ScopeType,
+	}, nil
+}
+
+// buildScopePathFromLevel maps one app-level tuple into a transport scope path.
+func buildScopePathFromLevel(level domain.LevelTuple, projectName string) []ScopeNode {
+	scopePath := []ScopeNode{
+		{
+			ScopeType: ScopeTypeProject,
+			ScopeID:   level.ProjectID,
+			Name:      strings.TrimSpace(projectName),
+		},
+	}
+	if strings.TrimSpace(scopePath[0].Name) == "" {
+		scopePath[0].Name = level.ProjectID
+	}
+	if string(level.ScopeType) == ScopeTypeProject {
+		return scopePath
+	}
+	scopePath = append(scopePath, ScopeNode{
+		ScopeType: string(level.ScopeType),
+		ScopeID:   level.ScopeID,
+		Name:      level.ScopeID,
+	})
+	return scopePath
+}
+
+// buildResumeHintsFromFollowUps maps app follow-up pointers into transport resume hints.
+func buildResumeHintsFromFollowUps(in app.CaptureStateFollowUpPointers) []ResumeHint {
+	hints := make([]ResumeHint, 0, 3)
+	if pointer := strings.TrimSpace(in.ListAttentionItems); pointer != "" {
+		hints = append(hints, ResumeHint{
+			Rel:  "kan.list_attention_items",
+			Note: pointer,
+		})
+	}
+	if pointer := strings.TrimSpace(in.ListProjectChangeEvents); pointer != "" {
+		hints = append(hints, ResumeHint{
+			Rel:  "kan.list_project_change_events",
+			Note: pointer,
+		})
+	}
+	if pointer := strings.TrimSpace(in.ListChildTasks); pointer != "" {
+		hints = append(hints, ResumeHint{
+			Rel:  "kan.list_child_tasks",
+			Note: pointer,
+		})
+	}
+	if len(hints) == 0 {
+		hints = append(hints, ResumeHint{
+			Rel:  "kan.capture_state",
+			Note: "request view=full for expanded, summary-safe context",
+		})
+	}
+	return hints
+}
+
+// mapDomainAttentionItems maps domain attention rows into transport DTO rows.
+func mapDomainAttentionItems(items []domain.AttentionItem) []AttentionItem {
+	out := make([]AttentionItem, 0, len(items))
+	for _, item := range items {
+		out = append(out, mapDomainAttentionItem(item))
+	}
+	return out
+}
+
+// mapDomainAttentionItem maps one domain attention row into one transport DTO row.
+func mapDomainAttentionItem(item domain.AttentionItem) AttentionItem {
+	return AttentionItem{
+		ID:                 item.ID,
+		ProjectID:          item.ProjectID,
+		ScopeType:          string(item.ScopeType),
+		ScopeID:            item.ScopeID,
+		State:              string(domain.NormalizeAttentionState(item.State)),
+		Kind:               string(domain.NormalizeAttentionKind(item.Kind)),
+		Summary:            item.Summary,
+		BodyMarkdown:       item.BodyMarkdown,
+		RequiresUserAction: item.RequiresUserAction,
+		CreatedAt:          item.CreatedAt.UTC(),
+		ResolvedAt:         item.ResolvedAt,
+	}
+}
+
+// computeCaptureSummaryHash computes a deterministic hash from app capture summary data.
+func computeCaptureSummaryHash(summary app.CaptureStateSummary) (string, error) {
+	encoded, err := json.Marshal(summary)
+	if err != nil {
+		return "", fmt.Errorf("marshal capture summary: %w", err)
+	}
+	sum := sha256.Sum256(encoded)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+// mapAppError maps app/domain errors into transport-layer error sentinels.
+func mapAppError(operation string, err error) error {
+	if err == nil {
+		return nil
+	}
+
+	switch {
+	case errors.Is(err, app.ErrNotFound):
+		return fmt.Errorf("%s: %w", operation, errors.Join(ErrNotFound, err))
+	case errors.Is(err, domain.ErrInvalidID),
+		errors.Is(err, domain.ErrInvalidScopeType),
+		errors.Is(err, domain.ErrInvalidScopeID),
+		errors.Is(err, domain.ErrInvalidSummary),
+		errors.Is(err, domain.ErrInvalidBodyMarkdown),
+		errors.Is(err, domain.ErrInvalidAttentionState),
+		errors.Is(err, domain.ErrInvalidAttentionKind),
+		errors.Is(err, domain.ErrInvalidActorType):
+		return fmt.Errorf("%s: %w", operation, errors.Join(ErrInvalidCaptureStateRequest, err))
+	default:
+		return fmt.Errorf("%s: %w", operation, err)
+	}
+}

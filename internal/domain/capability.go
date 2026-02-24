@@ -21,11 +21,12 @@ type CapabilityScopeType string
 
 // Capability scope values.
 const (
-	CapabilityScopeProject CapabilityScopeType = "project"
-	CapabilityScopeBranch  CapabilityScopeType = "branch"
-	CapabilityScopePhase   CapabilityScopeType = "phase"
-	CapabilityScopeTask    CapabilityScopeType = "task"
-	CapabilityScopeSubtask CapabilityScopeType = "subtask"
+	CapabilityScopeProject  CapabilityScopeType = "project"
+	CapabilityScopeBranch   CapabilityScopeType = "branch"
+	CapabilityScopePhase    CapabilityScopeType = "phase"
+	CapabilityScopeSubphase CapabilityScopeType = "subphase"
+	CapabilityScopeTask     CapabilityScopeType = "task"
+	CapabilityScopeSubtask  CapabilityScopeType = "subtask"
 )
 
 // validCapabilityRoles stores supported capability roles.
@@ -40,6 +41,7 @@ var validCapabilityScopes = []CapabilityScopeType{
 	CapabilityScopeProject,
 	CapabilityScopeBranch,
 	CapabilityScopePhase,
+	CapabilityScopeSubphase,
 	CapabilityScopeTask,
 	CapabilityScopeSubtask,
 }

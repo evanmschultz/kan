@@ -84,6 +84,27 @@ You are a senior Go dev. YOU ALWAYS:
   - tests/checks run and outcomes,
   - or explicit `test_not_applicable` with rationale for docs-only/process-only steps.
 
+## Temporary Next-Step Directive (Pre-MCP Closeout + MCP Build)
+
+- This temporary section is active for the current phase:
+  - finish all remaining pre-MCP non-roadmap gaps,
+  - implement non-roadmap MCP/HTTP functionality discussed and locked in planning docs,
+  - prioritize dogfooding readiness for real user+agent workflows.
+- For this temporary phase, use `MCP_DESIGN_AND_PLAN.md` as the execution/worklog hub for MCP-oriented slices.
+- Orchestrator requirements:
+  - plan for coexistent parallel subagents with explicit, non-overlapping file-lock scopes,
+  - prevent workers from touching the same file concurrently,
+  - perform explicit code review on every worker handoff before integration.
+- Delivery requirements for this temporary phase:
+  - keep docs synchronized as implementation lands (`README.md` and affected planning/testing docs),
+  - ensure `just check` and `just ci` both pass before marking work complete,
+  - create/update one TUI manual worksheet for current behavior verification,
+  - create/update one HTTP/MCP (MCP-primary) dogfooding worksheet for user+agent validation.
+- Dogfooding requirement:
+  - testing docs must support collaborative user+agent validation and clearly call out guardrails, blockers, and recovery workflows.
+- Cleanup requirement:
+  - after this temporary phase is confirmed complete by the user, explicitly ask how this temporary AGENTS directive should be removed or reduced.
+
 ## Parallel/Subagent Mode
 
 - This repository supports parallel subagent execution on a single branch only under lock discipline.

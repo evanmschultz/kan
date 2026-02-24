@@ -32,6 +32,47 @@ func TestExportSnapshotIncludesExpectedData(t *testing.T) {
 	repo.tasks[t1.ID] = t1
 	repo.tasks[t2.ID] = t2
 
+	kind, err := domain.NewKindDefinition(domain.KindDefinitionInput{
+		ID:          "refactor",
+		DisplayName: "Refactor",
+		AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToTask},
+	}, now)
+	if err != nil {
+		t.Fatalf("NewKindDefinition() error = %v", err)
+	}
+	repo.kindDefs[kind.ID] = kind
+	repo.projectAllowedKinds[p1.ID] = []domain.KindID{kind.ID}
+
+	projectComment, err := domain.NewComment(domain.CommentInput{
+		ID:           "comment-1",
+		ProjectID:    p1.ID,
+		TargetType:   domain.CommentTargetTypeProject,
+		TargetID:     p1.ID,
+		BodyMarkdown: "Project comment",
+		ActorType:    domain.ActorTypeUser,
+		AuthorName:   "tester",
+	}, now)
+	if err != nil {
+		t.Fatalf("NewComment() error = %v", err)
+	}
+	commentKey := p1.ID + "|" + string(projectComment.TargetType) + "|" + projectComment.TargetID
+	repo.comments[commentKey] = []domain.Comment{projectComment}
+
+	lease, err := domain.NewCapabilityLease(domain.CapabilityLeaseInput{
+		InstanceID: "lease-1",
+		LeaseToken: "token-1",
+		AgentName:  "orchestrator",
+		ProjectID:  p1.ID,
+		ScopeType:  domain.CapabilityScopeTask,
+		ScopeID:    t1.ID,
+		Role:       domain.CapabilityRoleOrchestrator,
+		ExpiresAt:  now.Add(2 * time.Hour),
+	}, now)
+	if err != nil {
+		t.Fatalf("NewCapabilityLease() error = %v", err)
+	}
+	repo.capabilityLeases[lease.InstanceID] = lease
+
 	svc := NewService(repo, nil, func() time.Time { return now.Add(3 * time.Minute) }, ServiceConfig{})
 
 	snapActive, err := svc.ExportSnapshot(context.Background(), false)
@@ -57,6 +98,18 @@ func TestExportSnapshotIncludesExpectedData(t *testing.T) {
 	}
 	if len(snapAll.Projects) != 2 || len(snapAll.Columns) != 2 || len(snapAll.Tasks) != 2 {
 		t.Fatalf("unexpected all snapshot sizes p=%d c=%d t=%d", len(snapAll.Projects), len(snapAll.Columns), len(snapAll.Tasks))
+	}
+	if len(snapAll.KindDefinitions) != 1 {
+		t.Fatalf("expected kind definition closure in snapshot, got %#v", snapAll.KindDefinitions)
+	}
+	if len(snapAll.ProjectAllowedKinds) != 1 || snapAll.ProjectAllowedKinds[0].ProjectID != p1.ID {
+		t.Fatalf("expected project allowlist closure in snapshot, got %#v", snapAll.ProjectAllowedKinds)
+	}
+	if len(snapAll.Comments) != 1 || snapAll.Comments[0].ID != "comment-1" {
+		t.Fatalf("expected comment closure in snapshot, got %#v", snapAll.Comments)
+	}
+	if len(snapAll.CapabilityLeases) != 1 || snapAll.CapabilityLeases[0].InstanceID != "lease-1" {
+		t.Fatalf("expected capability lease closure in snapshot, got %#v", snapAll.CapabilityLeases)
 	}
 	foundMeta := false
 	for _, sp := range snapAll.Projects {
@@ -99,6 +152,45 @@ func TestImportSnapshotCreatesAndUpdates(t *testing.T) {
 			{ID: "t1", ProjectID: "p1", ColumnID: "c1", Position: 2, Title: "Updated Task", Description: "details", Priority: domain.PriorityHigh, DueAt: &due, Labels: []string{"a", "b"}, CreatedAt: now, UpdatedAt: now.Add(time.Minute)},
 			{ID: "t2", ProjectID: "p2", ColumnID: "c2", Position: 0, Title: "New Task", Priority: domain.PriorityMedium, CreatedAt: now, UpdatedAt: now.Add(time.Minute)},
 		},
+		KindDefinitions: []SnapshotKindDefinition{
+			{
+				ID:          "refactor",
+				DisplayName: "Refactor",
+				AppliesTo:   []domain.KindAppliesTo{domain.KindAppliesToTask},
+				CreatedAt:   now,
+				UpdatedAt:   now.Add(time.Minute),
+			},
+		},
+		ProjectAllowedKinds: []SnapshotProjectAllowedKinds{
+			{ProjectID: "p1", KindIDs: []domain.KindID{"refactor"}},
+		},
+		Comments: []SnapshotComment{
+			{
+				ID:           "comment-1",
+				ProjectID:    "p1",
+				TargetType:   domain.CommentTargetTypeProject,
+				TargetID:     "p1",
+				BodyMarkdown: "Imported project comment",
+				ActorType:    domain.ActorTypeUser,
+				AuthorName:   "importer",
+				CreatedAt:    now,
+				UpdatedAt:    now.Add(time.Minute),
+			},
+		},
+		CapabilityLeases: []SnapshotCapabilityLease{
+			{
+				InstanceID:  "lease-1",
+				LeaseToken:  "token-1",
+				AgentName:   "orchestrator",
+				ProjectID:   "p1",
+				ScopeType:   domain.CapabilityScopeTask,
+				ScopeID:     "t1",
+				Role:        domain.CapabilityRoleOrchestrator,
+				IssuedAt:    now,
+				ExpiresAt:   now.Add(24 * time.Hour),
+				HeartbeatAt: now.Add(2 * time.Minute),
+			},
+		},
 	}
 
 	if err := svc.ImportSnapshot(context.Background(), snap); err != nil {
@@ -125,6 +217,20 @@ func TestImportSnapshotCreatesAndUpdates(t *testing.T) {
 	}
 	if _, ok := repo.tasks["t2"]; !ok {
 		t.Fatal("expected new task t2")
+	}
+	if _, ok := repo.kindDefs[domain.KindID("refactor")]; !ok {
+		t.Fatal("expected imported kind definition refactor")
+	}
+	allowed := repo.projectAllowedKinds["p1"]
+	if len(allowed) != 1 || allowed[0] != domain.KindID("refactor") {
+		t.Fatalf("expected imported project allowlist for p1, got %#v", allowed)
+	}
+	commentKey := "p1|project|p1"
+	if len(repo.comments[commentKey]) != 1 || repo.comments[commentKey][0].ID != "comment-1" {
+		t.Fatalf("expected imported project comment closure, got %#v", repo.comments[commentKey])
+	}
+	if _, ok := repo.capabilityLeases["lease-1"]; !ok {
+		t.Fatal("expected imported capability lease lease-1")
 	}
 }
 

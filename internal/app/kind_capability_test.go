@@ -465,3 +465,28 @@ func TestKindCapabilityHelpers(t *testing.T) {
 		t.Fatalf("KindPayload = %s, want {\"key\":\"value\"}", string(meta.KindPayload))
 	}
 }
+
+// TestDefaultKindDefinitionInputsIncludeSubphase verifies built-in defaults include subphase hierarchy support.
+func TestDefaultKindDefinitionInputsIncludeSubphase(t *testing.T) {
+	inputs := defaultKindDefinitionInputs()
+	byID := map[domain.KindID]domain.KindDefinitionInput{}
+	for _, input := range inputs {
+		byID[input.ID] = input
+	}
+
+	phase, ok := byID[domain.KindID(domain.WorkKindPhase)]
+	if !ok {
+		t.Fatal("expected phase kind definition to exist")
+	}
+	if !slices.Contains(phase.AppliesTo, domain.KindAppliesToSubphase) {
+		t.Fatalf("expected phase applies_to to include subphase, got %#v", phase.AppliesTo)
+	}
+
+	subtask, ok := byID[domain.KindID(domain.WorkKindSubtask)]
+	if !ok {
+		t.Fatal("expected subtask kind definition to exist")
+	}
+	if !slices.Contains(subtask.AllowedParentScopes, domain.KindAppliesToSubphase) {
+		t.Fatalf("expected subtask parent scopes to include subphase, got %#v", subtask.AllowedParentScopes)
+	}
+}

@@ -2,6 +2,13 @@
 
 Purpose: capture closeout decisions from your manual worksheet notes and preserve the locked pre-Phase-11 consensus baseline before Phase 11 begins.
 
+Canonical-source note:
+- This file is historical decision/discussion context.
+- For active source-of-truth use:
+  - `PLAN.md` for roadmap and current planning intent.
+  - `PRE_MCP_CONSENSUS.md` for locked pre-MCP decisions.
+  - `MCP_DESIGN_AND_PLAN.md` for Phase 11 transport/tool design.
+
 Date: 2026-02-22
 
 ---

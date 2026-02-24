@@ -7,8 +7,8 @@ A local-first Kanban TUI built with Bubble Tea v2, Bubbles v2, and Lip Gloss v2.
 Current scope:
 - local tracking and planning workflows (human-operated TUI).
 - local runtime diagnostics with styled logging and dev-mode local log files.
-- pre-MCP design-readiness planning for future MCP/HTTP contracts.
-- MCP/HTTP transports/tools are roadmap items and are not implemented in this phase.
+- active Phase 11 wave delivery for locked MCP/HTTP slices is in progress in `MCP_DESIGN_AND_PLAN.md` (HTTP `/api/v1`, stateless MCP adapter, `capture_state`, attention/worksheet readiness).
+- advanced import/export transport-closure concerns (branch/commit-aware divergence reconciliation and richer conflict tooling) remain roadmap-only unless user re-prioritizes.
 
 Contributor workflow and CI policy: `CONTRIBUTING.md`
 
@@ -24,25 +24,30 @@ Contributor workflow and CI policy: `CONTRIBUTING.md`
 - Runtime kind-catalog + project allowlist validation for project/task mutations.
 - Runtime JSON-schema validation for kind metadata payloads (with compiled-validator caching).
 - Capability-lease primitives for strict mutation locking (issue/heartbeat/renew/revoke/revoke-all).
+- Serve mode for HTTP (`/api/v1`) + stateless MCP (`/mcp`) transport surfaces.
 - JSON snapshot import/export.
 - Configurable task field visibility.
 
-## Pre-MCP Status (2026-02-24)
+## Active Status (2026-02-24)
 Implemented now:
 - Use `kan` as the canonical local planning/verification source while collaborating with an agent in terminal/chat.
 - Keep manual QA notes in `TUI_MANUAL_TEST_WORKSHEET.md` with sectioned anchors for precise replay.
 - Local-only TUI + SQLite workflows (including startup bootstrap, project picker, threads/comments, and import/export snapshots).
 - Kind-catalog bootstrap + project `allowed_kinds` enforcement is active for project/task write paths.
-- Project-level `kind` and task-level `scope` persistence are active (`project|branch|phase|task|subtask` semantics enforced by kind rules).
+- Project-level `kind` and task-level `scope` persistence are active (`project|branch|phase|subphase|task|subtask` semantics enforced by kind rules).
 - Kind template system actions can auto-append checklist items and auto-create child work items during task creation.
 - Capability-lease/mutation-guard enforcement scaffolding is active in app/service write paths for non-user actors.
 
-Design-readiness consensus (not implemented yet):
-- MCP/HTTP transport and tool surfaces are not implemented in pre-MCP scope.
-- Future contract direction is REST/tool-style with markdown description/comment fields documented as markdown-write text.
-- Kind/template purpose is explicitly to drive deterministic auto-actions (for example tests/docs/workflow scaffolding) and deterministic `AGENTS.md`/`CLAUDE.md` section autofill workflows.
-- Transport-level request contracts for capability locking (agent `name/id` + scope token) remain future work.
-- MCP-phase attention/blocker signaling will use node-scoped records (project/branch/phase/task/subtask), TUI warning indicators + attention panel, and paginated scope queries for user/agent coordination.
+Wave-locked MCP/HTTP direction (implemented and in active dogfooding closeout):
+- Transport/tool direction is REST/tool-style with markdown description/comment fields documented as markdown-write text.
+- `capture_state` is a summary-first recovery surface for level-scoped workflows.
+- Attention/blocker signaling direction is node-scoped with user-action visibility and paginated scope queries for user/agent coordination.
+- Transport-level lease/scope request contracts enforce non-user mutation guardrails.
+
+Roadmap-only in the active wave (explicitly deferred):
+- advanced import/export transport closure concerns (branch/commit-aware divergence reconciliation and conflict tooling),
+- remote/team auth-tenancy expansion and additional security hardening,
+- dynamic tool-surface policy and broader template-library expansion.
 
 Dangerous limitation note (pre-hardening, design warning):
 - In future policy-controlled override flows, orchestrator calls may receive override-token material.
@@ -72,6 +77,12 @@ Export current data:
 ./kan export --out /tmp/kan.json
 ```
 
+Snapshot export includes:
+- projects, columns, tasks/work-items
+- kind catalog definitions + project allowed-kind closure
+- comments/threads
+- capability leases
+
 Import snapshot:
 ```bash
 ./kan import --in /tmp/kan.json
@@ -96,7 +107,8 @@ Path resolution controls:
 - `--dev` / `KAN_DEV_MODE` to use `<app>-dev` path roots
 - `kan paths` prints the resolved config/data/db paths for the current environment
 - `identity.default_actor_type` (`user|agent|system`) + `identity.display_name` are defaults for new thread comment ownership
-- `paths.search_roots` are global fallback roots for the resource picker when no per-project root is configured
+- `paths.search_roots` seed browse roots for root-selection pickers (bootstrap + paths/roots forms)
+- task resource attachments require a configured per-project root mapping (`project_roots`)
 - dev mode logging writes to workspace-local `.kan/log/` when `logging.dev_file.enabled = true`
   - relative dev log dirs are anchored to the nearest workspace root marker (`go.mod` or `.git`)
 - logging level is controlled by TOML `logging.level` (`debug|info|warn|error|fatal`)

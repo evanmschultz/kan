@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -514,6 +515,12 @@ func TestRepository_MigratesLegacyTasksTable(t *testing.T) {
 	if tableCount != 1 {
 		t.Fatalf("expected comments table to exist after migration, got %d", tableCount)
 	}
+	if err := repo.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='attention_items'`).Scan(&tableCount); err != nil {
+		t.Fatalf("count attention_items table error = %v", err)
+	}
+	if tableCount != 1 {
+		t.Fatalf("expected attention_items table to exist after migration, got %d", tableCount)
+	}
 
 	var indexCount int
 	if err := repo.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_comments_project_target_created_at'`).Scan(&indexCount); err != nil {
@@ -521,6 +528,12 @@ func TestRepository_MigratesLegacyTasksTable(t *testing.T) {
 	}
 	if indexCount != 1 {
 		t.Fatalf("expected comments target index to exist after migration, got %d", indexCount)
+	}
+	if err := repo.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_attention_scope_state_created_at'`).Scan(&indexCount); err != nil {
+		t.Fatalf("count attention scope index error = %v", err)
+	}
+	if indexCount != 1 {
+		t.Fatalf("expected attention scope index to exist after migration, got %d", indexCount)
 	}
 }
 
@@ -780,6 +793,269 @@ func TestRepository_CapabilityLeaseRoundTrip(t *testing.T) {
 	}
 }
 
+// TestRepository_AttentionItemRoundTrip verifies scoped attention persistence, ordering, and resolution.
+func TestRepository_AttentionItemRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	repo, err := OpenInMemory()
+	if err != nil {
+		t.Fatalf("OpenInMemory() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	now := time.Date(2026, 2, 24, 10, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p-attn", "Attention", "", now)
+	if err := repo.CreateProject(ctx, project); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+
+	risk, err := domain.NewAttentionItem(domain.AttentionItemInput{
+		ID:                 "attn-risk",
+		ProjectID:          project.ID,
+		ScopeType:          domain.ScopeLevelTask,
+		ScopeID:            "t1",
+		Kind:               domain.AttentionKindRiskNote,
+		Summary:            "Track rollout risk",
+		RequiresUserAction: false,
+		CreatedByActor:     "user-1",
+		CreatedByType:      domain.ActorTypeUser,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewAttentionItem(risk) error = %v", err)
+	}
+	blocker, err := domain.NewAttentionItem(domain.AttentionItemInput{
+		ID:                 "attn-blocker",
+		ProjectID:          project.ID,
+		ScopeType:          domain.ScopeLevelTask,
+		ScopeID:            "t1",
+		Kind:               domain.AttentionKindBlocker,
+		Summary:            "Need approval to proceed",
+		RequiresUserAction: true,
+		CreatedByActor:     "agent-1",
+		CreatedByType:      domain.ActorTypeAgent,
+	}, now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("NewAttentionItem(blocker) error = %v", err)
+	}
+
+	if err := repo.CreateAttentionItem(ctx, risk); err != nil {
+		t.Fatalf("CreateAttentionItem(risk) error = %v", err)
+	}
+	if err := repo.CreateAttentionItem(ctx, blocker); err != nil {
+		t.Fatalf("CreateAttentionItem(blocker) error = %v", err)
+	}
+
+	unresolved, err := repo.ListAttentionItems(ctx, domain.AttentionListFilter{
+		ProjectID:      project.ID,
+		ScopeType:      domain.ScopeLevelTask,
+		ScopeID:        "t1",
+		UnresolvedOnly: true,
+	})
+	if err != nil {
+		t.Fatalf("ListAttentionItems(unresolved) error = %v", err)
+	}
+	if len(unresolved) != 2 {
+		t.Fatalf("expected 2 unresolved items, got %#v", unresolved)
+	}
+	if unresolved[0].ID != blocker.ID || unresolved[1].ID != risk.ID {
+		t.Fatalf("expected newest-first deterministic order, got %#v", unresolved)
+	}
+
+	requiresUserAction := true
+	userActionOnly, err := repo.ListAttentionItems(ctx, domain.AttentionListFilter{
+		ProjectID:          project.ID,
+		ScopeType:          domain.ScopeLevelTask,
+		ScopeID:            "t1",
+		UnresolvedOnly:     true,
+		RequiresUserAction: &requiresUserAction,
+	})
+	if err != nil {
+		t.Fatalf("ListAttentionItems(requires_user_action) error = %v", err)
+	}
+	if len(userActionOnly) != 1 || userActionOnly[0].ID != blocker.ID {
+		t.Fatalf("expected one requires_user_action item, got %#v", userActionOnly)
+	}
+
+	resolved, err := repo.ResolveAttentionItem(ctx, blocker.ID, "user-2", domain.ActorTypeUser, now.Add(2*time.Minute))
+	if err != nil {
+		t.Fatalf("ResolveAttentionItem() error = %v", err)
+	}
+	if resolved.State != domain.AttentionStateResolved || resolved.ResolvedAt == nil {
+		t.Fatalf("expected resolved attention row, got %#v", resolved)
+	}
+
+	unresolved, err = repo.ListAttentionItems(ctx, domain.AttentionListFilter{
+		ProjectID:      project.ID,
+		ScopeType:      domain.ScopeLevelTask,
+		ScopeID:        "t1",
+		UnresolvedOnly: true,
+	})
+	if err != nil {
+		t.Fatalf("ListAttentionItems(unresolved after resolve) error = %v", err)
+	}
+	if len(unresolved) != 1 || unresolved[0].ID != risk.ID {
+		t.Fatalf("expected only unresolved risk item, got %#v", unresolved)
+	}
+}
+
+// TestRepository_AttentionItemValidationErrors verifies fail-closed validation paths for attention writes/queries.
+func TestRepository_AttentionItemValidationErrors(t *testing.T) {
+	ctx := context.Background()
+	repo, err := OpenInMemory()
+	if err != nil {
+		t.Fatalf("OpenInMemory() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	now := time.Date(2026, 2, 24, 10, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p-attn-validate", "Attention Validate", "", now)
+	if err := repo.CreateProject(ctx, project); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+
+	base := domain.AttentionItem{
+		ID:                 "attn-valid",
+		ProjectID:          project.ID,
+		ScopeType:          domain.ScopeLevelTask,
+		ScopeID:            "task-1",
+		State:              domain.AttentionStateOpen,
+		Kind:               domain.AttentionKindRiskNote,
+		Summary:            "summary",
+		RequiresUserAction: false,
+		CreatedByActor:     "user-1",
+		CreatedByType:      domain.ActorTypeUser,
+		CreatedAt:          now,
+	}
+
+	t.Run("create invalid id", func(t *testing.T) {
+		item := base
+		item.ID = "   "
+		if err := repo.CreateAttentionItem(ctx, item); !errors.Is(err, domain.ErrInvalidID) {
+			t.Fatalf("CreateAttentionItem() error = %v, want %v", err, domain.ErrInvalidID)
+		}
+	})
+
+	t.Run("create invalid scope", func(t *testing.T) {
+		item := base
+		item.ID = "attn-invalid-scope"
+		item.ScopeType = domain.ScopeLevel("bad-scope")
+		if err := repo.CreateAttentionItem(ctx, item); !errors.Is(err, domain.ErrInvalidScopeType) {
+			t.Fatalf("CreateAttentionItem() error = %v, want %v", err, domain.ErrInvalidScopeType)
+		}
+	})
+
+	t.Run("create invalid kind", func(t *testing.T) {
+		item := base
+		item.ID = "attn-invalid-kind"
+		item.Kind = domain.AttentionKind("bad-kind")
+		if err := repo.CreateAttentionItem(ctx, item); !errors.Is(err, domain.ErrInvalidAttentionKind) {
+			t.Fatalf("CreateAttentionItem() error = %v, want %v", err, domain.ErrInvalidAttentionKind)
+		}
+	})
+
+	t.Run("create empty summary", func(t *testing.T) {
+		item := base
+		item.ID = "attn-empty-summary"
+		item.Summary = "   "
+		if err := repo.CreateAttentionItem(ctx, item); !errors.Is(err, domain.ErrInvalidSummary) {
+			t.Fatalf("CreateAttentionItem() error = %v, want %v", err, domain.ErrInvalidSummary)
+		}
+	})
+
+	t.Run("list filter validation errors", func(t *testing.T) {
+		cases := []struct {
+			name   string
+			filter domain.AttentionListFilter
+			want   error
+		}{
+			{
+				name: "missing project id",
+				filter: domain.AttentionListFilter{
+					ScopeType: domain.ScopeLevelTask,
+					ScopeID:   "task-1",
+				},
+				want: domain.ErrInvalidID,
+			},
+			{
+				name: "scope id without scope type",
+				filter: domain.AttentionListFilter{
+					ProjectID: project.ID,
+					ScopeID:   "task-1",
+				},
+				want: domain.ErrInvalidScopeType,
+			},
+			{
+				name: "invalid state",
+				filter: domain.AttentionListFilter{
+					ProjectID: project.ID,
+					ScopeType: domain.ScopeLevelTask,
+					ScopeID:   "task-1",
+					States:    []domain.AttentionState{"bad-state"},
+				},
+				want: domain.ErrInvalidAttentionState,
+			},
+			{
+				name: "invalid kind",
+				filter: domain.AttentionListFilter{
+					ProjectID: project.ID,
+					ScopeType: domain.ScopeLevelTask,
+					ScopeID:   "task-1",
+					Kinds:     []domain.AttentionKind{"bad-kind"},
+				},
+				want: domain.ErrInvalidAttentionKind,
+			},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				_, err := repo.ListAttentionItems(ctx, tc.filter)
+				if !errors.Is(err, tc.want) {
+					t.Fatalf("ListAttentionItems() error = %v, want %v", err, tc.want)
+				}
+			})
+		}
+	})
+
+	t.Run("resolve invalid id", func(t *testing.T) {
+		_, err := repo.ResolveAttentionItem(ctx, "   ", "user-2", domain.ActorTypeUser, now.Add(time.Minute))
+		if !errors.Is(err, domain.ErrInvalidID) {
+			t.Fatalf("ResolveAttentionItem() error = %v, want %v", err, domain.ErrInvalidID)
+		}
+	})
+
+	t.Run("resolve missing item", func(t *testing.T) {
+		_, err := repo.ResolveAttentionItem(ctx, "missing", "user-2", domain.ActorTypeUser, now.Add(time.Minute))
+		if !errors.Is(err, app.ErrNotFound) {
+			t.Fatalf("ResolveAttentionItem() error = %v, want %v", err, app.ErrNotFound)
+		}
+	})
+}
+
+// TestRepository_SeedDefaultKindsIncludeSubphase verifies seeded defaults include subphase support.
+func TestRepository_SeedDefaultKindsIncludeSubphase(t *testing.T) {
+	ctx := context.Background()
+	repo, err := OpenInMemory()
+	if err != nil {
+		t.Fatalf("OpenInMemory() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	phase, err := repo.GetKindDefinition(ctx, domain.KindID(domain.WorkKindPhase))
+	if err != nil {
+		t.Fatalf("GetKindDefinition(phase) error = %v", err)
+	}
+	if !phase.AppliesToScope(domain.KindAppliesToSubphase) {
+		t.Fatalf("expected phase kind to apply to subphase, got %#v", phase.AppliesTo)
+	}
+	if !phase.AllowsParentScope(domain.KindAppliesToSubphase) {
+		t.Fatalf("expected phase kind parent scopes to include subphase, got %#v", phase.AllowedParentScopes)
+	}
+}
+
 // TestRepository_PersistsProjectKindAndTaskScope verifies new kind/scope columns round-trip.
 func TestRepository_PersistsProjectKindAndTaskScope(t *testing.T) {
 	ctx := context.Background()
@@ -833,5 +1109,30 @@ func TestRepository_PersistsProjectKindAndTaskScope(t *testing.T) {
 	}
 	if loadedTask.Scope != domain.KindAppliesToPhase {
 		t.Fatalf("expected persisted task scope phase, got %q", loadedTask.Scope)
+	}
+
+	subphaseTask, err := domain.NewTask(domain.TaskInput{
+		ID:        "t-subphase",
+		ProjectID: project.ID,
+		ParentID:  task.ID,
+		ColumnID:  column.ID,
+		Scope:     domain.KindAppliesToSubphase,
+		Kind:      domain.WorkKindPhase,
+		Position:  1,
+		Title:     "subphase",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewTask(subphase) error = %v", err)
+	}
+	if err := repo.CreateTask(ctx, subphaseTask); err != nil {
+		t.Fatalf("CreateTask(subphase) error = %v", err)
+	}
+	loadedSubphaseTask, err := repo.GetTask(ctx, subphaseTask.ID)
+	if err != nil {
+		t.Fatalf("GetTask(subphase) error = %v", err)
+	}
+	if loadedSubphaseTask.Scope != domain.KindAppliesToSubphase {
+		t.Fatalf("expected persisted task scope subphase, got %q", loadedSubphaseTask.Scope)
 	}
 }

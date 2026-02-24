@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -16,11 +17,15 @@ const SnapshotVersion = "kan.snapshot.v1"
 
 // Snapshot represents snapshot data used by this package.
 type Snapshot struct {
-	Version    string            `json:"version"`
-	ExportedAt time.Time         `json:"exported_at"`
-	Projects   []SnapshotProject `json:"projects"`
-	Columns    []SnapshotColumn  `json:"columns"`
-	Tasks      []SnapshotTask    `json:"tasks"`
+	Version             string                        `json:"version"`
+	ExportedAt          time.Time                     `json:"exported_at"`
+	Projects            []SnapshotProject             `json:"projects"`
+	Columns             []SnapshotColumn              `json:"columns"`
+	Tasks               []SnapshotTask                `json:"tasks"`
+	KindDefinitions     []SnapshotKindDefinition      `json:"kind_definitions,omitempty"`
+	ProjectAllowedKinds []SnapshotProjectAllowedKinds `json:"project_allowed_kinds,omitempty"`
+	Comments            []SnapshotComment             `json:"comments,omitempty"`
+	CapabilityLeases    []SnapshotCapabilityLease     `json:"capability_leases,omitempty"`
 }
 
 // SnapshotProject represents snapshot project data used by this package.
@@ -75,22 +80,96 @@ type SnapshotTask struct {
 	CanceledAt     *time.Time            `json:"canceled_at,omitempty"`
 }
 
+// SnapshotKindDefinition represents one kind-catalog definition persisted in a snapshot.
+type SnapshotKindDefinition struct {
+	ID                  domain.KindID          `json:"id"`
+	DisplayName         string                 `json:"display_name"`
+	DescriptionMarkdown string                 `json:"description_markdown"`
+	AppliesTo           []domain.KindAppliesTo `json:"applies_to"`
+	AllowedParentScopes []domain.KindAppliesTo `json:"allowed_parent_scopes,omitempty"`
+	PayloadSchemaJSON   string                 `json:"payload_schema_json,omitempty"`
+	Template            domain.KindTemplate    `json:"template,omitempty"`
+	CreatedAt           time.Time              `json:"created_at"`
+	UpdatedAt           time.Time              `json:"updated_at"`
+	ArchivedAt          *time.Time             `json:"archived_at,omitempty"`
+}
+
+// SnapshotProjectAllowedKinds stores one project's explicit kind allowlist closure.
+type SnapshotProjectAllowedKinds struct {
+	ProjectID string          `json:"project_id"`
+	KindIDs   []domain.KindID `json:"kind_ids"`
+}
+
+// SnapshotComment represents one persisted markdown comment row in a snapshot.
+type SnapshotComment struct {
+	ID           string                   `json:"id"`
+	ProjectID    string                   `json:"project_id"`
+	TargetType   domain.CommentTargetType `json:"target_type"`
+	TargetID     string                   `json:"target_id"`
+	BodyMarkdown string                   `json:"body_markdown"`
+	ActorType    domain.ActorType         `json:"actor_type"`
+	AuthorName   string                   `json:"author_name"`
+	CreatedAt    time.Time                `json:"created_at"`
+	UpdatedAt    time.Time                `json:"updated_at"`
+}
+
+// SnapshotCapabilityLease represents one persisted capability-lease row in a snapshot.
+type SnapshotCapabilityLease struct {
+	InstanceID                string                     `json:"instance_id"`
+	LeaseToken                string                     `json:"lease_token"`
+	AgentName                 string                     `json:"agent_name"`
+	ProjectID                 string                     `json:"project_id"`
+	ScopeType                 domain.CapabilityScopeType `json:"scope_type"`
+	ScopeID                   string                     `json:"scope_id,omitempty"`
+	Role                      domain.CapabilityRole      `json:"role"`
+	ParentInstanceID          string                     `json:"parent_instance_id,omitempty"`
+	AllowEqualScopeDelegation bool                       `json:"allow_equal_scope_delegation"`
+	IssuedAt                  time.Time                  `json:"issued_at"`
+	ExpiresAt                 time.Time                  `json:"expires_at"`
+	HeartbeatAt               time.Time                  `json:"heartbeat_at"`
+	RevokedAt                 *time.Time                 `json:"revoked_at,omitempty"`
+	RevokedReason             string                     `json:"revoked_reason,omitempty"`
+}
+
 // ExportSnapshot handles export snapshot.
 func (s *Service) ExportSnapshot(ctx context.Context, includeArchived bool) (Snapshot, error) {
+	kindDefinitions, err := s.repo.ListKindDefinitions(ctx, includeArchived)
+	if err != nil {
+		return Snapshot{}, err
+	}
+
 	projects, err := s.repo.ListProjects(ctx, includeArchived)
 	if err != nil {
 		return Snapshot{}, err
 	}
 
 	snap := Snapshot{
-		Version:    SnapshotVersion,
-		ExportedAt: s.clock().UTC(),
-		Projects:   make([]SnapshotProject, 0, len(projects)),
-		Columns:    make([]SnapshotColumn, 0),
-		Tasks:      make([]SnapshotTask, 0),
+		Version:             SnapshotVersion,
+		ExportedAt:          s.clock().UTC(),
+		Projects:            make([]SnapshotProject, 0, len(projects)),
+		Columns:             make([]SnapshotColumn, 0),
+		Tasks:               make([]SnapshotTask, 0),
+		KindDefinitions:     make([]SnapshotKindDefinition, 0, len(kindDefinitions)),
+		ProjectAllowedKinds: make([]SnapshotProjectAllowedKinds, 0, len(projects)),
+		Comments:            make([]SnapshotComment, 0),
+		CapabilityLeases:    make([]SnapshotCapabilityLease, 0),
+	}
+	for _, kind := range kindDefinitions {
+		snap.KindDefinitions = append(snap.KindDefinitions, snapshotKindDefinitionFromDomain(kind))
 	}
 	for _, project := range projects {
 		snap.Projects = append(snap.Projects, snapshotProjectFromDomain(project))
+
+		allowedKinds, listErr := s.repo.ListProjectAllowedKinds(ctx, project.ID)
+		if listErr != nil {
+			return Snapshot{}, listErr
+		}
+		if len(allowedKinds) > 0 {
+			snap.ProjectAllowedKinds = append(snap.ProjectAllowedKinds, SnapshotProjectAllowedKinds{
+				ProjectID: project.ID,
+				KindIDs:   append([]domain.KindID(nil), allowedKinds...),
+			})
+		}
 
 		columns, listErr := s.repo.ListColumns(ctx, project.ID, includeArchived)
 		if listErr != nil {
@@ -107,6 +186,18 @@ func (s *Service) ExportSnapshot(ctx context.Context, includeArchived bool) (Sna
 		for _, task := range tasks {
 			snap.Tasks = append(snap.Tasks, snapshotTaskFromDomain(task))
 		}
+
+		comments, listErr := s.commentsForProjectSnapshot(ctx, project, tasks)
+		if listErr != nil {
+			return Snapshot{}, listErr
+		}
+		snap.Comments = append(snap.Comments, comments...)
+
+		leases, listErr := s.capabilityLeasesForProjectSnapshot(ctx, project.ID, tasks)
+		if listErr != nil {
+			return Snapshot{}, listErr
+		}
+		snap.CapabilityLeases = append(snap.CapabilityLeases, leases...)
 	}
 
 	snap.sort()
@@ -122,6 +213,16 @@ func (s *Service) ImportSnapshot(ctx context.Context, snap Snapshot) error {
 
 	for _, project := range snap.Projects {
 		if err := s.upsertProject(ctx, project.toDomain()); err != nil {
+			return err
+		}
+	}
+	for _, kind := range snap.KindDefinitions {
+		if err := s.upsertKindDefinition(ctx, kind.toDomain()); err != nil {
+			return err
+		}
+	}
+	for _, allow := range snap.ProjectAllowedKinds {
+		if err := s.repo.SetProjectAllowedKinds(ctx, strings.TrimSpace(allow.ProjectID), append([]domain.KindID(nil), allow.KindIDs...)); err != nil {
 			return err
 		}
 	}
@@ -166,6 +267,13 @@ func (s *Service) ImportSnapshot(ctx context.Context, snap Snapshot) error {
 		if err := s.repo.CreateTask(ctx, dt); err != nil {
 			return err
 		}
+	}
+
+	if err := s.importSnapshotComments(ctx, snap.Comments); err != nil {
+		return err
+	}
+	if err := s.importSnapshotCapabilityLeases(ctx, snap.CapabilityLeases); err != nil {
+		return err
 	}
 
 	return nil
@@ -262,7 +370,7 @@ func (s *Snapshot) Validate() error {
 			s.Tasks[i].Scope = t.Scope
 		}
 		if !domain.IsValidWorkItemAppliesTo(t.Scope) {
-			return fmt.Errorf("tasks[%d].scope must be branch|phase|task|subtask", i)
+			return fmt.Errorf("tasks[%d].scope must be branch|phase|subphase|task|subtask", i)
 		}
 		if t.LifecycleState == "" {
 			t.LifecycleState = domain.StateTodo
@@ -299,6 +407,153 @@ func (s *Snapshot) Validate() error {
 		}
 	}
 
+	kindIDs := map[domain.KindID]struct{}{}
+	for i, k := range s.KindDefinitions {
+		kindID := domain.NormalizeKindID(k.ID)
+		if kindID == "" {
+			return fmt.Errorf("kind_definitions[%d].id is required", i)
+		}
+		if _, exists := kindIDs[kindID]; exists {
+			return fmt.Errorf("duplicate kind definition id: %q", kindID)
+		}
+		if k.CreatedAt.IsZero() || k.UpdatedAt.IsZero() {
+			return fmt.Errorf("kind_definitions[%d] timestamps are required", i)
+		}
+		if strings.TrimSpace(k.PayloadSchemaJSON) != "" && !json.Valid([]byte(k.PayloadSchemaJSON)) {
+			return fmt.Errorf("kind_definitions[%d].payload_schema_json invalid", i)
+		}
+		s.KindDefinitions[i].ID = kindID
+		kindIDs[kindID] = struct{}{}
+	}
+
+	allowlistByProject := map[string]struct{}{}
+	for i, allow := range s.ProjectAllowedKinds {
+		projectID := strings.TrimSpace(allow.ProjectID)
+		if projectID == "" {
+			return fmt.Errorf("project_allowed_kinds[%d].project_id is required", i)
+		}
+		if _, ok := projectIDs[projectID]; !ok {
+			return fmt.Errorf("project_allowed_kinds[%d] references unknown project_id %q", i, projectID)
+		}
+		if _, exists := allowlistByProject[projectID]; exists {
+			return fmt.Errorf("duplicate project_allowed_kinds project_id: %q", projectID)
+		}
+		seenKinds := map[domain.KindID]struct{}{}
+		normalizedKinds := make([]domain.KindID, 0, len(allow.KindIDs))
+		for _, rawKindID := range allow.KindIDs {
+			kindID := domain.NormalizeKindID(rawKindID)
+			if kindID == "" {
+				continue
+			}
+			if _, dup := seenKinds[kindID]; dup {
+				continue
+			}
+			seenKinds[kindID] = struct{}{}
+			normalizedKinds = append(normalizedKinds, kindID)
+		}
+		s.ProjectAllowedKinds[i].ProjectID = projectID
+		s.ProjectAllowedKinds[i].KindIDs = normalizedKinds
+		allowlistByProject[projectID] = struct{}{}
+	}
+
+	commentKeys := map[string]struct{}{}
+	for i, c := range s.Comments {
+		commentID := strings.TrimSpace(c.ID)
+		if commentID == "" {
+			return fmt.Errorf("comments[%d].id is required", i)
+		}
+		target, err := domain.NormalizeCommentTarget(domain.CommentTarget{
+			ProjectID:  c.ProjectID,
+			TargetType: c.TargetType,
+			TargetID:   c.TargetID,
+		})
+		if err != nil {
+			return fmt.Errorf("comments[%d] target invalid: %w", i, err)
+		}
+		if _, ok := projectIDs[target.ProjectID]; !ok {
+			return fmt.Errorf("comments[%d] references unknown project_id %q", i, target.ProjectID)
+		}
+		body := strings.TrimSpace(c.BodyMarkdown)
+		if body == "" {
+			return fmt.Errorf("comments[%d].body_markdown is required", i)
+		}
+		actorType := domain.ActorType(strings.TrimSpace(strings.ToLower(string(c.ActorType))))
+		if actorType == "" {
+			actorType = domain.ActorTypeUser
+		}
+		if !isSupportedActorType(actorType) {
+			return fmt.Errorf("comments[%d].actor_type invalid: %q", i, actorType)
+		}
+		authorName := strings.TrimSpace(c.AuthorName)
+		if authorName == "" {
+			authorName = "kan-user"
+		}
+		if c.CreatedAt.IsZero() || c.UpdatedAt.IsZero() {
+			return fmt.Errorf("comments[%d] timestamps are required", i)
+		}
+		commentKey := strings.Join([]string{target.ProjectID, string(target.TargetType), target.TargetID, commentID}, "|")
+		if _, exists := commentKeys[commentKey]; exists {
+			return fmt.Errorf("duplicate comment identity: %q", commentKey)
+		}
+		commentKeys[commentKey] = struct{}{}
+		s.Comments[i].ID = commentID
+		s.Comments[i].ProjectID = target.ProjectID
+		s.Comments[i].TargetType = target.TargetType
+		s.Comments[i].TargetID = target.TargetID
+		s.Comments[i].BodyMarkdown = body
+		s.Comments[i].ActorType = actorType
+		s.Comments[i].AuthorName = authorName
+	}
+
+	leaseIDs := map[string]struct{}{}
+	for i, lease := range s.CapabilityLeases {
+		instanceID := strings.TrimSpace(lease.InstanceID)
+		if instanceID == "" {
+			return fmt.Errorf("capability_leases[%d].instance_id is required", i)
+		}
+		if _, exists := leaseIDs[instanceID]; exists {
+			return fmt.Errorf("duplicate capability lease instance_id: %q", instanceID)
+		}
+		projectID := strings.TrimSpace(lease.ProjectID)
+		if projectID == "" {
+			return fmt.Errorf("capability_leases[%d].project_id is required", i)
+		}
+		if _, ok := projectIDs[projectID]; !ok {
+			return fmt.Errorf("capability_leases[%d] references unknown project_id %q", i, projectID)
+		}
+		scopeType := domain.NormalizeCapabilityScopeType(lease.ScopeType)
+		if !domain.IsValidCapabilityScopeType(scopeType) {
+			return fmt.Errorf("capability_leases[%d].scope_type invalid: %q", i, lease.ScopeType)
+		}
+		scopeID := strings.TrimSpace(lease.ScopeID)
+		if scopeType != domain.CapabilityScopeProject && scopeID == "" {
+			return fmt.Errorf("capability_leases[%d].scope_id is required for scope %q", i, scopeType)
+		}
+		role := domain.NormalizeCapabilityRole(lease.Role)
+		if !domain.IsValidCapabilityRole(role) {
+			return fmt.Errorf("capability_leases[%d].role invalid: %q", i, lease.Role)
+		}
+		if strings.TrimSpace(lease.LeaseToken) == "" {
+			return fmt.Errorf("capability_leases[%d].lease_token is required", i)
+		}
+		if strings.TrimSpace(lease.AgentName) == "" {
+			return fmt.Errorf("capability_leases[%d].agent_name is required", i)
+		}
+		if lease.IssuedAt.IsZero() || lease.ExpiresAt.IsZero() || lease.HeartbeatAt.IsZero() {
+			return fmt.Errorf("capability_leases[%d] timestamps are required", i)
+		}
+		s.CapabilityLeases[i].InstanceID = instanceID
+		s.CapabilityLeases[i].ProjectID = projectID
+		s.CapabilityLeases[i].ScopeType = scopeType
+		s.CapabilityLeases[i].ScopeID = scopeID
+		s.CapabilityLeases[i].Role = role
+		s.CapabilityLeases[i].LeaseToken = strings.TrimSpace(lease.LeaseToken)
+		s.CapabilityLeases[i].AgentName = strings.TrimSpace(lease.AgentName)
+		s.CapabilityLeases[i].ParentInstanceID = strings.TrimSpace(lease.ParentInstanceID)
+		s.CapabilityLeases[i].RevokedReason = strings.TrimSpace(lease.RevokedReason)
+		leaseIDs[instanceID] = struct{}{}
+	}
+
 	return nil
 }
 
@@ -310,6 +565,190 @@ func (s *Service) upsertProject(ctx context.Context, p domain.Project) error {
 		return err
 	}
 	return s.repo.CreateProject(ctx, p)
+}
+
+// upsertKindDefinition upserts one kind-catalog definition row.
+func (s *Service) upsertKindDefinition(ctx context.Context, kind domain.KindDefinition) error {
+	if _, err := s.repo.GetKindDefinition(ctx, kind.ID); err == nil {
+		return s.repo.UpdateKindDefinition(ctx, kind)
+	} else if !errors.Is(err, ErrNotFound) {
+		return err
+	}
+	return s.repo.CreateKindDefinition(ctx, kind)
+}
+
+// commentsForProjectSnapshot collects project and task-scoped comments for snapshot export.
+func (s *Service) commentsForProjectSnapshot(ctx context.Context, project domain.Project, tasks []domain.Task) ([]SnapshotComment, error) {
+	targets := []domain.CommentTarget{{
+		ProjectID:  project.ID,
+		TargetType: domain.CommentTargetTypeProject,
+		TargetID:   project.ID,
+	}}
+	for _, task := range tasks {
+		targets = append(targets, domain.CommentTarget{
+			ProjectID:  project.ID,
+			TargetType: snapshotCommentTargetTypeForTask(task),
+			TargetID:   task.ID,
+		})
+	}
+	out := make([]SnapshotComment, 0)
+	seenTargets := map[string]struct{}{}
+	for _, target := range targets {
+		key := strings.Join([]string{target.ProjectID, string(target.TargetType), target.TargetID}, "|")
+		if _, exists := seenTargets[key]; exists {
+			continue
+		}
+		seenTargets[key] = struct{}{}
+		comments, err := s.repo.ListCommentsByTarget(ctx, target)
+		if err != nil {
+			return nil, err
+		}
+		for _, comment := range comments {
+			out = append(out, snapshotCommentFromDomain(comment))
+		}
+	}
+	return out, nil
+}
+
+// capabilityLeasesForProjectSnapshot collects project/task hierarchy capability leases for snapshot export.
+func (s *Service) capabilityLeasesForProjectSnapshot(ctx context.Context, projectID string, tasks []domain.Task) ([]SnapshotCapabilityLease, error) {
+	type scopeQuery struct {
+		scopeType domain.CapabilityScopeType
+		scopeID   string
+	}
+	queries := []scopeQuery{{
+		scopeType: domain.CapabilityScopeProject,
+		scopeID:   "",
+	}}
+	for _, task := range tasks {
+		queries = append(queries, scopeQuery{
+			scopeType: snapshotCapabilityScopeTypeForTask(task),
+			scopeID:   task.ID,
+		})
+	}
+	out := make([]SnapshotCapabilityLease, 0)
+	seenQueries := map[string]struct{}{}
+	seenLeases := map[string]struct{}{}
+	for _, query := range queries {
+		queryKey := strings.Join([]string{string(query.scopeType), strings.TrimSpace(query.scopeID)}, "|")
+		if _, exists := seenQueries[queryKey]; exists {
+			continue
+		}
+		seenQueries[queryKey] = struct{}{}
+		leases, err := s.repo.ListCapabilityLeasesByScope(ctx, projectID, query.scopeType, query.scopeID)
+		if err != nil {
+			return nil, err
+		}
+		for _, lease := range leases {
+			instanceID := strings.TrimSpace(lease.InstanceID)
+			if _, exists := seenLeases[instanceID]; exists {
+				continue
+			}
+			seenLeases[instanceID] = struct{}{}
+			out = append(out, snapshotCapabilityLeaseFromDomain(lease))
+		}
+	}
+	return out, nil
+}
+
+// importSnapshotComments upserts snapshot comments by deterministic comment identity.
+func (s *Service) importSnapshotComments(ctx context.Context, comments []SnapshotComment) error {
+	for _, snapshotComment := range comments {
+		comment := snapshotComment.toDomain()
+		target := domain.CommentTarget{
+			ProjectID:  comment.ProjectID,
+			TargetType: comment.TargetType,
+			TargetID:   comment.TargetID,
+		}
+		existing, err := s.repo.ListCommentsByTarget(ctx, target)
+		if err != nil {
+			return err
+		}
+		alreadyExists := false
+		for _, existingComment := range existing {
+			if existingComment.ID == comment.ID {
+				alreadyExists = true
+				break
+			}
+		}
+		if alreadyExists {
+			continue
+		}
+		if err := s.repo.CreateComment(ctx, comment); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// importSnapshotCapabilityLeases upserts snapshot capability leases by instance id.
+func (s *Service) importSnapshotCapabilityLeases(ctx context.Context, leases []SnapshotCapabilityLease) error {
+	for _, snapshotLease := range leases {
+		lease := snapshotLease.toDomain()
+		if _, err := s.repo.GetCapabilityLease(ctx, lease.InstanceID); err == nil {
+			if err := s.repo.UpdateCapabilityLease(ctx, lease); err != nil {
+				return err
+			}
+			continue
+		} else if !errors.Is(err, ErrNotFound) {
+			return err
+		}
+		if err := s.repo.CreateCapabilityLease(ctx, lease); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// snapshotCommentTargetTypeForTask maps one work-item row to a comment target type.
+func snapshotCommentTargetTypeForTask(task domain.Task) domain.CommentTargetType {
+	switch task.Kind {
+	case domain.WorkKindPhase:
+		return domain.CommentTargetTypePhase
+	case domain.WorkKindSubtask:
+		return domain.CommentTargetTypeSubtask
+	case domain.WorkKindDecision:
+		return domain.CommentTargetTypeDecision
+	case domain.WorkKindNote:
+		return domain.CommentTargetTypeNote
+	default:
+		if task.Scope == domain.KindAppliesToSubtask {
+			return domain.CommentTargetTypeSubtask
+		}
+		if task.Scope == domain.KindAppliesToSubphase {
+			return domain.CommentTargetTypePhase
+		}
+		if task.Scope == domain.KindAppliesToPhase {
+			return domain.CommentTargetTypePhase
+		}
+		return domain.CommentTargetTypeTask
+	}
+}
+
+// snapshotCapabilityScopeTypeForTask maps one work-item row to a capability scope type.
+func snapshotCapabilityScopeTypeForTask(task domain.Task) domain.CapabilityScopeType {
+	switch task.Scope {
+	case domain.KindAppliesToBranch:
+		return domain.CapabilityScopeBranch
+	case domain.KindAppliesToPhase:
+		return domain.CapabilityScopePhase
+	case domain.KindAppliesToSubphase:
+		return domain.CapabilityScopeSubphase
+	case domain.KindAppliesToSubtask:
+		return domain.CapabilityScopeSubtask
+	default:
+		return domain.CapabilityScopeTask
+	}
+}
+
+// isSupportedActorType validates snapshot actor types for comments.
+func isSupportedActorType(actorType domain.ActorType) bool {
+	switch actorType {
+	case domain.ActorTypeUser, domain.ActorTypeAgent, domain.ActorTypeSystem:
+		return true
+	default:
+		return false
+	}
 }
 
 // sort handles sort.
@@ -339,6 +778,51 @@ func (s *Snapshot) sort() {
 				return a.Position < b.Position
 			}
 			return a.ColumnID < b.ColumnID
+		}
+		return a.ProjectID < b.ProjectID
+	})
+	for i := range s.ProjectAllowedKinds {
+		sort.Slice(s.ProjectAllowedKinds[i].KindIDs, func(a, b int) bool {
+			return s.ProjectAllowedKinds[i].KindIDs[a] < s.ProjectAllowedKinds[i].KindIDs[b]
+		})
+	}
+	sort.Slice(s.KindDefinitions, func(i, j int) bool {
+		return s.KindDefinitions[i].ID < s.KindDefinitions[j].ID
+	})
+	sort.Slice(s.ProjectAllowedKinds, func(i, j int) bool {
+		return s.ProjectAllowedKinds[i].ProjectID < s.ProjectAllowedKinds[j].ProjectID
+	})
+	sort.Slice(s.Comments, func(i, j int) bool {
+		a := s.Comments[i]
+		b := s.Comments[j]
+		if a.ProjectID == b.ProjectID {
+			if a.TargetType == b.TargetType {
+				if a.TargetID == b.TargetID {
+					if a.CreatedAt.Equal(b.CreatedAt) {
+						return a.ID < b.ID
+					}
+					return a.CreatedAt.Before(b.CreatedAt)
+				}
+				return a.TargetID < b.TargetID
+			}
+			return a.TargetType < b.TargetType
+		}
+		return a.ProjectID < b.ProjectID
+	})
+	sort.Slice(s.CapabilityLeases, func(i, j int) bool {
+		a := s.CapabilityLeases[i]
+		b := s.CapabilityLeases[j]
+		if a.ProjectID == b.ProjectID {
+			if a.ScopeType == b.ScopeType {
+				if a.ScopeID == b.ScopeID {
+					if a.IssuedAt.Equal(b.IssuedAt) {
+						return a.InstanceID < b.InstanceID
+					}
+					return a.IssuedAt.Before(b.IssuedAt)
+				}
+				return a.ScopeID < b.ScopeID
+			}
+			return a.ScopeType < b.ScopeType
 		}
 		return a.ProjectID < b.ProjectID
 	})
@@ -399,6 +883,57 @@ func snapshotTaskFromDomain(t domain.Task) SnapshotTask {
 		CompletedAt:    copyTimePtr(t.CompletedAt),
 		ArchivedAt:     copyTimePtr(t.ArchivedAt),
 		CanceledAt:     copyTimePtr(t.CanceledAt),
+	}
+}
+
+// snapshotKindDefinitionFromDomain converts one kind definition to snapshot payload form.
+func snapshotKindDefinitionFromDomain(kind domain.KindDefinition) SnapshotKindDefinition {
+	return SnapshotKindDefinition{
+		ID:                  kind.ID,
+		DisplayName:         kind.DisplayName,
+		DescriptionMarkdown: kind.DescriptionMarkdown,
+		AppliesTo:           append([]domain.KindAppliesTo(nil), kind.AppliesTo...),
+		AllowedParentScopes: append([]domain.KindAppliesTo(nil), kind.AllowedParentScopes...),
+		PayloadSchemaJSON:   kind.PayloadSchemaJSON,
+		Template:            kind.Template,
+		CreatedAt:           kind.CreatedAt.UTC(),
+		UpdatedAt:           kind.UpdatedAt.UTC(),
+		ArchivedAt:          copyTimePtr(kind.ArchivedAt),
+	}
+}
+
+// snapshotCommentFromDomain converts one comment row to snapshot payload form.
+func snapshotCommentFromDomain(comment domain.Comment) SnapshotComment {
+	return SnapshotComment{
+		ID:           comment.ID,
+		ProjectID:    comment.ProjectID,
+		TargetType:   comment.TargetType,
+		TargetID:     comment.TargetID,
+		BodyMarkdown: comment.BodyMarkdown,
+		ActorType:    comment.ActorType,
+		AuthorName:   comment.AuthorName,
+		CreatedAt:    comment.CreatedAt.UTC(),
+		UpdatedAt:    comment.UpdatedAt.UTC(),
+	}
+}
+
+// snapshotCapabilityLeaseFromDomain converts one capability lease to snapshot payload form.
+func snapshotCapabilityLeaseFromDomain(lease domain.CapabilityLease) SnapshotCapabilityLease {
+	return SnapshotCapabilityLease{
+		InstanceID:                lease.InstanceID,
+		LeaseToken:                lease.LeaseToken,
+		AgentName:                 lease.AgentName,
+		ProjectID:                 lease.ProjectID,
+		ScopeType:                 lease.ScopeType,
+		ScopeID:                   lease.ScopeID,
+		Role:                      lease.Role,
+		ParentInstanceID:          lease.ParentInstanceID,
+		AllowEqualScopeDelegation: lease.AllowEqualScopeDelegation,
+		IssuedAt:                  lease.IssuedAt.UTC(),
+		ExpiresAt:                 lease.ExpiresAt.UTC(),
+		HeartbeatAt:               lease.HeartbeatAt.UTC(),
+		RevokedAt:                 copyTimePtr(lease.RevokedAt),
+		RevokedReason:             lease.RevokedReason,
 	}
 }
 
@@ -494,6 +1029,65 @@ func (t SnapshotTask) toDomain() domain.Task {
 		CompletedAt:    copyTimePtr(t.CompletedAt),
 		ArchivedAt:     copyTimePtr(t.ArchivedAt),
 		CanceledAt:     copyTimePtr(t.CanceledAt),
+	}
+}
+
+// toDomain converts one snapshot kind definition to domain form.
+func (k SnapshotKindDefinition) toDomain() domain.KindDefinition {
+	return domain.KindDefinition{
+		ID:                  domain.NormalizeKindID(k.ID),
+		DisplayName:         strings.TrimSpace(k.DisplayName),
+		DescriptionMarkdown: strings.TrimSpace(k.DescriptionMarkdown),
+		AppliesTo:           append([]domain.KindAppliesTo(nil), k.AppliesTo...),
+		AllowedParentScopes: append([]domain.KindAppliesTo(nil), k.AllowedParentScopes...),
+		PayloadSchemaJSON:   strings.TrimSpace(k.PayloadSchemaJSON),
+		Template:            k.Template,
+		CreatedAt:           k.CreatedAt.UTC(),
+		UpdatedAt:           k.UpdatedAt.UTC(),
+		ArchivedAt:          copyTimePtr(k.ArchivedAt),
+	}
+}
+
+// toDomain converts one snapshot comment row to domain form.
+func (c SnapshotComment) toDomain() domain.Comment {
+	actorType := domain.ActorType(strings.TrimSpace(strings.ToLower(string(c.ActorType))))
+	if actorType == "" {
+		actorType = domain.ActorTypeUser
+	}
+	authorName := strings.TrimSpace(c.AuthorName)
+	if authorName == "" {
+		authorName = "kan-user"
+	}
+	return domain.Comment{
+		ID:           strings.TrimSpace(c.ID),
+		ProjectID:    strings.TrimSpace(c.ProjectID),
+		TargetType:   domain.NormalizeCommentTargetType(c.TargetType),
+		TargetID:     strings.TrimSpace(c.TargetID),
+		BodyMarkdown: strings.TrimSpace(c.BodyMarkdown),
+		ActorType:    actorType,
+		AuthorName:   authorName,
+		CreatedAt:    c.CreatedAt.UTC(),
+		UpdatedAt:    c.UpdatedAt.UTC(),
+	}
+}
+
+// toDomain converts one snapshot capability lease row to domain form.
+func (l SnapshotCapabilityLease) toDomain() domain.CapabilityLease {
+	return domain.CapabilityLease{
+		InstanceID:                strings.TrimSpace(l.InstanceID),
+		LeaseToken:                strings.TrimSpace(l.LeaseToken),
+		AgentName:                 strings.TrimSpace(l.AgentName),
+		ProjectID:                 strings.TrimSpace(l.ProjectID),
+		ScopeType:                 domain.NormalizeCapabilityScopeType(l.ScopeType),
+		ScopeID:                   strings.TrimSpace(l.ScopeID),
+		Role:                      domain.NormalizeCapabilityRole(l.Role),
+		ParentInstanceID:          strings.TrimSpace(l.ParentInstanceID),
+		AllowEqualScopeDelegation: l.AllowEqualScopeDelegation,
+		IssuedAt:                  l.IssuedAt.UTC(),
+		ExpiresAt:                 l.ExpiresAt.UTC(),
+		HeartbeatAt:               l.HeartbeatAt.UTC(),
+		RevokedAt:                 copyTimePtr(l.RevokedAt),
+		RevokedReason:             strings.TrimSpace(l.RevokedReason),
 	}
 }
 

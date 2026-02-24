@@ -20,6 +20,7 @@ type SearchConfig struct {
 	CrossProject    bool
 	IncludeArchived bool
 	States          []string
+	Levels          []string
 }
 
 // ConfirmConfig holds confirmation behavior flags.
@@ -142,6 +143,13 @@ func WithSearchConfig(cfg SearchConfig) Option {
 		} else {
 			m.searchDefaultStates = []string{"todo", "progress", "done"}
 			m.searchStates = append([]string(nil), m.searchDefaultStates...)
+		}
+		if len(cfg.Levels) > 0 {
+			m.searchDefaultLevels = canonicalSearchLevels(cfg.Levels)
+			m.searchLevels = append([]string(nil), m.searchDefaultLevels...)
+		} else {
+			m.searchDefaultLevels = []string{"project", "branch", "phase", "subphase", "task", "subtask"}
+			m.searchLevels = append([]string(nil), m.searchDefaultLevels...)
 		}
 	}
 }

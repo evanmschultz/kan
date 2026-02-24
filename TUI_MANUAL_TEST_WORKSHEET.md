@@ -1,8 +1,13 @@
-# Kan TUI Manual Test Worksheet (Pre-Phase 11 Closeout Retest)
+# Kan TUI Manual Test Worksheet (Active Wave Retest)
 
-Use this worksheet for a fresh end-to-end validation pass of all pre-Phase-11 behavior.
+Use this worksheet for a fresh end-to-end validation pass of local TUI behavior plus active-wave coordination checks.
 Run against a clean DB. Capture screenshots/GIFs for any failures.
 For this refresh pass, keep prior USER NOTES as historical context and append a dated retest outcome in each section.
+
+Pass/fail rule for all `USER NOTES` blocks:
+- `Pass/Fail` must be set to exactly one of `pass`, `fail`, or `blocked`.
+- Blank `Pass/Fail` values are invalid and block sign-off.
+- `blocked` requires a concrete blocker note and next action.
 
 ## 0) Setup
 
@@ -31,8 +36,8 @@ Expected:
 
 ### USER NOTES S0.1-N1
 
-- Pass/Fail: pass
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked): pass
+- Evidence (required):
 - Notes: on start up the project picker should show up so the user picks the project and an option to make a new on form that picker. the project picker should allow for making a new one always.///:
 
 ---
@@ -60,8 +65,8 @@ Expected:
 
 ### USER NOTES S0.2-N1
 
-- Pass/Fail: pass
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked): pass
+- Evidence (required):
 - Notes:
 
 ---
@@ -80,8 +85,8 @@ Expected:
 
 ### USER NOTES S0.3-N1
 
-- Pass/Fail:
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked):
+- Evidence (required):
 - Notes:
 
 ---
@@ -102,8 +107,8 @@ Expected:
 
 ### USER NOTES S1.1-N1
 
-- Pass/Fail: pass
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked): pass
+- Evidence (required):
 - Notes:
 
 ---
@@ -128,8 +133,8 @@ Expected:
 
 ### USER NOTES S1.2-N1
 
-- Pass/Fail: pass
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked): pass
+- Evidence (required):
 - Notes:
 
 ---
@@ -151,8 +156,8 @@ Expected:
 
 ### USER NOTES S1.3-N1
 
-- Pass/Fail: pass
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked): pass
+- Evidence (required):
 - Notes:
 
 ---
@@ -183,8 +188,8 @@ Expected:
 
 ### USER NOTES S2.1-N1
 
-- Pass/Fail:
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked):
+- Evidence (required):
 - Notes: date and time should be two steps. so you pick the date and have the option to save or add a time and then there you have a picker or can type it in which as you type it would narrow the amount of options in the picker.
 
 ---
@@ -205,8 +210,8 @@ Expected:
 
 ### USER NOTES S2.2-N1
 
-- Pass/Fail: pass
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked): pass
+- Evidence (required):
 - Notes: delete from file
 
 ---
@@ -231,8 +236,8 @@ Expected:
 
 ### USER NOTES S2.3-N1
 
-- Pass/Fail:
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked):
+- Evidence (required):
 - Notes: see above about edit and create task date picker and time information
 
 ---
@@ -256,8 +261,8 @@ Expected:
 
 ### USER NOTES S3.1-N1
 
-- Pass/Fail:
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked):
+- Evidence (required):
 - Notes: esc should take you to the next higher when in subtask create or edit modal esc takes you all the way back instead of back to the task that is its parent.
 
 ---
@@ -287,8 +292,8 @@ Expected:
 
 ### USER NOTES S3.2-N1
 
-- Pass/Fail:
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked):
+- Evidence (required):
 - Notes: need to show that 'space' is how you mark a subtask as complete. also, `?` should work on any menu aside from a text input field and show up only with the hotkeys for that menu!
 
 ---
@@ -311,8 +316,8 @@ Expected:
 
 ### USER NOTES S3.3-N1
 
-- Pass/Fail:
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked):
+- Evidence (required):
 - Notes: adding a new subtask should take you back to its parent not take you back to the main menu when pressing enter to save it!
 
 ---
@@ -338,8 +343,8 @@ Expected:
 
 ### USER NOTES S4.1-N1
 
-- Pass/Fail: pass
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked): pass
+- Evidence (required):
 - Notes: when using the filter the hotkeys will do their thing instead of typing into the text field. we need to fix this on ALL text-input fields!
 
 ---
@@ -359,8 +364,8 @@ Expected:
 
 ### USER NOTES S4.2-N1
 
-- Pass/Fail: pass
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked): pass
+- Evidence (required):
 - Notes:
 
 ---
@@ -388,8 +393,8 @@ Expected:
 
 ### USER NOTES S4.3-N1
 
-- Pass/Fail:
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked):
+- Evidence (required):
 - Notes:
 
 ---
@@ -414,8 +419,8 @@ Expected:
 
 ### USER NOTES S5.1-N1
 
-- Pass/Fail: pass
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked): pass
+- Evidence (required):
 - Notes:
 
 ---
@@ -440,8 +445,8 @@ Expected:
 
 ### USER NOTES S5.2-N1
 
-- Pass/Fail: pass
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked): pass
+- Evidence (required):
 - Notes:
 
 ---
@@ -464,8 +469,8 @@ Expected:
 
 ### USER NOTES S5.3-N1
 
-- Pass/Fail: pass
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked): pass
+- Evidence (required):
 - Notes:
 
 ---
@@ -493,8 +498,8 @@ Expected:
 
 ### USER NOTES S5.4-N1
 
-- Pass/Fail:
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked):
+- Evidence (required):
 - Notes:
 
 ---
@@ -515,8 +520,8 @@ Expected:
 
 ### USER NOTES S6.1-N1
 
-- Pass/Fail: pass
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked): pass
+- Evidence (required):
 - Notes:
 
 ---
@@ -537,8 +542,8 @@ Expected:
 
 ### USER NOTES S6.2-N1
 
-- Pass/Fail: pass
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked): pass
+- Evidence (required):
 - Notes:
 
 ---
@@ -560,8 +565,8 @@ Expected:
 
 ### USER NOTES S7.1-N1
 
-- Pass/Fail: pass
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked): pass
+- Evidence (required):
 - Notes:
 
 ---
@@ -580,8 +585,8 @@ Expected:
 
 ### USER NOTES S7.2-N1
 
-- Pass/Fail: pass
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked): pass
+- Evidence (required):
 - Notes:
 
 ---
@@ -606,8 +611,8 @@ Expected:
 
 ### USER NOTES S8.1-N1
 
-- Pass/Fail:
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked):
+- Evidence (required):
 - Notes: color picker works, but it is border not 'accent', but we should make it possible to control the three colors, the border, the accent (highlights), and the main text color which would be. the white text for a normal unfocused task
 
 ---
@@ -626,8 +631,8 @@ Expected:
 
 ### USER NOTES S8.2-N1
 
-- Pass/Fail: pass
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked): pass
+- Evidence (required):
 - Notes:
 
 ---
@@ -649,8 +654,8 @@ Expected:
 
 ### USER NOTES S8.3-N1
 
-- Pass/Fail:
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked):
+- Evidence (required):
 - Notes: this needs to be fixed and redone, label config was supposed to be project specific, not across all projects.
 
 ---
@@ -675,8 +680,8 @@ Expected:
 
 ### USER NOTES S8.4-N1
 
-- Pass/Fail:
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked):
+- Evidence (required):
 - Notes:
 
 ---
@@ -697,8 +702,8 @@ Expected:
 
 ### USER NOTES S9.1-N1
 
-- Pass/Fail: pass
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked): pass
+- Evidence (required):
 - Notes:
 
 ---
@@ -727,25 +732,82 @@ Expected:
 
 ### USER NOTES S10.1-N1
 
-- Pass/Fail: pass
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked): pass
+- Evidence (required):
 - Notes:
 
 ---
 
-## Final Sign-off
+## 11) Focus Path + Hierarchy Board Checks
 
-- Overall result: Pass / Pass with minor issues / Fail
-- Critical bugs:
+### 11.1 Branch/phase/subphase drill path
+
+Precondition:
+
+- Use a project fixture that contains at least one `branch -> phase -> subphase` chain with child tasks.
+
+Actions:
+
+1. From project board, focus a branch row and drill in (`enter`).
+2. From branch scope, drill into a phase.
+3. From phase scope, drill into a subphase.
+4. At each scope transition, capture the visible focus-path/breadcrumb.
+5. Step back to parent scopes one level at a time.
+
+Expected:
+
+- Focus path renders hierarchy context as a readable chain (for example `Project | Branch | Phase | Subphase`).
+- Board columns/states remain consistent through drill-in and step-back.
+- Returning to a parent scope restores a deterministic focused row.
+
+### USER NOTES S11.1-N1
+
+- Pass/Fail (set one: pass|fail|blocked):
+- Evidence (required):
+- Notes:
+
+---
+
+### 11.2 Hierarchy completion guard at phase/subphase level
+
+Precondition:
+
+- Selected phase/subphase has at least one open child task/subtask.
+
+Actions:
+
+1. Navigate to a phase or subphase that still has open children.
+2. Attempt to transition that phase/subphase to `done`.
+3. Close remaining children and retry transition.
+
+Expected:
+
+- Transition to `done` is blocked while required children remain open.
+- Block reason is visible and actionable.
+- Transition succeeds only after completion requirements are satisfied.
+
+### USER NOTES S11.2-N1
+
+- Pass/Fail (set one: pass|fail|blocked):
+- Evidence (required):
+- Notes:
+
+---
+
+## 12) Final Sign-off
+
+- Overall result (set one): `pass` | `pass_with_minor_issues` | `fail`
+- Critical bugs (required if overall result is `fail`):
 - Non-critical UX issues:
 - Suggested next priorities:
 - Tester:
-- Date:
+- Date (`YYYY-MM-DD`):
 
-### USER NOTES ADDITIONAL
+### USER NOTES S12.1-N1
 
-1. We don't have phase and sub-phase logic and capabilities. a phase should appear in the list with tasks but say they are a phase and pressing enter would change the view to the same kind of project view with tasks that are in to do in progress and done. there should be a phase info section and a way to edit add phase data with sensible good fields like tasks but better for phases. this would be separate from tasks of course. and phases can be nested. in the top near where the project's are listed like `[project 1] project 2` there should be a 'path' of where the phase is, meaning `Project | Phase | Sub-phase` and so on. phases can't be marked as complete until all their tasks are marked done, so no open todo or in progress tasks can be there to mark a phase as done. note that the phase at the project level would move like a task through the 4 'states'
-2. project root_path logic. we need a way to make the path much easier and user friendly. we need a "picker" type system with a kind of fzf fuzzy path finder or something. the path can be a file. but it should be a user friendly search thing where config.toml could allow user's to set where path searching should start, for instance `.../documents/code` so the system would be faster.
+- Pass/Fail (set one: pass|fail|blocked):
+- Evidence (required):
+- Notes:
 
 
 ## 13) Consolidated Bootstrap/Roots/Threads Checks (Merged)
@@ -773,8 +835,8 @@ Expected:
 
 ### USER NOTES D0.1-N1
 
-- Pass/Fail:
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked):
+- Evidence (required):
 - Notes:
 
 ---
@@ -784,7 +846,7 @@ Expected:
 Actions:
 
 1. Treat every anchor listed below as required for this rerun.
-2. Re-run each section and set each listed USER NOTES block to explicit `pass` or `fail`.
+2. Re-run each section and set each listed USER NOTES block to explicit `pass`, `fail`, or `blocked`.
 3. For every `fail`, add reproduction details and the blocking observation in that section's notes.
 
 Carry-forward anchors (must all be completed):
@@ -805,8 +867,8 @@ Expected:
 
 ### USER NOTES D0.2-N1
 
-- Pass/Fail:
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked):
+- Evidence (required):
 - Notes:
 
 ---
@@ -825,8 +887,8 @@ Expected:
 
 ### USER NOTES D1.1-N1
 
-- Pass/Fail:
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked):
+- Evidence (required):
 - Notes:
 
 ---
@@ -847,8 +909,8 @@ Expected:
 
 ### USER NOTES D1.2-N1
 
-- Pass/Fail:
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked):
+- Evidence (required):
 - Notes:
 
 ---
@@ -871,8 +933,8 @@ Expected:
 
 ### USER NOTES D1.3-N1
 
-- Pass/Fail:
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked):
+- Evidence (required):
 - Notes:
 
 ---
@@ -892,8 +954,8 @@ Expected:
 
 ### USER NOTES D1.4-N1
 
-- Pass/Fail:
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked):
+- Evidence (required):
 - Notes:
 
 ---
@@ -913,8 +975,8 @@ Expected:
 
 ### USER NOTES D1.5-N1
 
-- Pass/Fail:
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked):
+- Evidence (required):
 - Notes:
 
 ---
@@ -939,8 +1001,8 @@ Expected:
 
 ### USER NOTES D1.6-N1
 
-- Pass/Fail:
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked):
+- Evidence (required):
 - Notes:
 
 ---
@@ -960,8 +1022,8 @@ Expected:
 
 ### USER NOTES D2.1-N1
 
-- Pass/Fail:
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked):
+- Evidence (required):
 - Notes:
 
 ---
@@ -982,8 +1044,8 @@ Expected:
 
 ### USER NOTES D3.1-N1
 
-- Pass/Fail:
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked):
+- Evidence (required):
 - Notes:
 
 ---
@@ -1004,8 +1066,8 @@ Expected:
 
 ### USER NOTES D3.2-N1
 
-- Pass/Fail:
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked):
+- Evidence (required):
 - Notes:
 
 ---
@@ -1034,8 +1096,8 @@ Expected:
 
 ### USER NOTES D4.1-N1
 
-- Pass/Fail:
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked):
+- Evidence (required):
 - Notes:
 
 ---
@@ -1063,8 +1125,8 @@ Expected:
 
 ### USER NOTES D4.2-N1
 
-- Pass/Fail:
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked):
+- Evidence (required):
 - Notes:
 
 ---
@@ -1086,8 +1148,8 @@ Expected:
 
 ### USER NOTES D5.1-N1
 
-- Pass/Fail:
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked):
+- Evidence (required):
 - Notes:
 
 ---
@@ -1107,8 +1169,8 @@ Expected:
 
 ### USER NOTES D5.2-N1
 
-- Pass/Fail:
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked):
+- Evidence (required):
 - Notes:
 
 ---
@@ -1129,8 +1191,8 @@ Expected:
 
 ### USER NOTES D6.1-N1
 
-- Pass/Fail:
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked):
+- Evidence (required):
 - Notes:
 
 ---
@@ -1149,8 +1211,8 @@ Expected:
 
 ### USER NOTES D6.2-N1
 
-- Pass/Fail:
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked):
+- Evidence (required):
 - Notes:
 
 ---
@@ -1176,8 +1238,8 @@ Expected:
 
 ### USER NOTES D6.3-N1
 
-- Pass/Fail:
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked):
+- Evidence (required):
 - Notes:
 
 ---
@@ -1204,6 +1266,6 @@ Expected:
 
 ### USER NOTES D7.1-N1
 
-- Pass/Fail:
-- Evidence:
+- Pass/Fail (set one: pass|fail|blocked):
+- Evidence (required):
 - Notes:

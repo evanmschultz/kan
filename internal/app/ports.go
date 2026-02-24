@@ -33,6 +33,10 @@ type Repository interface {
 	CreateComment(context.Context, domain.Comment) error
 	ListCommentsByTarget(context.Context, domain.CommentTarget) ([]domain.Comment, error)
 	ListProjectChangeEvents(context.Context, string, int) ([]domain.ChangeEvent, error)
+	CreateAttentionItem(context.Context, domain.AttentionItem) error
+	GetAttentionItem(context.Context, string) (domain.AttentionItem, error)
+	ListAttentionItems(context.Context, domain.AttentionListFilter) ([]domain.AttentionItem, error)
+	ResolveAttentionItem(context.Context, string, string, domain.ActorType, time.Time) (domain.AttentionItem, error)
 
 	CreateCapabilityLease(context.Context, domain.CapabilityLease) error
 	UpdateCapabilityLease(context.Context, domain.CapabilityLease) error

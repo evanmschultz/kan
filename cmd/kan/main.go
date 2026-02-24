@@ -14,6 +14,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	charmLog "github.com/charmbracelet/log"
+	serveradapter "github.com/evanschultz/kan/internal/adapters/server"
+	servercommon "github.com/evanschultz/kan/internal/adapters/server/common"
 	"github.com/evanschultz/kan/internal/adapters/storage/sqlite"
 	"github.com/evanschultz/kan/internal/app"
 	"github.com/evanschultz/kan/internal/config"
@@ -33,6 +35,11 @@ type program interface {
 // programFactory stores a package-level helper value.
 var programFactory = func(m tea.Model) program {
 	return tea.NewProgram(m)
+}
+
+// serveCommandRunner starts the HTTP+MCP serve flow.
+var serveCommandRunner = func(ctx context.Context, cfg serveradapter.Config, deps serveradapter.Dependencies) error {
+	return serveradapter.Run(ctx, cfg, deps)
 }
 
 // main handles main.
@@ -101,7 +108,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		_, _ = fmt.Fprintf(stdout, "data_dir: %s\n", paths.DataDir)
 		_, _ = fmt.Fprintf(stdout, "db: %s\n", paths.DBPath)
 		return nil
-	case "", "export", "import":
+	case "", "export", "import", "serve":
 		// Continue.
 	default:
 		return fmt.Errorf("unknown command: %s", command)
@@ -178,6 +185,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	switch command {
 	case "":
 		logger.Info("command flow start", "command", "tui")
+	case "serve":
+		logger.Info("command flow start", "command", "serve")
+		if err := runServe(ctx, svc, fs.Args()[1:], appName); err != nil {
+			logger.Error("command flow failed", "command", "serve", "err", err)
+			return fmt.Errorf("run serve command: %w", err)
+		}
+		logger.Info("command flow complete", "command", "serve")
+		return nil
 	case "export":
 		logger.Info("command flow start", "command", "export")
 		if err := runExport(ctx, svc, fs.Args()[1:], stdout); err != nil {
@@ -256,6 +271,38 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	logger.Info("command flow complete", "command", "tui")
 	return nil
+}
+
+// runServe runs the serve subcommand flow.
+func runServe(ctx context.Context, svc *app.Service, args []string, appName string) error {
+	fs := flag.NewFlagSet("kan serve", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	var (
+		httpBind    string
+		apiEndpoint string
+		mcpEndpoint string
+	)
+	fs.StringVar(&httpBind, "http", "127.0.0.1:8080", "HTTP listen address")
+	fs.StringVar(&apiEndpoint, "api-endpoint", "/api/v1", "HTTP API base endpoint")
+	fs.StringVar(&mcpEndpoint, "mcp-endpoint", "/mcp", "MCP streamable HTTP endpoint")
+	if err := fs.Parse(args); err != nil {
+		return fmt.Errorf("parse serve flags: %w", err)
+	}
+	if len(fs.Args()) > 0 {
+		return fmt.Errorf("unexpected serve arguments: %v", fs.Args())
+	}
+
+	appAdapter := servercommon.NewAppServiceAdapter(svc)
+	return serveCommandRunner(ctx, serveradapter.Config{
+		HTTPBind:      httpBind,
+		APIEndpoint:   apiEndpoint,
+		MCPEndpoint:   mcpEndpoint,
+		ServerName:    appName,
+		ServerVersion: version,
+	}, serveradapter.Dependencies{
+		CaptureState: appAdapter,
+		Attention:    appAdapter,
+	})
 }
 
 // runExport runs the requested command flow.
