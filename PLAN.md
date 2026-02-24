@@ -2504,7 +2504,7 @@ Single-branch parallel execution is now bootstrapped. This section is the source
         - `just test-pkg ./internal/tui` -> pass
         - `just ci` -> pass
     - docs/worksheet outputs:
-        - created `TUI_MANUAL_TEST_WORKSHEET_DELTA_BOOTSTRAP_THREADS.md` for post-change targeted manual validation.
+        - created a targeted delta worksheet (later consolidated into the main worksheet) for post-change manual validation.
     - status:
         - complete for this ordered wave; ready for user manual delta pass.
 - [x] 2026-02-23: First-run actor scope correction + resource-picker parent navigation UX fix
@@ -2656,8 +2656,8 @@ Single-branch parallel execution is now bootstrapped. This section is the source
             - outcome: aligned README to pre-MCP scope and current dangerous-limitation wording for future override-token trust model.
             - worker check: `test_not_applicable` (docs-only)
         - `L-C-WORKSHEET-REFRESH` (worker `019c8d0a-c0a3-7063-a34b-e72ab6e0208b`)
-            - files: `TUI_MANUAL_TEST_WORKSHEET.md`, `TUI_MANUAL_TEST_WORKSHEET_DELTA_BOOTSTRAP_THREADS.md`
-            - outcome: refreshed anchors and added explicit carry-forward delta rerun requirements + fuzzy-parity checks.
+            - files: `TUI_MANUAL_TEST_WORKSHEET.md`
+            - outcome: refreshed anchors and added explicit carry-forward rerun requirements + fuzzy-parity checks.
             - worker check: `test_not_applicable` (docs-only)
     - orchestrator integration checks:
         - `just test-pkg ./internal/app` -> pass
@@ -2708,7 +2708,6 @@ Single-branch parallel execution is now bootstrapped. This section is the source
             - `README.md`
             - `PRE_MCP_CONSENSUS.md`
             - `TUI_MANUAL_TEST_WORKSHEET.md`
-            - `TUI_MANUAL_TEST_WORKSHEET_DELTA_BOOTSTRAP_THREADS.md`
     - implementation notes:
         - added DB-backed kind-catalog and project allowlist runtime enforcement.
         - added runtime JSON-schema payload validator + schema cache for kind payload checks.

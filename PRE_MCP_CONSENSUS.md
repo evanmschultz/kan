@@ -294,7 +294,7 @@ This file is meant to replace ambiguity and reduce context loss between discussi
   - lock scope: `PRE_MCP_CONSENSUS.md`, `README.md`, `AGENTS.md`
   - out-of-scope: Go runtime code.
 - Lane C: manual worksheet refresh
-  - lock scope: `TUI_MANUAL_TEST_WORKSHEET.md`, `TUI_MANUAL_TEST_WORKSHEET_DELTA_BOOTSTRAP_THREADS.md`
+  - lock scope: `TUI_MANUAL_TEST_WORKSHEET.md`
   - out-of-scope: runtime code and adapters.
 
 ### 9.3 Test-Gate Contract
@@ -317,8 +317,8 @@ This file is meant to replace ambiguity and reduce context loss between discussi
   - worker gate: `test_not_applicable` (docs-only).
 - Lane `L-C-WORKSHEET-REFRESH` (worker id `019c8d0a-c0a3-7063-a34b-e72ab6e0208b`):
   - status: integrated
-  - files: `TUI_MANUAL_TEST_WORKSHEET.md`, `TUI_MANUAL_TEST_WORKSHEET_DELTA_BOOTSTRAP_THREADS.md`
-  - result: worksheets refreshed with carry-forward delta requirements and fuzzy-parity validation anchors.
+  - files: `TUI_MANUAL_TEST_WORKSHEET.md`
+  - result: worksheet refreshed with carry-forward requirements and fuzzy-parity validation anchors.
   - worker gate: `test_not_applicable` (docs-only).
 - Integrator verification:
   - `just test-pkg ./internal/app` -> pass
@@ -369,10 +369,9 @@ This file is meant to replace ambiguity and reduce context loss between discussi
   - files:
     - `README.md`
     - `TUI_MANUAL_TEST_WORKSHEET.md`
-    - `TUI_MANUAL_TEST_WORKSHEET_DELTA_BOOTSTRAP_THREADS.md`
   - result:
     - README aligned to implemented readiness features and current transport scope guard.
-    - manual worksheets expanded for root-boundary attachment verification and carry-forward anchors.
+    - manual worksheet expanded for root-boundary attachment verification and carry-forward anchors.
   - worker gate: `test_not_applicable` (docs-only)
 - Additional package checks for touched startup/config surfaces:
   - `just test-pkg ./cmd/kan` -> pass
@@ -421,7 +420,7 @@ This file is meant to replace ambiguity and reduce context loss between discussi
 - [x] Enforce project-root attachment boundary in TUI attachment flows.
 - [x] Complete docs updates aligned to implemented readiness behavior.
 - [x] Refresh `TUI_MANUAL_TEST_WORKSHEET.md` for current behavior and new locks.
-- [x] Re-run and expand `TUI_MANUAL_TEST_WORKSHEET_DELTA_BOOTSTRAP_THREADS.md` because previous delta run was not fully completed.
+- [x] Consolidate delta carry-forward checks into `TUI_MANUAL_TEST_WORKSHEET.md` so one worksheet is authoritative.
 - [x] Execute package-scoped `just test-pkg` checks per touched-package lanes.
 - [x] Run final integrator gate `just ci`.
 - [x] Refresh and synchronize manual worksheet artifacts for current behavior and handoff.
