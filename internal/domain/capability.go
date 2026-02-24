@@ -46,34 +46,34 @@ var validCapabilityScopes = []CapabilityScopeType{
 
 // CapabilityLease stores one scoped, revocable capability token lease.
 type CapabilityLease struct {
-	InstanceID               string
-	LeaseToken               string
-	AgentName                string
-	ProjectID                string
-	ScopeType                CapabilityScopeType
-	ScopeID                  string
-	Role                     CapabilityRole
-	ParentInstanceID         string
+	InstanceID                string
+	LeaseToken                string
+	AgentName                 string
+	ProjectID                 string
+	ScopeType                 CapabilityScopeType
+	ScopeID                   string
+	Role                      CapabilityRole
+	ParentInstanceID          string
 	AllowEqualScopeDelegation bool
-	IssuedAt                 time.Time
-	ExpiresAt                time.Time
-	HeartbeatAt              time.Time
-	RevokedAt                *time.Time
-	RevokedReason            string
+	IssuedAt                  time.Time
+	ExpiresAt                 time.Time
+	HeartbeatAt               time.Time
+	RevokedAt                 *time.Time
+	RevokedReason             string
 }
 
 // CapabilityLeaseInput holds values used to issue a new lease.
 type CapabilityLeaseInput struct {
-	InstanceID               string
-	LeaseToken               string
-	AgentName                string
-	ProjectID                string
-	ScopeType                CapabilityScopeType
-	ScopeID                  string
-	Role                     CapabilityRole
-	ParentInstanceID         string
+	InstanceID                string
+	LeaseToken                string
+	AgentName                 string
+	ProjectID                 string
+	ScopeType                 CapabilityScopeType
+	ScopeID                   string
+	Role                      CapabilityRole
+	ParentInstanceID          string
 	AllowEqualScopeDelegation bool
-	ExpiresAt                time.Time
+	ExpiresAt                 time.Time
 }
 
 // NewCapabilityLease normalizes and validates one lease issuance request.

@@ -123,7 +123,7 @@ func TestServiceCapabilityLeaseLifecycleAndRevokeAll(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 24, 9, 0, 0, 0, time.UTC)
 	svc := newDeterministicService(repo, now, ServiceConfig{
-		RequireAgentLease: boolPtr(true),
+		RequireAgentLease:  boolPtr(true),
 		CapabilityLeaseTTL: time.Hour,
 	})
 
@@ -135,7 +135,7 @@ func TestServiceCapabilityLeaseLifecycleAndRevokeAll(t *testing.T) {
 		ProjectID:       project.ID,
 		ScopeType:       domain.CapabilityScopeProject,
 		ScopeID:         project.ID,
-			Role:            domain.CapabilityRoleWorker,
+		Role:            domain.CapabilityRoleWorker,
 		AgentName:       "agent-1",
 		AgentInstanceID: "agent-1-instance",
 		RequestedTTL:    30 * time.Minute,
@@ -191,7 +191,7 @@ func TestServiceCapabilityLeaseLifecycleAndRevokeAll(t *testing.T) {
 		ProjectID:       project.ID,
 		ScopeType:       domain.CapabilityScopeProject,
 		ScopeID:         project.ID,
-			Role:            domain.CapabilityRoleWorker,
+		Role:            domain.CapabilityRoleWorker,
 		AgentName:       "agent-2",
 		AgentInstanceID: "agent-2-instance",
 	})
@@ -233,7 +233,7 @@ func TestServiceEnforceMutationGuardBranches(t *testing.T) {
 	repo := newFakeRepo()
 	now := time.Date(2026, 2, 24, 9, 0, 0, 0, time.UTC)
 	svc := newDeterministicService(repo, now, ServiceConfig{
-		RequireAgentLease: boolPtr(true),
+		RequireAgentLease:  boolPtr(true),
 		CapabilityLeaseTTL: time.Hour,
 	})
 
@@ -261,7 +261,7 @@ func TestServiceEnforceMutationGuardBranches(t *testing.T) {
 		ProjectID:       project.ID,
 		ScopeType:       domain.CapabilityScopeProject,
 		ScopeID:         project.ID,
-			Role:            domain.CapabilityRoleWorker,
+		Role:            domain.CapabilityRoleWorker,
 		AgentName:       "agent-y",
 		AgentInstanceID: "agent-y-instance",
 	})
@@ -298,7 +298,7 @@ func TestServiceEnforceMutationGuardBranches(t *testing.T) {
 		ProjectID:       project.ID,
 		ScopeType:       domain.CapabilityScopeProject,
 		ScopeID:         project.ID,
-			Role:            domain.CapabilityRoleWorker,
+		Role:            domain.CapabilityRoleWorker,
 		AgentName:       "agent-z",
 		AgentInstanceID: "agent-z-instance",
 	})
@@ -322,7 +322,7 @@ func TestServiceEnforceMutationGuardBranches(t *testing.T) {
 		ProjectID:       project.ID,
 		ScopeType:       domain.CapabilityScopeBranch,
 		ScopeID:         "branch-1",
-			Role:            domain.CapabilityRoleWorker,
+		Role:            domain.CapabilityRoleWorker,
 		AgentName:       "agent-branch",
 		AgentInstanceID: "agent-branch-instance",
 	})

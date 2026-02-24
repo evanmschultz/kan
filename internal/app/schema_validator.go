@@ -31,15 +31,15 @@ type jsonSchemaValidator struct {
 
 // jsonSchemaNode represents one compiled schema node.
 type jsonSchemaNode struct {
-	typ                 string
-	required            []string
-	requiredSet         map[string]struct{}
-	properties          map[string]*jsonSchemaNode
-	allowAdditional     bool
-	enum                []any
-	items               *jsonSchemaNode
-	minLength           *int
-	maxLength           *int
+	typ             string
+	required        []string
+	requiredSet     map[string]struct{}
+	properties      map[string]*jsonSchemaNode
+	allowAdditional bool
+	enum            []any
+	items           *jsonSchemaNode
+	minLength       *int
+	maxLength       *int
 }
 
 // compileJSONSchema compiles a schema string into a reusable validator.

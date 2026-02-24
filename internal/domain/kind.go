@@ -54,45 +54,45 @@ type KindTemplateFileSection struct {
 
 // KindTemplateChildSpec defines one child item auto-created by a kind template.
 type KindTemplateChildSpec struct {
-	Title          string          `json:"title"`
-	Description    string          `json:"description"`
-	Kind           KindID          `json:"kind"`
-	AppliesTo      KindAppliesTo   `json:"applies_to"`
-	Labels         []string        `json:"labels"`
+	Title           string          `json:"title"`
+	Description     string          `json:"description"`
+	Kind            KindID          `json:"kind"`
+	AppliesTo       KindAppliesTo   `json:"applies_to"`
+	Labels          []string        `json:"labels"`
 	MetadataPayload json.RawMessage `json:"metadata_payload,omitempty"`
 }
 
 // KindTemplate stores template-driven system actions for a kind definition.
 type KindTemplate struct {
-	AutoCreateChildren     []KindTemplateChildSpec  `json:"auto_create_children"`
-	CompletionChecklist    []ChecklistItem          `json:"completion_checklist"`
-	AgentsFileSections     []KindTemplateFileSection `json:"agents_file_sections"`
-	ClaudeFileSections     []KindTemplateFileSection `json:"claude_file_sections"`
+	AutoCreateChildren  []KindTemplateChildSpec   `json:"auto_create_children"`
+	CompletionChecklist []ChecklistItem           `json:"completion_checklist"`
+	AgentsFileSections  []KindTemplateFileSection `json:"agents_file_sections"`
+	ClaudeFileSections  []KindTemplateFileSection `json:"claude_file_sections"`
 }
 
 // KindDefinition stores one reusable kind definition.
 type KindDefinition struct {
-	ID                 KindID
-	DisplayName        string
+	ID                  KindID
+	DisplayName         string
 	DescriptionMarkdown string
-	AppliesTo          []KindAppliesTo
+	AppliesTo           []KindAppliesTo
 	AllowedParentScopes []KindAppliesTo
-	PayloadSchemaJSON  string
-	Template           KindTemplate
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
-	ArchivedAt         *time.Time
+	PayloadSchemaJSON   string
+	Template            KindTemplate
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+	ArchivedAt          *time.Time
 }
 
 // KindDefinitionInput holds write-time values for creating/updating a kind definition.
 type KindDefinitionInput struct {
-	ID                 KindID
-	DisplayName        string
+	ID                  KindID
+	DisplayName         string
 	DescriptionMarkdown string
-	AppliesTo          []KindAppliesTo
+	AppliesTo           []KindAppliesTo
 	AllowedParentScopes []KindAppliesTo
-	PayloadSchemaJSON  string
-	Template           KindTemplate
+	PayloadSchemaJSON   string
+	Template            KindTemplate
 }
 
 // NewKindDefinition validates and normalizes one kind definition.
