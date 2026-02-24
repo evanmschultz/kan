@@ -52,9 +52,10 @@ You are a senior Go dev. YOU ALWAYS:
 - `just run`: run app from source (`go run ./cmd/kan`).
 - `just build`: build local binary `./kan`.
 - `just fmt`: format Go files.
+- `just check`: cross-platform smoke gate (source verification, format check, tests, build).
 - `just test`, `just test-pkg <pkg>`: test entrypoints.
 - `just test-golden`, `just test-golden-update`: golden fixture validation/update.
-- `just ci`: canonical local gate (source verification, format, tests, coverage floor, build).
+- `just ci`: canonical full gate (source verification, format check, coverage-verified tests, build).
 
 ## Worktrees
 
@@ -114,7 +115,7 @@ You are a senior Go dev. YOU ALWAYS:
 - Worker prompts must explicitly forbid:
   - edits outside lane lock,
   - direct `go test` execution,
-  - running repo-wide test gates (`just test`, `just ci`) unless the orchestrator explicitly assigns it,
+  - running repo-wide test gates (`just test`, `just check`, `just ci`) unless the orchestrator explicitly assigns it,
   - architecture-layer violations unless explicitly authorized by the lane objective.
 
 ### Worker Handoff Contract (Required)

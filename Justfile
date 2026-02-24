@@ -13,6 +13,20 @@ fmt:
     gofmt -w "$@"; \
   fi
 
+# Verify all tracked Go files are already gofmt-formatted.
+[private]
+fmt-check:
+  @set -- $(git ls-files '*.go'); \
+  if [ "$#" -eq 0 ]; then \
+    exit 0; \
+  fi; \
+  out="$(gofmt -l "$@")"; \
+  if [ -n "$out" ]; then \
+    echo "gofmt required for:"; \
+    echo "$out"; \
+    exit 1; \
+  fi
+
 # Run the full repository Go test suite.
 test:
   @go test ./...
@@ -101,5 +115,8 @@ coverage:
     END {exit bad}' "$tmp"; \
   rm -f "$tmp"
 
-# Canonical local gate: source verification, format, tests, coverage floor, and build.
-ci: verify-sources fmt test coverage build
+# Cross-platform smoke gate: source verification, formatting, tests, and build.
+check: verify-sources fmt-check test build
+
+# Canonical full gate: smoke gate + coverage floor enforcement.
+ci: verify-sources fmt-check coverage build

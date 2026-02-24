@@ -2782,3 +2782,64 @@ Single-branch parallel execution is now bootstrapped. This section is the source
         - `just ci` -> pass
     - status:
         - complete; pre-MCP implementation and planning artifacts are synchronized, tested, and commit-ready.
+- [x] 2026-02-24: CI cancellation diagnosis + workflow/Justfile hardening
+    - objective:
+        - diagnose GitHub Actions matrix cancellations and implement repo-local fixes that keep `main` CI stable while retaining fast supersede behavior on non-main refs.
+    - files updated:
+        - `.github/workflows/ci.yml`
+        - `Justfile`
+    - implementation notes:
+        - workflow concurrency:
+            - `cancel-in-progress` changed from unconditional `true` to `${{ github.ref != 'refs/heads/main' }}`.
+            - effect: `main` runs are no longer auto-canceled by newer pushes; non-main branches still collapse superseded runs.
+        - local/CI gate runtime:
+            - `ci` recipe now uses `verify-sources fmt coverage build` (drops duplicate `test` pass already covered by `coverage`).
+            - effect: shorter CI runtime and less overlap pressure without reducing test coverage enforcement.
+    - command evidence:
+        - `gh --version` -> pass (`2.87.3`)
+        - `gh auth status` -> fail (stored token invalid)
+        - `gh run list --workflow ci.yml --limit 5` -> fail (API connection unavailable from this environment)
+        - `just ci` -> pass
+    - tests/checks:
+        - `just ci` -> pass
+    - status:
+        - complete; local gate passes and cancellation policy is now main-safe.
+- [x] 2026-02-24: Cross-OS CI gate split (matrix smoke + Linux full coverage)
+    - objective:
+        - ensure GitHub Actions matrix jobs run portable checks on all OSes while coverage-floor enforcement runs once on Linux for determinism and lower runtime.
+    - Context7 evidence (required):
+        - pre-edit consult:
+            - `resolve-library-id` `github actions` -> pass (`/websites/github_en_actions`)
+            - `query-docs` `/websites/github_en_actions` (workflow concurrency expressions + matrix strategy patterns) -> pass
+    - files updated:
+        - `Justfile`
+        - `.github/workflows/ci.yml`
+    - implementation notes:
+        - `Justfile`:
+            - added `fmt-check` (non-mutating gofmt verification).
+            - added `check` recipe (`verify-sources fmt-check test build`) for cross-platform CI smoke coverage.
+            - updated `ci` recipe to use `fmt-check` + `coverage` + `build` (full gate).
+        - CI workflow:
+            - matrix job now runs `just check` on `ubuntu-latest`, `macos-latest`, and `windows-latest`.
+            - added `full-gate-linux` job running `just ci` on Ubuntu after matrix passes.
+            - `release-snapshot-check` now depends on `full-gate-linux`.
+            - kept branch-aware concurrency cancellation (`main` non-canceling).
+    - verification log:
+        - `just check` -> pass
+        - `just ci` -> pass
+    - status:
+        - complete; workflow now separates portability checks from heavy gate while keeping release checks behind full Linux CI.
+- [x] 2026-02-24: AGENTS CI-policy alignment (docs sync)
+    - objective:
+        - keep repository agent instructions synchronized with the new CI/check recipe contract to avoid future automation drift.
+    - files updated:
+        - `AGENTS.md`
+    - implementation notes:
+        - added `just check` to Build and Run recipe list as cross-platform smoke gate.
+        - updated `just ci` description to reflect full-gate semantics (coverage-verified tests + build).
+        - expanded worker-lane forbidden repo-wide gates list to include `just check`.
+    - tests/checks:
+        - `just check` -> pass
+        - `just ci` -> pass
+    - status:
+        - complete; agent policy text now matches workflow and Justfile behavior.
