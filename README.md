@@ -7,7 +7,8 @@ A local-first Kanban TUI built with Bubble Tea v2, Bubbles v2, and Lip Gloss v2.
 Current scope:
 - local tracking and planning workflows (human-operated TUI).
 - local runtime diagnostics with styled logging and dev-mode local log files.
-- MCP/HTTP integrations are roadmap items and are not implemented yet.
+- pre-MCP design-readiness planning for future MCP/HTTP contracts.
+- MCP/HTTP transports/tools are roadmap items and are not implemented in this phase.
 
 ## Features
 - Multi-project Kanban board.
@@ -15,14 +16,35 @@ Current scope:
 - SQLite persistence (`modernc.org/sqlite`, no CGO).
 - Keyboard navigation (`vim` keys + arrows) and mouse support.
 - Archive-first delete flow with configurable defaults.
-- Project and work-item thread mode with markdown comments and ownership metadata.
+- Project and work-item thread mode with ownership-attributed markdown comments.
+- Descriptions/comments are stored as markdown source fields and rendered in TUI views.
+- Project roots are real filesystem directory mappings; resource attachment is blocked outside the allowed root.
+- Runtime kind-catalog + project allowlist validation for project/task mutations.
+- Runtime JSON-schema validation for kind metadata payloads (with compiled-validator caching).
+- Capability-lease primitives for strict mutation locking (issue/heartbeat/renew/revoke/revoke-all).
 - JSON snapshot import/export.
 - Configurable task field visibility.
 
-## Human-Agent Workflow (Current + Roadmap Direction)
-- **Today (pre-Phase 11):** use `kan` as the canonical local planning/verification source while collaborating with an agent in terminal/chat.
-- **Current best practice:** keep manual QA notes in `TUI_MANUAL_TEST_WORKSHEET.md` with sectioned anchors so findings are precise and replayable.
-- **Roadmap (Phase 11+):** expose the same project/branch/phase/task state through MCP/HTTP so agents can consume authoritative updates instead of fragile markdown-only status files.
+## Pre-MCP Status (2026-02-24)
+Implemented now:
+- Use `kan` as the canonical local planning/verification source while collaborating with an agent in terminal/chat.
+- Keep manual QA notes in `TUI_MANUAL_TEST_WORKSHEET.md` with sectioned anchors for precise replay.
+- Local-only TUI + SQLite workflows (including startup bootstrap, project picker, threads/comments, and import/export snapshots).
+- Kind-catalog bootstrap + project `allowed_kinds` enforcement is active for project/task write paths.
+- Project-level `kind` and task-level `scope` persistence are active (`project|branch|phase|task|subtask` semantics enforced by kind rules).
+- Kind template system actions can auto-append checklist items and auto-create child work items during task creation.
+- Capability-lease/mutation-guard enforcement scaffolding is active in app/service write paths for non-user actors.
+
+Design-readiness consensus (not implemented yet):
+- MCP/HTTP transport and tool surfaces are not implemented in pre-MCP scope.
+- Future contract direction is REST/tool-style with markdown description/comment fields documented as markdown-write text.
+- Kind/template purpose is explicitly to drive deterministic auto-actions (for example tests/docs/workflow scaffolding) and deterministic `AGENTS.md`/`CLAUDE.md` section autofill workflows.
+- Transport-level request contracts for capability locking (agent `name/id` + scope token) remain future work.
+- MCP-phase attention/blocker signaling will use node-scoped records (project/branch/phase/task/subtask), TUI warning indicators + attention panel, and paginated scope queries for user/agent coordination.
+
+Dangerous limitation note (pre-hardening, design warning):
+- In future policy-controlled override flows, orchestrator calls may receive override-token material.
+- That design currently assumes orchestrator adherence to user policy/guidance; treat overrides as explicit user-approved actions only.
 
 ## Run
 ```bash

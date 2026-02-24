@@ -3207,6 +3207,12 @@ func (m *Model) attachResourcePickerEntry(entry resourcePickerEntry) tea.Cmd {
 
 	// Task form attachment flow stages refs for create/edit submit.
 	if back == modeAddTask || back == modeEditTask {
+		normalizedPath, err := normalizeAttachmentPathWithinRoot(strings.TrimSpace(m.resourcePickerRoot), entry.Path)
+		if err != nil {
+			m.status = err.Error()
+			return m.focusTaskFormField(m.formFocus)
+		}
+		entry.Path = normalizedPath
 		ref := buildResourceRef(strings.TrimSpace(m.resourcePickerRoot), entry.Path, entry.IsDir)
 		refs, added := appendResourceRefIfMissing(m.taskFormResourceRefs, ref)
 		if !added {
@@ -3266,6 +3272,10 @@ func (m *Model) attachResourcePickerEntry(entry resourcePickerEntry) tea.Cmd {
 	}
 
 	// Existing task-info path persists immediately to task metadata.
+	if _, err := normalizeAttachmentPathWithinRoot(strings.TrimSpace(m.resourcePickerRoot), entry.Path); err != nil {
+		m.status = err.Error()
+		return nil
+	}
 	m.status = "attaching resource..."
 	return m.attachResourceEntry(entry.Path, entry.IsDir)
 }
@@ -3275,18 +3285,22 @@ func (m Model) attachResourceEntry(path string, isDir bool) tea.Cmd {
 	taskID := strings.TrimSpace(m.resourcePickerTaskID)
 	root := strings.TrimSpace(m.resourcePickerRoot)
 	return func() tea.Msg {
+		normalizedPath, err := normalizeAttachmentPathWithinRoot(root, path)
+		if err != nil {
+			return actionMsg{status: err.Error()}
+		}
 		task, ok := m.taskByID(taskID)
 		if !ok {
 			return actionMsg{status: "resource attach failed: task not found"}
 		}
-		ref := buildResourceRef(root, path, isDir)
+		ref := buildResourceRef(root, normalizedPath, isDir)
 		refs, added := appendResourceRefIfMissing(task.Metadata.ResourceRefs, ref)
 		if !added {
 			return actionMsg{status: "resource already attached"}
 		}
 		meta := task.Metadata
 		meta.ResourceRefs = refs
-		_, err := m.svc.UpdateTask(context.Background(), app.UpdateTaskInput{
+		_, err = m.svc.UpdateTask(context.Background(), app.UpdateTaskInput{
 			TaskID:      task.ID,
 			Title:       task.Title,
 			Description: task.Description,
@@ -3508,6 +3522,46 @@ func buildResourceRef(root, path string, isDir bool) domain.ResourceRef {
 		}
 	}
 	return ref
+}
+
+// normalizeAttachmentPathWithinRoot normalizes and validates one attachment path against root scope.
+func normalizeAttachmentPathWithinRoot(root, path string) (string, error) {
+	root = strings.TrimSpace(root)
+	path = strings.TrimSpace(path)
+	if root == "" {
+		if path == "" {
+			return "", fmt.Errorf("resource path is required")
+		}
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			return "", fmt.Errorf("resource path invalid: %w", err)
+		}
+		return abs, nil
+	}
+
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", fmt.Errorf("allowed root path invalid: %w", err)
+	}
+	if path == "" {
+		path = absRoot
+	}
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resource path invalid: %w", err)
+	}
+	rel, err := filepath.Rel(absRoot, absPath)
+	if err != nil {
+		return "", fmt.Errorf("resource path relation failed: %w", err)
+	}
+	rel = filepath.Clean(rel)
+	if rel == "." {
+		return absPath, nil
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("resource path is outside allowed root")
+	}
+	return absPath, nil
 }
 
 // appendResourceRefIfMissing appends a resource ref unless an equivalent ref already exists.

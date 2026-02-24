@@ -26,6 +26,7 @@ type Task struct {
 	ProjectID      string
 	ParentID       string
 	Kind           WorkKind
+	Scope          KindAppliesTo
 	LifecycleState LifecycleState
 	ColumnID       string
 	Position       int
@@ -52,6 +53,7 @@ type TaskInput struct {
 	ProjectID      string
 	ParentID       string
 	Kind           WorkKind
+	Scope          KindAppliesTo
 	LifecycleState LifecycleState
 	ColumnID       string
 	Position       int
@@ -106,6 +108,20 @@ func NewTask(in TaskInput, now time.Time) (Task, error) {
 	if !isValidWorkKind(in.Kind) {
 		return Task{}, ErrInvalidKind
 	}
+	in.Scope = NormalizeKindAppliesTo(in.Scope)
+	if in.Scope == "" {
+		if in.ParentID == "" {
+			in.Scope = KindAppliesToTask
+		} else {
+			in.Scope = KindAppliesToSubtask
+		}
+	}
+	if !IsValidWorkItemAppliesTo(in.Scope) {
+		return Task{}, ErrInvalidKindAppliesTo
+	}
+	if in.ParentID == "" && in.Scope == KindAppliesToSubtask {
+		return Task{}, ErrInvalidParentID
+	}
 	if in.LifecycleState == "" {
 		in.LifecycleState = StateTodo
 	}
@@ -136,6 +152,7 @@ func NewTask(in TaskInput, now time.Time) (Task, error) {
 		ProjectID:      in.ProjectID,
 		ParentID:       in.ParentID,
 		Kind:           in.Kind,
+		Scope:          in.Scope,
 		LifecycleState: in.LifecycleState,
 		ColumnID:       in.ColumnID,
 		Position:       in.Position,

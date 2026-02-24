@@ -29,6 +29,7 @@ type SnapshotProject struct {
 	Slug        string                 `json:"slug"`
 	Name        string                 `json:"name"`
 	Description string                 `json:"description"`
+	Kind        domain.KindID          `json:"kind,omitempty"`
 	Metadata    domain.ProjectMetadata `json:"metadata"`
 	CreatedAt   time.Time              `json:"created_at"`
 	UpdatedAt   time.Time              `json:"updated_at"`
@@ -53,6 +54,7 @@ type SnapshotTask struct {
 	ProjectID      string                `json:"project_id"`
 	ParentID       string                `json:"parent_id,omitempty"`
 	Kind           domain.WorkKind       `json:"kind"`
+	Scope          domain.KindAppliesTo  `json:"scope,omitempty"`
 	LifecycleState domain.LifecycleState `json:"lifecycle_state"`
 	ColumnID       string                `json:"column_id"`
 	Position       int                   `json:"position"`
@@ -189,6 +191,10 @@ func (s *Snapshot) Validate() error {
 		if _, exists := projectIDs[p.ID]; exists {
 			return fmt.Errorf("duplicate project id: %q", p.ID)
 		}
+		if domain.NormalizeKindID(p.Kind) == "" {
+			p.Kind = domain.DefaultProjectKind
+			s.Projects[i].Kind = p.Kind
+		}
 		projectIDs[p.ID] = struct{}{}
 	}
 
@@ -246,6 +252,17 @@ func (s *Snapshot) Validate() error {
 		if strings.TrimSpace(string(t.Kind)) == "" {
 			t.Kind = domain.WorkKindTask
 			s.Tasks[i].Kind = t.Kind
+		}
+		if t.Scope == "" {
+			if strings.TrimSpace(t.ParentID) == "" {
+				t.Scope = domain.KindAppliesToTask
+			} else {
+				t.Scope = domain.KindAppliesToSubtask
+			}
+			s.Tasks[i].Scope = t.Scope
+		}
+		if !domain.IsValidWorkItemAppliesTo(t.Scope) {
+			return fmt.Errorf("tasks[%d].scope must be branch|phase|task|subtask", i)
 		}
 		if t.LifecycleState == "" {
 			t.LifecycleState = domain.StateTodo
@@ -334,6 +351,7 @@ func snapshotProjectFromDomain(p domain.Project) SnapshotProject {
 		Slug:        p.Slug,
 		Name:        p.Name,
 		Description: p.Description,
+		Kind:        p.Kind,
 		Metadata:    p.Metadata,
 		CreatedAt:   p.CreatedAt.UTC(),
 		UpdatedAt:   p.UpdatedAt.UTC(),
@@ -362,6 +380,7 @@ func snapshotTaskFromDomain(t domain.Task) SnapshotTask {
 		ProjectID:      t.ProjectID,
 		ParentID:       t.ParentID,
 		Kind:           t.Kind,
+		Scope:          t.Scope,
 		LifecycleState: t.LifecycleState,
 		ColumnID:       t.ColumnID,
 		Position:       t.Position,
@@ -389,11 +408,16 @@ func (p SnapshotProject) toDomain() domain.Project {
 	if slug == "" {
 		slug = fallbackSlug(p.Name)
 	}
+	kind := domain.NormalizeKindID(p.Kind)
+	if kind == "" {
+		kind = domain.DefaultProjectKind
+	}
 	return domain.Project{
 		ID:          strings.TrimSpace(p.ID),
 		Slug:        slug,
 		Name:        strings.TrimSpace(p.Name),
 		Description: strings.TrimSpace(p.Description),
+		Kind:        kind,
 		Metadata:    p.Metadata,
 		CreatedAt:   p.CreatedAt.UTC(),
 		UpdatedAt:   p.UpdatedAt.UTC(),
@@ -426,6 +450,14 @@ func (t SnapshotTask) toDomain() domain.Task {
 	if kind == "" {
 		kind = domain.WorkKindTask
 	}
+	scope := domain.NormalizeKindAppliesTo(t.Scope)
+	if scope == "" {
+		if strings.TrimSpace(t.ParentID) == "" {
+			scope = domain.KindAppliesToTask
+		} else {
+			scope = domain.KindAppliesToSubtask
+		}
+	}
 	updatedType := t.UpdatedByType
 	if updatedType == "" {
 		updatedType = domain.ActorTypeUser
@@ -443,6 +475,7 @@ func (t SnapshotTask) toDomain() domain.Task {
 		ProjectID:      strings.TrimSpace(t.ProjectID),
 		ParentID:       strings.TrimSpace(t.ParentID),
 		Kind:           kind,
+		Scope:          scope,
 		LifecycleState: state,
 		ColumnID:       strings.TrimSpace(t.ColumnID),
 		Position:       t.Position,

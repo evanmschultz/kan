@@ -1,6 +1,8 @@
 package domain
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -148,6 +150,7 @@ type TaskMetadata struct {
 	BlockedBy                []string           `json:"blocked_by"`
 	ContextBlocks            []ContextBlock     `json:"context_blocks"`
 	ResourceRefs             []ResourceRef      `json:"resource_refs"`
+	KindPayload              json.RawMessage    `json:"kind_payload,omitempty"`
 	CompletionContract       CompletionContract `json:"completion_contract"`
 }
 
@@ -201,6 +204,10 @@ func normalizeTaskMetadata(meta TaskMetadata) (TaskMetadata, error) {
 	meta.RelatedItems = normalizeStringList(meta.RelatedItems)
 	meta.DependsOn = normalizeStringList(meta.DependsOn)
 	meta.BlockedBy = normalizeStringList(meta.BlockedBy)
+	meta.KindPayload = bytes.TrimSpace(meta.KindPayload)
+	if len(meta.KindPayload) > 0 && !json.Valid(meta.KindPayload) {
+		return TaskMetadata{}, ErrInvalidKindPayload
+	}
 	meta.CompletionContract.CompletionEvidence = normalizeStringList(meta.CompletionContract.CompletionEvidence)
 	meta.CompletionContract.CompletionNotes = strings.TrimSpace(meta.CompletionContract.CompletionNotes)
 

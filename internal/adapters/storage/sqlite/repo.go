@@ -73,6 +73,7 @@ func (r *Repository) migrate(ctx context.Context) error {
 			slug TEXT NOT NULL,
 			name TEXT NOT NULL,
 			description TEXT NOT NULL DEFAULT '',
+			kind TEXT NOT NULL DEFAULT 'project',
 			metadata_json TEXT NOT NULL DEFAULT '{}',
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL,
@@ -94,6 +95,7 @@ func (r *Repository) migrate(ctx context.Context) error {
 			project_id TEXT NOT NULL,
 			parent_id TEXT NOT NULL DEFAULT '',
 			kind TEXT NOT NULL DEFAULT 'task',
+			scope TEXT NOT NULL DEFAULT 'task',
 			lifecycle_state TEXT NOT NULL DEFAULT 'todo',
 			column_id TEXT NOT NULL,
 			position INTEGER NOT NULL,
@@ -120,6 +122,7 @@ func (r *Repository) migrate(ctx context.Context) error {
 			project_id TEXT NOT NULL,
 			parent_id TEXT NOT NULL DEFAULT '',
 			kind TEXT NOT NULL DEFAULT 'task',
+			scope TEXT NOT NULL DEFAULT 'task',
 			lifecycle_state TEXT NOT NULL DEFAULT 'todo',
 			column_id TEXT NOT NULL,
 			position INTEGER NOT NULL,
@@ -165,6 +168,43 @@ func (r *Repository) migrate(ctx context.Context) error {
 			updated_at TEXT NOT NULL,
 			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
 		);`,
+		`CREATE TABLE IF NOT EXISTS kind_catalog (
+			id TEXT PRIMARY KEY,
+			display_name TEXT NOT NULL,
+			description_markdown TEXT NOT NULL DEFAULT '',
+			applies_to_json TEXT NOT NULL DEFAULT '[]',
+			allowed_parent_scopes_json TEXT NOT NULL DEFAULT '[]',
+			payload_schema_json TEXT NOT NULL DEFAULT '',
+			template_json TEXT NOT NULL DEFAULT '{}',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			archived_at TEXT
+		);`,
+		`CREATE TABLE IF NOT EXISTS project_allowed_kinds (
+			project_id TEXT NOT NULL,
+			kind_id TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			PRIMARY KEY(project_id, kind_id),
+			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
+			FOREIGN KEY(kind_id) REFERENCES kind_catalog(id) ON DELETE CASCADE
+		);`,
+		`CREATE TABLE IF NOT EXISTS capability_leases (
+			instance_id TEXT PRIMARY KEY,
+			lease_token TEXT NOT NULL,
+			agent_name TEXT NOT NULL,
+			project_id TEXT NOT NULL,
+			scope_type TEXT NOT NULL,
+			scope_id TEXT NOT NULL DEFAULT '',
+			role TEXT NOT NULL,
+			parent_instance_id TEXT NOT NULL DEFAULT '',
+			allow_equal_scope_delegation INTEGER NOT NULL DEFAULT 0,
+			issued_at TEXT NOT NULL,
+			expires_at TEXT NOT NULL,
+			heartbeat_at TEXT NOT NULL,
+			revoked_at TEXT,
+			revoke_reason TEXT NOT NULL DEFAULT '',
+			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+		);`,
 		`CREATE INDEX IF NOT EXISTS idx_columns_project_position ON columns_v1(project_id, position);`,
 		`CREATE INDEX IF NOT EXISTS idx_tasks_project_column_position ON tasks(project_id, column_id, position);`,
 		`CREATE INDEX IF NOT EXISTS idx_work_items_project_column_position ON work_items(project_id, column_id, position);`,
@@ -172,6 +212,9 @@ func (r *Repository) migrate(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_change_events_project_created_at ON change_events(project_id, created_at DESC, id DESC);`,
 		`CREATE INDEX IF NOT EXISTS idx_comments_project_target_created_at ON comments(project_id, target_type, target_id, created_at ASC, id ASC);`,
 		`CREATE INDEX IF NOT EXISTS idx_comments_project_created_at ON comments(project_id, created_at DESC, id DESC);`,
+		`CREATE INDEX IF NOT EXISTS idx_project_allowed_kinds_project ON project_allowed_kinds(project_id, kind_id);`,
+		`CREATE INDEX IF NOT EXISTS idx_capability_leases_scope ON capability_leases(project_id, scope_type, scope_id, role);`,
+		`CREATE INDEX IF NOT EXISTS idx_capability_leases_expiry ON capability_leases(expires_at, revoked_at);`,
 	}
 
 	for _, stmt := range stmts {
@@ -182,9 +225,13 @@ func (r *Repository) migrate(ctx context.Context) error {
 	if _, err := r.db.ExecContext(ctx, `ALTER TABLE projects ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'`); err != nil && !isDuplicateColumnErr(err) {
 		return fmt.Errorf("migrate sqlite add projects.metadata_json: %w", err)
 	}
+	if _, err := r.db.ExecContext(ctx, `ALTER TABLE projects ADD COLUMN kind TEXT NOT NULL DEFAULT 'project'`); err != nil && !isDuplicateColumnErr(err) {
+		return fmt.Errorf("migrate sqlite add projects.kind: %w", err)
+	}
 	taskAlterStatements := []string{
 		`ALTER TABLE tasks ADD COLUMN parent_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE tasks ADD COLUMN kind TEXT NOT NULL DEFAULT 'task'`,
+		`ALTER TABLE tasks ADD COLUMN scope TEXT NOT NULL DEFAULT 'task'`,
 		`ALTER TABLE tasks ADD COLUMN lifecycle_state TEXT NOT NULL DEFAULT 'todo'`,
 		`ALTER TABLE tasks ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'`,
 		`ALTER TABLE tasks ADD COLUMN created_by_actor TEXT NOT NULL DEFAULT 'kan-user'`,
@@ -202,6 +249,7 @@ func (r *Repository) migrate(ctx context.Context) error {
 	workItemAlterStatements := []string{
 		`ALTER TABLE work_items ADD COLUMN parent_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE work_items ADD COLUMN kind TEXT NOT NULL DEFAULT 'task'`,
+		`ALTER TABLE work_items ADD COLUMN scope TEXT NOT NULL DEFAULT 'task'`,
 		`ALTER TABLE work_items ADD COLUMN lifecycle_state TEXT NOT NULL DEFAULT 'todo'`,
 		`ALTER TABLE work_items ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'`,
 		`ALTER TABLE work_items ADD COLUMN created_by_actor TEXT NOT NULL DEFAULT 'kan-user'`,
@@ -222,6 +270,9 @@ func (r *Repository) migrate(ctx context.Context) error {
 	if err := r.bridgeLegacyTasksToWorkItems(ctx); err != nil {
 		return err
 	}
+	if err := r.seedDefaultKindCatalog(ctx); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -230,7 +281,7 @@ func (r *Repository) bridgeLegacyTasksToWorkItems(ctx context.Context) error {
 	// Keep migration idempotent and non-destructive so existing tasks databases remain readable.
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO work_items(
-			id, project_id, parent_id, kind, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
+			id, project_id, parent_id, kind, scope, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
 			metadata_json, created_by_actor, updated_by_actor, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
 		)
 		SELECT
@@ -238,6 +289,7 @@ func (r *Repository) bridgeLegacyTasksToWorkItems(ctx context.Context) error {
 			t.project_id,
 			t.parent_id,
 			t.kind,
+			t.scope,
 			t.lifecycle_state,
 			t.column_id,
 			t.position,
@@ -269,16 +321,66 @@ func (r *Repository) bridgeLegacyTasksToWorkItems(ctx context.Context) error {
 	return nil
 }
 
+// seedDefaultKindCatalog inserts built-in kind catalog entries when absent.
+func (r *Repository) seedDefaultKindCatalog(ctx context.Context) error {
+	type seedRecord struct {
+		id          domain.KindID
+		displayName string
+		description string
+		appliesTo   []domain.KindAppliesTo
+		parentScope []domain.KindAppliesTo
+	}
+	records := []seedRecord{
+		{id: domain.DefaultProjectKind, displayName: "Project", description: "Built-in project kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToProject}},
+		{id: domain.KindID(domain.WorkKindTask), displayName: "Task", description: "Built-in task kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask}},
+		{id: domain.KindID(domain.WorkKindSubtask), displayName: "Subtask", description: "Built-in subtask kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}, parentScope: []domain.KindAppliesTo{domain.KindAppliesToTask, domain.KindAppliesToSubtask, domain.KindAppliesToPhase, domain.KindAppliesToBranch}},
+		{id: domain.KindID(domain.WorkKindPhase), displayName: "Phase", description: "Built-in phase kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase, domain.KindAppliesToTask}, parentScope: []domain.KindAppliesTo{domain.KindAppliesToBranch, domain.KindAppliesToPhase, domain.KindAppliesToTask}},
+		{id: domain.KindID("branch"), displayName: "Branch", description: "Built-in branch kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToBranch}, parentScope: []domain.KindAppliesTo{domain.KindAppliesToBranch}},
+		{id: domain.KindID(domain.WorkKindDecision), displayName: "Decision", description: "Built-in decision kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask, domain.KindAppliesToSubtask}},
+		{id: domain.KindID(domain.WorkKindNote), displayName: "Note", description: "Built-in note kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask, domain.KindAppliesToSubtask}},
+	}
+
+	now := time.Now().UTC()
+	for _, record := range records {
+		appliesJSON, err := json.Marshal(record.appliesTo)
+		if err != nil {
+			return fmt.Errorf("encode kind applies_to for %q: %w", record.id, err)
+		}
+		parentJSON, err := json.Marshal(record.parentScope)
+		if err != nil {
+			return fmt.Errorf("encode kind parent scopes for %q: %w", record.id, err)
+		}
+		templateJSON, err := json.Marshal(domain.KindTemplate{})
+		if err != nil {
+			return fmt.Errorf("encode kind template for %q: %w", record.id, err)
+		}
+		_, err = r.db.ExecContext(ctx, `
+			INSERT OR IGNORE INTO kind_catalog(
+				id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
+			)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+		`, string(record.id), record.displayName, record.description, string(appliesJSON), string(parentJSON), "", string(templateJSON), ts(now), ts(now))
+		if err != nil {
+			return fmt.Errorf("seed kind_catalog %q: %w", record.id, err)
+		}
+	}
+	return nil
+}
+
 // CreateProject creates project.
 func (r *Repository) CreateProject(ctx context.Context, p domain.Project) error {
 	metaJSON, err := json.Marshal(p.Metadata)
 	if err != nil {
 		return fmt.Errorf("encode project metadata: %w", err)
 	}
+	kindID := domain.NormalizeKindID(p.Kind)
+	if kindID == "" {
+		kindID = domain.DefaultProjectKind
+	}
 	_, err = r.db.ExecContext(ctx, `
-		INSERT INTO projects(id, slug, name, description, metadata_json, created_at, updated_at, archived_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`, p.ID, p.Slug, p.Name, p.Description, string(metaJSON), ts(p.CreatedAt), ts(p.UpdatedAt), nullableTS(p.ArchivedAt))
+		INSERT INTO projects(id, slug, name, description, kind, metadata_json, created_at, updated_at, archived_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, p.ID, p.Slug, p.Name, p.Description, string(kindID), string(metaJSON), ts(p.CreatedAt), ts(p.UpdatedAt), nullableTS(p.ArchivedAt))
 	return err
 }
 
@@ -288,11 +390,15 @@ func (r *Repository) UpdateProject(ctx context.Context, p domain.Project) error 
 	if err != nil {
 		return fmt.Errorf("encode project metadata: %w", err)
 	}
+	kindID := domain.NormalizeKindID(p.Kind)
+	if kindID == "" {
+		kindID = domain.DefaultProjectKind
+	}
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE projects
-		SET slug = ?, name = ?, description = ?, metadata_json = ?, updated_at = ?, archived_at = ?
+		SET slug = ?, name = ?, description = ?, kind = ?, metadata_json = ?, updated_at = ?, archived_at = ?
 		WHERE id = ?
-	`, p.Slug, p.Name, p.Description, string(metaJSON), ts(p.UpdatedAt), nullableTS(p.ArchivedAt), p.ID)
+	`, p.Slug, p.Name, p.Description, string(kindID), string(metaJSON), ts(p.UpdatedAt), nullableTS(p.ArchivedAt), p.ID)
 	if err != nil {
 		return err
 	}
@@ -302,7 +408,7 @@ func (r *Repository) UpdateProject(ctx context.Context, p domain.Project) error 
 // GetProject returns project.
 func (r *Repository) GetProject(ctx context.Context, id string) (domain.Project, error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT id, slug, name, description, metadata_json, created_at, updated_at, archived_at
+		SELECT id, slug, name, description, kind, metadata_json, created_at, updated_at, archived_at
 		FROM projects
 		WHERE id = ?
 	`, id)
@@ -312,7 +418,7 @@ func (r *Repository) GetProject(ctx context.Context, id string) (domain.Project,
 // ListProjects lists projects.
 func (r *Repository) ListProjects(ctx context.Context, includeArchived bool) ([]domain.Project, error) {
 	query := `
-		SELECT id, slug, name, description, metadata_json, created_at, updated_at, archived_at
+		SELECT id, slug, name, description, kind, metadata_json, created_at, updated_at, archived_at
 		FROM projects
 	`
 	if !includeArchived {
@@ -330,13 +436,18 @@ func (r *Repository) ListProjects(ctx context.Context, includeArchived bool) ([]
 	for rows.Next() {
 		var (
 			p           domain.Project
+			kindRaw     string
 			metadataRaw string
 			createdRaw  string
 			updatedRaw  string
 			archived    sql.NullString
 		)
-		if err := rows.Scan(&p.ID, &p.Slug, &p.Name, &p.Description, &metadataRaw, &createdRaw, &updatedRaw, &archived); err != nil {
+		if err := rows.Scan(&p.ID, &p.Slug, &p.Name, &p.Description, &kindRaw, &metadataRaw, &createdRaw, &updatedRaw, &archived); err != nil {
 			return nil, err
+		}
+		p.Kind = domain.NormalizeKindID(domain.KindID(kindRaw))
+		if p.Kind == "" {
+			p.Kind = domain.DefaultProjectKind
 		}
 		if strings.TrimSpace(metadataRaw) == "" {
 			metadataRaw = "{}"
@@ -348,6 +459,189 @@ func (r *Repository) ListProjects(ctx context.Context, includeArchived bool) ([]
 		p.UpdatedAt = parseTS(updatedRaw)
 		p.ArchivedAt = parseNullTS(archived)
 		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// SetProjectAllowedKinds replaces one project's kind allowlist.
+func (r *Repository) SetProjectAllowedKinds(ctx context.Context, projectID string, kindIDs []domain.KindID) error {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return domain.ErrInvalidID
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if _, err = tx.ExecContext(ctx, `DELETE FROM project_allowed_kinds WHERE project_id = ?`, projectID); err != nil {
+		return err
+	}
+
+	now := ts(time.Now().UTC())
+	seen := map[domain.KindID]struct{}{}
+	for _, raw := range kindIDs {
+		kindID := domain.NormalizeKindID(raw)
+		if kindID == "" {
+			continue
+		}
+		if _, ok := seen[kindID]; ok {
+			continue
+		}
+		seen[kindID] = struct{}{}
+		if _, err = tx.ExecContext(ctx, `
+			INSERT INTO project_allowed_kinds(project_id, kind_id, created_at)
+			VALUES (?, ?, ?)
+		`, projectID, string(kindID), now); err != nil {
+			return err
+		}
+	}
+
+	err = tx.Commit()
+	return err
+}
+
+// ListProjectAllowedKinds lists one project's explicit kind allowlist.
+func (r *Repository) ListProjectAllowedKinds(ctx context.Context, projectID string) ([]domain.KindID, error) {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return nil, domain.ErrInvalidID
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT kind_id
+		FROM project_allowed_kinds
+		WHERE project_id = ?
+		ORDER BY kind_id ASC
+	`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]domain.KindID, 0)
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		kindID := domain.NormalizeKindID(domain.KindID(raw))
+		if kindID == "" {
+			continue
+		}
+		out = append(out, kindID)
+	}
+	return out, rows.Err()
+}
+
+// CreateKindDefinition creates one kind catalog entry.
+func (r *Repository) CreateKindDefinition(ctx context.Context, kind domain.KindDefinition) error {
+	appliesJSON, err := json.Marshal(kind.AppliesTo)
+	if err != nil {
+		return fmt.Errorf("encode kind applies_to_json: %w", err)
+	}
+	parentJSON, err := json.Marshal(kind.AllowedParentScopes)
+	if err != nil {
+		return fmt.Errorf("encode kind allowed_parent_scopes_json: %w", err)
+	}
+	templateJSON, err := json.Marshal(kind.Template)
+	if err != nil {
+		return fmt.Errorf("encode kind template_json: %w", err)
+	}
+	_, err = r.db.ExecContext(ctx, `
+		INSERT INTO kind_catalog(
+			id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`,
+		string(domain.NormalizeKindID(kind.ID)),
+		strings.TrimSpace(kind.DisplayName),
+		strings.TrimSpace(kind.DescriptionMarkdown),
+		string(appliesJSON),
+		string(parentJSON),
+		strings.TrimSpace(kind.PayloadSchemaJSON),
+		string(templateJSON),
+		ts(kind.CreatedAt),
+		ts(kind.UpdatedAt),
+		nullableTS(kind.ArchivedAt),
+	)
+	return err
+}
+
+// UpdateKindDefinition updates one kind catalog entry.
+func (r *Repository) UpdateKindDefinition(ctx context.Context, kind domain.KindDefinition) error {
+	appliesJSON, err := json.Marshal(kind.AppliesTo)
+	if err != nil {
+		return fmt.Errorf("encode kind applies_to_json: %w", err)
+	}
+	parentJSON, err := json.Marshal(kind.AllowedParentScopes)
+	if err != nil {
+		return fmt.Errorf("encode kind allowed_parent_scopes_json: %w", err)
+	}
+	templateJSON, err := json.Marshal(kind.Template)
+	if err != nil {
+		return fmt.Errorf("encode kind template_json: %w", err)
+	}
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE kind_catalog
+		SET display_name = ?, description_markdown = ?, applies_to_json = ?, allowed_parent_scopes_json = ?, payload_schema_json = ?, template_json = ?, updated_at = ?, archived_at = ?
+		WHERE id = ?
+	`,
+		strings.TrimSpace(kind.DisplayName),
+		strings.TrimSpace(kind.DescriptionMarkdown),
+		string(appliesJSON),
+		string(parentJSON),
+		strings.TrimSpace(kind.PayloadSchemaJSON),
+		string(templateJSON),
+		ts(kind.UpdatedAt),
+		nullableTS(kind.ArchivedAt),
+		string(domain.NormalizeKindID(kind.ID)),
+	)
+	if err != nil {
+		return err
+	}
+	return translateNoRows(res)
+}
+
+// GetKindDefinition loads one kind catalog entry by id.
+func (r *Repository) GetKindDefinition(ctx context.Context, kindID domain.KindID) (domain.KindDefinition, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
+		FROM kind_catalog
+		WHERE id = ?
+	`, string(domain.NormalizeKindID(kindID)))
+	return scanKindDefinition(row)
+}
+
+// ListKindDefinitions lists kind catalog entries.
+func (r *Repository) ListKindDefinitions(ctx context.Context, includeArchived bool) ([]domain.KindDefinition, error) {
+	query := `
+		SELECT id, display_name, description_markdown, applies_to_json, allowed_parent_scopes_json, payload_schema_json, template_json, created_at, updated_at, archived_at
+		FROM kind_catalog
+	`
+	if !includeArchived {
+		query += ` WHERE archived_at IS NULL`
+	}
+	query += ` ORDER BY display_name ASC, id ASC`
+
+	rows, err := r.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]domain.KindDefinition, 0)
+	for rows.Next() {
+		kind, scanErr := scanKindDefinition(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		out = append(out, kind)
 	}
 	return out, rows.Err()
 }
@@ -422,6 +716,15 @@ func (r *Repository) CreateTask(ctx context.Context, t domain.Task) error {
 		return err
 	}
 
+	scope := domain.NormalizeKindAppliesTo(t.Scope)
+	if scope == "" {
+		if strings.TrimSpace(t.ParentID) == "" {
+			scope = domain.KindAppliesToTask
+		} else {
+			scope = domain.KindAppliesToSubtask
+		}
+	}
+
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -434,15 +737,16 @@ func (r *Repository) CreateTask(ctx context.Context, t domain.Task) error {
 
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO work_items(
-			id, project_id, parent_id, kind, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
+			id, project_id, parent_id, kind, scope, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
 			metadata_json, created_by_actor, updated_by_actor, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		t.ID,
 		t.ProjectID,
 		t.ParentID,
 		string(t.Kind),
+		string(scope),
 		string(t.LifecycleState),
 		t.ColumnID,
 		t.Position,
@@ -498,6 +802,15 @@ func (r *Repository) UpdateTask(ctx context.Context, t domain.Task) error {
 		return err
 	}
 
+	scope := domain.NormalizeKindAppliesTo(t.Scope)
+	if scope == "" {
+		if strings.TrimSpace(t.ParentID) == "" {
+			scope = domain.KindAppliesToTask
+		} else {
+			scope = domain.KindAppliesToSubtask
+		}
+	}
+
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -515,12 +828,13 @@ func (r *Repository) UpdateTask(ctx context.Context, t domain.Task) error {
 
 	res, err := tx.ExecContext(ctx, `
 		UPDATE work_items
-		SET parent_id = ?, kind = ?, lifecycle_state = ?, column_id = ?, position = ?, title = ?, description = ?, priority = ?, due_at = ?,
+		SET parent_id = ?, kind = ?, scope = ?, lifecycle_state = ?, column_id = ?, position = ?, title = ?, description = ?, priority = ?, due_at = ?,
 		    labels_json = ?, metadata_json = ?, updated_by_actor = ?, updated_by_type = ?, updated_at = ?, started_at = ?, completed_at = ?, archived_at = ?, canceled_at = ?
 		WHERE id = ?
 	`,
 		t.ParentID,
 		string(t.Kind),
+		string(scope),
 		string(t.LifecycleState),
 		t.ColumnID,
 		t.Position,
@@ -573,7 +887,7 @@ func (r *Repository) GetTask(ctx context.Context, id string) (domain.Task, error
 func (r *Repository) ListTasks(ctx context.Context, projectID string, includeArchived bool) ([]domain.Task, error) {
 	query := `
 		SELECT
-			id, project_id, parent_id, kind, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
+			id, project_id, parent_id, kind, scope, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
 			metadata_json, created_by_actor, updated_by_actor, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
 		FROM work_items
 		WHERE project_id = ?
@@ -775,6 +1089,127 @@ func (r *Repository) ListProjectChangeEvents(ctx context.Context, projectID stri
 	return out, rows.Err()
 }
 
+// CreateCapabilityLease creates one capability lease row.
+func (r *Repository) CreateCapabilityLease(ctx context.Context, lease domain.CapabilityLease) error {
+	_, err := r.db.ExecContext(ctx, `
+		INSERT INTO capability_leases(
+			instance_id, lease_token, agent_name, project_id, scope_type, scope_id, role, parent_instance_id, allow_equal_scope_delegation, issued_at, expires_at, heartbeat_at, revoked_at, revoke_reason
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`,
+		strings.TrimSpace(lease.InstanceID),
+		strings.TrimSpace(lease.LeaseToken),
+		strings.TrimSpace(lease.AgentName),
+		strings.TrimSpace(lease.ProjectID),
+		string(domain.NormalizeCapabilityScopeType(lease.ScopeType)),
+		strings.TrimSpace(lease.ScopeID),
+		string(domain.NormalizeCapabilityRole(lease.Role)),
+		strings.TrimSpace(lease.ParentInstanceID),
+		boolToInt(lease.AllowEqualScopeDelegation),
+		ts(lease.IssuedAt),
+		ts(lease.ExpiresAt),
+		ts(lease.HeartbeatAt),
+		nullableTS(lease.RevokedAt),
+		strings.TrimSpace(lease.RevokedReason),
+	)
+	return err
+}
+
+// UpdateCapabilityLease updates one capability lease row.
+func (r *Repository) UpdateCapabilityLease(ctx context.Context, lease domain.CapabilityLease) error {
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE capability_leases
+		SET lease_token = ?, agent_name = ?, project_id = ?, scope_type = ?, scope_id = ?, role = ?, parent_instance_id = ?, allow_equal_scope_delegation = ?, issued_at = ?, expires_at = ?, heartbeat_at = ?, revoked_at = ?, revoke_reason = ?
+		WHERE instance_id = ?
+	`,
+		strings.TrimSpace(lease.LeaseToken),
+		strings.TrimSpace(lease.AgentName),
+		strings.TrimSpace(lease.ProjectID),
+		string(domain.NormalizeCapabilityScopeType(lease.ScopeType)),
+		strings.TrimSpace(lease.ScopeID),
+		string(domain.NormalizeCapabilityRole(lease.Role)),
+		strings.TrimSpace(lease.ParentInstanceID),
+		boolToInt(lease.AllowEqualScopeDelegation),
+		ts(lease.IssuedAt),
+		ts(lease.ExpiresAt),
+		ts(lease.HeartbeatAt),
+		nullableTS(lease.RevokedAt),
+		strings.TrimSpace(lease.RevokedReason),
+		strings.TrimSpace(lease.InstanceID),
+	)
+	if err != nil {
+		return err
+	}
+	return translateNoRows(res)
+}
+
+// GetCapabilityLease returns one capability lease row by instance id.
+func (r *Repository) GetCapabilityLease(ctx context.Context, instanceID string) (domain.CapabilityLease, error) {
+	row := r.db.QueryRowContext(ctx, `
+		SELECT instance_id, lease_token, agent_name, project_id, scope_type, scope_id, role, parent_instance_id, allow_equal_scope_delegation, issued_at, expires_at, heartbeat_at, revoked_at, revoke_reason
+		FROM capability_leases
+		WHERE instance_id = ?
+	`, strings.TrimSpace(instanceID))
+	return scanCapabilityLease(row)
+}
+
+// ListCapabilityLeasesByScope lists scope-matching leases in deterministic order.
+func (r *Repository) ListCapabilityLeasesByScope(ctx context.Context, projectID string, scopeType domain.CapabilityScopeType, scopeID string) ([]domain.CapabilityLease, error) {
+	projectID = strings.TrimSpace(projectID)
+	scopeType = domain.NormalizeCapabilityScopeType(scopeType)
+	scopeID = strings.TrimSpace(scopeID)
+	query := `
+		SELECT instance_id, lease_token, agent_name, project_id, scope_type, scope_id, role, parent_instance_id, allow_equal_scope_delegation, issued_at, expires_at, heartbeat_at, revoked_at, revoke_reason
+		FROM capability_leases
+		WHERE project_id = ? AND scope_type = ?
+	`
+	args := []any{projectID, string(scopeType)}
+	if scopeID != "" {
+		query += ` AND scope_id = ?`
+		args = append(args, scopeID)
+	}
+	query += ` ORDER BY issued_at ASC, instance_id ASC`
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]domain.CapabilityLease, 0)
+	for rows.Next() {
+		lease, scanErr := scanCapabilityLease(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		out = append(out, lease)
+	}
+	return out, rows.Err()
+}
+
+// RevokeCapabilityLeasesByScope revokes all leases matching one scope filter.
+func (r *Repository) RevokeCapabilityLeasesByScope(ctx context.Context, projectID string, scopeType domain.CapabilityScopeType, scopeID string, revokedAt time.Time, reason string) error {
+	projectID = strings.TrimSpace(projectID)
+	scopeType = domain.NormalizeCapabilityScopeType(scopeType)
+	scopeID = strings.TrimSpace(scopeID)
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "revoked"
+	}
+	query := `
+		UPDATE capability_leases
+		SET revoked_at = ?, revoke_reason = ?
+		WHERE project_id = ? AND scope_type = ?
+	`
+	args := []any{ts(revokedAt.UTC()), reason, projectID, string(scopeType)}
+	if scopeID != "" {
+		query += ` AND scope_id = ?`
+		args = append(args, scopeID)
+	}
+	_, err := r.db.ExecContext(ctx, query, args...)
+	return err
+}
+
 // queryRower represents a query-only DB contract used by DB and Tx implementations.
 type queryRower interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
@@ -784,7 +1219,7 @@ type queryRower interface {
 func getTaskByID(ctx context.Context, q queryRower, id string) (domain.Task, error) {
 	row := q.QueryRowContext(ctx, `
 		SELECT
-			id, project_id, parent_id, kind, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
+			id, project_id, parent_id, kind, scope, lifecycle_state, column_id, position, title, description, priority, due_at, labels_json,
 			metadata_json, created_by_actor, updated_by_actor, updated_by_type, created_at, updated_at, started_at, completed_at, archived_at, canceled_at
 		FROM work_items
 		WHERE id = ?
@@ -859,6 +1294,9 @@ func changedTaskFields(prev, next domain.Task) []string {
 	}
 	if prev.Kind != next.Kind {
 		changed = append(changed, "kind")
+	}
+	if prev.Scope != next.Scope {
+		changed = append(changed, "scope")
 	}
 	if prev.LifecycleState != next.LifecycleState {
 		changed = append(changed, "lifecycle_state")
@@ -993,16 +1431,21 @@ type scanner interface {
 func scanProject(s scanner) (domain.Project, error) {
 	var (
 		p           domain.Project
+		kindRaw     string
 		metadataRaw string
 		createdRaw  string
 		updatedRaw  string
 		archived    sql.NullString
 	)
-	if err := s.Scan(&p.ID, &p.Slug, &p.Name, &p.Description, &metadataRaw, &createdRaw, &updatedRaw, &archived); err != nil {
+	if err := s.Scan(&p.ID, &p.Slug, &p.Name, &p.Description, &kindRaw, &metadataRaw, &createdRaw, &updatedRaw, &archived); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.Project{}, app.ErrNotFound
 		}
 		return domain.Project{}, err
+	}
+	p.Kind = domain.NormalizeKindID(domain.KindID(kindRaw))
+	if p.Kind == "" {
+		p.Kind = domain.DefaultProjectKind
 	}
 	if strings.TrimSpace(metadataRaw) == "" {
 		metadataRaw = "{}"
@@ -1031,6 +1474,7 @@ func scanTask(s scanner) (domain.Task, error) {
 		canceledRaw  sql.NullString
 		priority     string
 		kind         string
+		scopeRaw     string
 		state        string
 		updatedType  string
 	)
@@ -1039,6 +1483,7 @@ func scanTask(s scanner) (domain.Task, error) {
 		&t.ProjectID,
 		&t.ParentID,
 		&kind,
+		&scopeRaw,
 		&state,
 		&t.ColumnID,
 		&t.Position,
@@ -1065,6 +1510,7 @@ func scanTask(s scanner) (domain.Task, error) {
 	}
 	t.Priority = domain.Priority(priority)
 	t.Kind = domain.WorkKind(kind)
+	t.Scope = domain.NormalizeKindAppliesTo(domain.KindAppliesTo(scopeRaw))
 	t.LifecycleState = domain.LifecycleState(state)
 	t.UpdatedByType = domain.ActorType(updatedType)
 	t.CreatedAt = parseTS(createdRaw)
@@ -1085,6 +1531,13 @@ func scanTask(s scanner) (domain.Task, error) {
 	}
 	if strings.TrimSpace(string(t.Kind)) == "" {
 		t.Kind = domain.WorkKindTask
+	}
+	if t.Scope == "" {
+		if strings.TrimSpace(t.ParentID) == "" {
+			t.Scope = domain.KindAppliesToTask
+		} else {
+			t.Scope = domain.KindAppliesToSubtask
+		}
 	}
 	if t.LifecycleState == "" {
 		t.LifecycleState = domain.StateTodo
@@ -1141,6 +1594,106 @@ func scanComment(s scanner) (domain.Comment, error) {
 	return comment, nil
 }
 
+// scanKindDefinition decodes one kind_catalog row.
+func scanKindDefinition(s scanner) (domain.KindDefinition, error) {
+	var (
+		kind            domain.KindDefinition
+		idRaw           string
+		appliesRaw      string
+		parentScopesRaw string
+		templateRaw     string
+		createdRaw      string
+		updatedRaw      string
+		archivedRaw     sql.NullString
+	)
+	if err := s.Scan(
+		&idRaw,
+		&kind.DisplayName,
+		&kind.DescriptionMarkdown,
+		&appliesRaw,
+		&parentScopesRaw,
+		&kind.PayloadSchemaJSON,
+		&templateRaw,
+		&createdRaw,
+		&updatedRaw,
+		&archivedRaw,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.KindDefinition{}, app.ErrNotFound
+		}
+		return domain.KindDefinition{}, err
+	}
+	kind.ID = domain.NormalizeKindID(domain.KindID(idRaw))
+	if kind.ID == "" {
+		return domain.KindDefinition{}, domain.ErrInvalidKindID
+	}
+	if strings.TrimSpace(appliesRaw) == "" {
+		appliesRaw = "[]"
+	}
+	if err := json.Unmarshal([]byte(appliesRaw), &kind.AppliesTo); err != nil {
+		return domain.KindDefinition{}, fmt.Errorf("decode applies_to_json: %w", err)
+	}
+	if strings.TrimSpace(parentScopesRaw) == "" {
+		parentScopesRaw = "[]"
+	}
+	if err := json.Unmarshal([]byte(parentScopesRaw), &kind.AllowedParentScopes); err != nil {
+		return domain.KindDefinition{}, fmt.Errorf("decode allowed_parent_scopes_json: %w", err)
+	}
+	if strings.TrimSpace(templateRaw) == "" {
+		templateRaw = "{}"
+	}
+	if err := json.Unmarshal([]byte(templateRaw), &kind.Template); err != nil {
+		return domain.KindDefinition{}, fmt.Errorf("decode template_json: %w", err)
+	}
+	kind.CreatedAt = parseTS(createdRaw)
+	kind.UpdatedAt = parseTS(updatedRaw)
+	kind.ArchivedAt = parseNullTS(archivedRaw)
+	return kind, nil
+}
+
+// scanCapabilityLease decodes one capability_leases row.
+func scanCapabilityLease(s scanner) (domain.CapabilityLease, error) {
+	var (
+		lease         domain.CapabilityLease
+		scopeTypeRaw  string
+		roleRaw       string
+		allowEqualRaw int
+		issuedRaw     string
+		expiresRaw    string
+		heartbeatRaw  string
+		revokedRaw    sql.NullString
+	)
+	if err := s.Scan(
+		&lease.InstanceID,
+		&lease.LeaseToken,
+		&lease.AgentName,
+		&lease.ProjectID,
+		&scopeTypeRaw,
+		&lease.ScopeID,
+		&roleRaw,
+		&lease.ParentInstanceID,
+		&allowEqualRaw,
+		&issuedRaw,
+		&expiresRaw,
+		&heartbeatRaw,
+		&revokedRaw,
+		&lease.RevokedReason,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.CapabilityLease{}, app.ErrNotFound
+		}
+		return domain.CapabilityLease{}, err
+	}
+	lease.ScopeType = domain.NormalizeCapabilityScopeType(domain.CapabilityScopeType(scopeTypeRaw))
+	lease.Role = domain.NormalizeCapabilityRole(domain.CapabilityRole(roleRaw))
+	lease.AllowEqualScopeDelegation = allowEqualRaw != 0
+	lease.IssuedAt = parseTS(issuedRaw)
+	lease.ExpiresAt = parseTS(expiresRaw)
+	lease.HeartbeatAt = parseTS(heartbeatRaw)
+	lease.RevokedAt = parseNullTS(revokedRaw)
+	return lease, nil
+}
+
 // translateNoRows handles translate no rows.
 func translateNoRows(res sql.Result) error {
 	affected, err := res.RowsAffected()
@@ -1151,6 +1704,14 @@ func translateNoRows(res sql.Result) error {
 		return app.ErrNotFound
 	}
 	return nil
+}
+
+// boolToInt converts boolean values into sqlite-friendly numeric flags.
+func boolToInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 // ts handles ts.

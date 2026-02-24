@@ -670,3 +670,168 @@ func TestRepository_ListProjectChangeEventsLifecycle(t *testing.T) {
 		t.Fatalf("expected create actor user-1, got %q", events[5].ActorID)
 	}
 }
+
+// TestRepository_KindCatalogAndAllowlistRoundTrip verifies kind catalog persistence and project allowlist wiring.
+func TestRepository_KindCatalogAndAllowlistRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	repo, err := OpenInMemory()
+	if err != nil {
+		t.Fatalf("OpenInMemory() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	now := time.Date(2026, 2, 24, 10, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p-kind", "Kinds", "", now)
+	if err := repo.CreateProject(ctx, project); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+
+	kind, err := domain.NewKindDefinition(domain.KindDefinitionInput{
+		ID:                "refactor",
+		DisplayName:       "Refactor",
+		AppliesTo:         []domain.KindAppliesTo{domain.KindAppliesToTask},
+		PayloadSchemaJSON: `{"type":"object","required":["package"],"properties":{"package":{"type":"string"}}}`,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewKindDefinition() error = %v", err)
+	}
+	if err := repo.CreateKindDefinition(ctx, kind); err != nil {
+		t.Fatalf("CreateKindDefinition() error = %v", err)
+	}
+	loadedKind, err := repo.GetKindDefinition(ctx, kind.ID)
+	if err != nil {
+		t.Fatalf("GetKindDefinition() error = %v", err)
+	}
+	if loadedKind.DisplayName != "Refactor" {
+		t.Fatalf("unexpected kind display name %q", loadedKind.DisplayName)
+	}
+
+	if err := repo.SetProjectAllowedKinds(ctx, project.ID, []domain.KindID{kind.ID, domain.DefaultProjectKind}); err != nil {
+		t.Fatalf("SetProjectAllowedKinds() error = %v", err)
+	}
+	allowed, err := repo.ListProjectAllowedKinds(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("ListProjectAllowedKinds() error = %v", err)
+	}
+	if len(allowed) != 2 {
+		t.Fatalf("expected 2 allowed kinds, got %#v", allowed)
+	}
+}
+
+// TestRepository_CapabilityLeaseRoundTrip verifies lease persistence and scope revoke behavior.
+func TestRepository_CapabilityLeaseRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	repo, err := OpenInMemory()
+	if err != nil {
+		t.Fatalf("OpenInMemory() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	now := time.Date(2026, 2, 24, 10, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p-lease", "Leases", "", now)
+	if err := repo.CreateProject(ctx, project); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+
+	lease, err := domain.NewCapabilityLease(domain.CapabilityLeaseInput{
+		InstanceID: "inst-1",
+		LeaseToken: "tok-1",
+		AgentName:  "orch",
+		ProjectID:  project.ID,
+		ScopeType:  domain.CapabilityScopeProject,
+		Role:       domain.CapabilityRoleOrchestrator,
+		ExpiresAt:  now.Add(time.Hour),
+	}, now)
+	if err != nil {
+		t.Fatalf("NewCapabilityLease() error = %v", err)
+	}
+	if err := repo.CreateCapabilityLease(ctx, lease); err != nil {
+		t.Fatalf("CreateCapabilityLease() error = %v", err)
+	}
+	loaded, err := repo.GetCapabilityLease(ctx, lease.InstanceID)
+	if err != nil {
+		t.Fatalf("GetCapabilityLease() error = %v", err)
+	}
+	if loaded.AgentName != "orch" {
+		t.Fatalf("unexpected lease agent name %q", loaded.AgentName)
+	}
+
+	listed, err := repo.ListCapabilityLeasesByScope(ctx, project.ID, domain.CapabilityScopeProject, "")
+	if err != nil {
+		t.Fatalf("ListCapabilityLeasesByScope() error = %v", err)
+	}
+	if len(listed) != 1 {
+		t.Fatalf("expected one listed lease, got %#v", listed)
+	}
+
+	if err := repo.RevokeCapabilityLeasesByScope(ctx, project.ID, domain.CapabilityScopeProject, "", now.Add(2*time.Minute), "manual"); err != nil {
+		t.Fatalf("RevokeCapabilityLeasesByScope() error = %v", err)
+	}
+	revoked, err := repo.GetCapabilityLease(ctx, lease.InstanceID)
+	if err != nil {
+		t.Fatalf("GetCapabilityLease(revoked) error = %v", err)
+	}
+	if revoked.RevokedAt == nil {
+		t.Fatal("expected revoked_at to be set")
+	}
+}
+
+// TestRepository_PersistsProjectKindAndTaskScope verifies new kind/scope columns round-trip.
+func TestRepository_PersistsProjectKindAndTaskScope(t *testing.T) {
+	ctx := context.Background()
+	repo, err := OpenInMemory()
+	if err != nil {
+		t.Fatalf("OpenInMemory() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	now := time.Date(2026, 2, 24, 10, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p-scope", "Scope", "", now)
+	if err := project.SetKind("project-template", now); err != nil {
+		t.Fatalf("SetKind() error = %v", err)
+	}
+	if err := repo.CreateProject(ctx, project); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	loadedProject, err := repo.GetProject(ctx, project.ID)
+	if err != nil {
+		t.Fatalf("GetProject() error = %v", err)
+	}
+	if loadedProject.Kind != domain.KindID("project-template") {
+		t.Fatalf("expected persisted project kind, got %q", loadedProject.Kind)
+	}
+
+	column, _ := domain.NewColumn("c-scope", project.ID, "To Do", 0, 0, now)
+	if err := repo.CreateColumn(ctx, column); err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+	task, err := domain.NewTask(domain.TaskInput{
+		ID:        "t-scope",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Scope:     domain.KindAppliesToPhase,
+		Kind:      domain.WorkKindPhase,
+		Position:  0,
+		Title:     "phase",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	if err != nil {
+		t.Fatalf("NewTask() error = %v", err)
+	}
+	if err := repo.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+	loadedTask, err := repo.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("GetTask() error = %v", err)
+	}
+	if loadedTask.Scope != domain.KindAppliesToPhase {
+		t.Fatalf("expected persisted task scope phase, got %q", loadedTask.Scope)
+	}
+}

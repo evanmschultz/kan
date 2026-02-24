@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/evanschultz/kan/internal/domain"
@@ -24,6 +25,8 @@ type ServiceConfig struct {
 	DefaultDeleteMode        DeleteMode
 	StateTemplates           []StateTemplate
 	AutoCreateProjectColumns bool
+	CapabilityLeaseTTL       time.Duration
+	RequireAgentLease        *bool
 }
 
 // StateTemplate represents state template data used by this package.
@@ -48,6 +51,11 @@ type Service struct {
 	defaultDeleteMode DeleteMode
 	stateTemplates    []StateTemplate
 	autoProjectCols   bool
+	defaultLeaseTTL   time.Duration
+	requireAgentLease bool
+	schemaCache       map[string]schemaCacheEntry
+	schemaCacheMu     sync.RWMutex
+	kindBootstrap     kindBootstrapState
 }
 
 // NewService constructs a new value for this package.
@@ -61,6 +69,13 @@ func NewService(repo Repository, idGen IDGenerator, clock Clock, cfg ServiceConf
 	if cfg.DefaultDeleteMode == "" {
 		cfg.DefaultDeleteMode = DeleteModeArchive
 	}
+	if cfg.CapabilityLeaseTTL <= 0 {
+		cfg.CapabilityLeaseTTL = defaultCapabilityLeaseTTL
+	}
+	requireAgentLease := true
+	if cfg.RequireAgentLease != nil {
+		requireAgentLease = *cfg.RequireAgentLease
+	}
 	templates := sanitizeStateTemplates(cfg.StateTemplates)
 	if len(templates) == 0 {
 		templates = defaultStateTemplates()
@@ -73,11 +88,17 @@ func NewService(repo Repository, idGen IDGenerator, clock Clock, cfg ServiceConf
 		defaultDeleteMode: cfg.DefaultDeleteMode,
 		stateTemplates:    templates,
 		autoProjectCols:   cfg.AutoCreateProjectColumns,
+		defaultLeaseTTL:   cfg.CapabilityLeaseTTL,
+		requireAgentLease: requireAgentLease,
+		schemaCache:       map[string]schemaCacheEntry{},
 	}
 }
 
 // EnsureDefaultProject ensures default project.
 func (s *Service) EnsureDefaultProject(ctx context.Context) (domain.Project, error) {
+	if err := s.ensureKindCatalogBootstrapped(ctx); err != nil {
+		return domain.Project{}, err
+	}
 	projects, err := s.repo.ListProjects(ctx, false)
 	if err != nil {
 		return domain.Project{}, err
@@ -94,6 +115,9 @@ func (s *Service) EnsureDefaultProject(ctx context.Context) (domain.Project, err
 	if err := s.repo.CreateProject(ctx, project); err != nil {
 		return domain.Project{}, err
 	}
+	if err := s.initializeProjectAllowedKinds(ctx, project); err != nil {
+		return domain.Project{}, err
+	}
 
 	if err := s.createDefaultColumns(ctx, project.ID, now); err != nil {
 		return domain.Project{}, err
@@ -106,7 +130,10 @@ func (s *Service) EnsureDefaultProject(ctx context.Context) (domain.Project, err
 type CreateProjectInput struct {
 	Name        string
 	Description string
+	Kind        domain.KindID
 	Metadata    domain.ProjectMetadata
+	UpdatedBy   string
+	UpdatedType domain.ActorType
 }
 
 // CreateProject creates project.
@@ -119,15 +146,31 @@ func (s *Service) CreateProject(ctx context.Context, name, description string) (
 
 // CreateProjectWithMetadata creates project with metadata.
 func (s *Service) CreateProjectWithMetadata(ctx context.Context, in CreateProjectInput) (domain.Project, error) {
+	if err := s.ensureKindCatalogBootstrapped(ctx); err != nil {
+		return domain.Project{}, err
+	}
 	now := s.clock()
 	project, err := domain.NewProject(s.idGen(), in.Name, in.Description, now)
 	if err != nil {
 		return domain.Project{}, err
 	}
+	kindID := domain.NormalizeKindID(in.Kind)
+	if kindID == "" {
+		kindID = domain.DefaultProjectKind
+	}
+	if err := project.SetKind(kindID, now); err != nil {
+		return domain.Project{}, err
+	}
 	if err := project.UpdateDetails(project.Name, project.Description, in.Metadata, now); err != nil {
 		return domain.Project{}, err
 	}
+	if err := s.validateProjectKind(ctx, "", project.Kind, project.Metadata.KindPayload); err != nil {
+		return domain.Project{}, err
+	}
 	if err := s.repo.CreateProject(ctx, project); err != nil {
+		return domain.Project{}, err
+	}
+	if err := s.initializeProjectAllowedKinds(ctx, project); err != nil {
 		return domain.Project{}, err
 	}
 	if s.autoProjectCols {
@@ -143,7 +186,10 @@ type UpdateProjectInput struct {
 	ProjectID   string
 	Name        string
 	Description string
+	Kind        domain.KindID
 	Metadata    domain.ProjectMetadata
+	UpdatedBy   string
+	UpdatedType domain.ActorType
 }
 
 // UpdateProject updates state for the requested operation.
@@ -152,7 +198,27 @@ func (s *Service) UpdateProject(ctx context.Context, in UpdateProjectInput) (dom
 	if err != nil {
 		return domain.Project{}, err
 	}
+	actorType := in.UpdatedType
+	if actorType == "" {
+		actorType = domain.ActorTypeUser
+	}
+	if err := s.enforceMutationGuard(ctx, project.ID, actorType, domain.CapabilityScopeProject, project.ID); err != nil {
+		return domain.Project{}, err
+	}
+	nextKind := project.Kind
+	if nextKind == "" {
+		nextKind = domain.DefaultProjectKind
+	}
+	if kind := domain.NormalizeKindID(in.Kind); kind != "" {
+		nextKind = kind
+	}
+	if err := project.SetKind(nextKind, s.clock()); err != nil {
+		return domain.Project{}, err
+	}
 	if err := project.UpdateDetails(in.Name, in.Description, in.Metadata, s.clock()); err != nil {
+		return domain.Project{}, err
+	}
+	if err := s.validateProjectKind(ctx, project.ID, project.Kind, project.Metadata.KindPayload); err != nil {
 		return domain.Project{}, err
 	}
 	if err := s.repo.UpdateProject(ctx, project); err != nil {
@@ -178,6 +244,7 @@ type CreateTaskInput struct {
 	ProjectID      string
 	ParentID       string
 	Kind           domain.WorkKind
+	Scope          domain.KindAppliesTo
 	ColumnID       string
 	Title          string
 	Description    string
@@ -238,6 +305,30 @@ type TaskMatch struct {
 
 // CreateTask creates task.
 func (s *Service) CreateTask(ctx context.Context, in CreateTaskInput) (domain.Task, error) {
+	actorType := in.UpdatedByType
+	if actorType == "" {
+		actorType = domain.ActorTypeUser
+	}
+	if err := s.enforceMutationGuard(ctx, in.ProjectID, actorType, domain.CapabilityScopeProject, in.ProjectID); err != nil {
+		return domain.Task{}, err
+	}
+
+	var parent *domain.Task
+	if strings.TrimSpace(in.ParentID) != "" {
+		parentTask, err := s.repo.GetTask(ctx, in.ParentID)
+		if err != nil {
+			return domain.Task{}, err
+		}
+		if parentTask.ProjectID != in.ProjectID {
+			return domain.Task{}, domain.ErrInvalidParentID
+		}
+		parent = &parentTask
+	}
+
+	kindDef, err := s.validateTaskKind(ctx, in.ProjectID, domain.KindID(in.Kind), in.Scope, parent, in.Metadata.KindPayload)
+	if err != nil {
+		return domain.Task{}, err
+	}
 	tasks, err := s.repo.ListTasks(ctx, in.ProjectID, false)
 	if err != nil {
 		return domain.Task{}, err
@@ -261,7 +352,8 @@ func (s *Service) CreateTask(ctx context.Context, in CreateTaskInput) (domain.Ta
 		ID:             s.idGen(),
 		ProjectID:      in.ProjectID,
 		ParentID:       in.ParentID,
-		Kind:           in.Kind,
+		Kind:           domain.WorkKind(kindDef.ID),
+		Scope:          in.Scope,
 		LifecycleState: lifecycleState,
 		ColumnID:       in.ColumnID,
 		Position:       position,
@@ -282,6 +374,9 @@ func (s *Service) CreateTask(ctx context.Context, in CreateTaskInput) (domain.Ta
 	if err := s.repo.CreateTask(ctx, task); err != nil {
 		return domain.Task{}, err
 	}
+	if err := s.applyKindTemplateSystemActions(ctx, task, kindDef); err != nil {
+		return domain.Task{}, err
+	}
 	return task, nil
 }
 
@@ -289,6 +384,9 @@ func (s *Service) CreateTask(ctx context.Context, in CreateTaskInput) (domain.Ta
 func (s *Service) MoveTask(ctx context.Context, taskID, toColumnID string, position int) (domain.Task, error) {
 	task, err := s.repo.GetTask(ctx, taskID)
 	if err != nil {
+		return domain.Task{}, err
+	}
+	if err := s.enforceMutationGuard(ctx, task.ProjectID, task.UpdatedByType, domain.CapabilityScopeProject, task.ProjectID); err != nil {
 		return domain.Task{}, err
 	}
 	columns, err := s.repo.ListColumns(ctx, task.ProjectID, true)
@@ -349,6 +447,9 @@ func (s *Service) RestoreTask(ctx context.Context, taskID string) (domain.Task, 
 	if err != nil {
 		return domain.Task{}, err
 	}
+	if err := s.enforceMutationGuard(ctx, task.ProjectID, task.UpdatedByType, domain.CapabilityScopeProject, task.ProjectID); err != nil {
+		return domain.Task{}, err
+	}
 	task.Restore(s.clock())
 	columns, err := s.repo.ListColumns(ctx, task.ProjectID, true)
 	if err != nil {
@@ -373,6 +474,9 @@ func (s *Service) RenameTask(ctx context.Context, taskID, title string) (domain.
 	if err != nil {
 		return domain.Task{}, err
 	}
+	if err := s.enforceMutationGuard(ctx, task.ProjectID, task.UpdatedByType, domain.CapabilityScopeProject, task.ProjectID); err != nil {
+		return domain.Task{}, err
+	}
 	if err := task.UpdateDetails(title, task.Description, task.Priority, task.DueAt, task.Labels, s.clock()); err != nil {
 		return domain.Task{}, err
 	}
@@ -388,13 +492,30 @@ func (s *Service) UpdateTask(ctx context.Context, in UpdateTaskInput) (domain.Ta
 	if err != nil {
 		return domain.Task{}, err
 	}
+	actorType := in.UpdatedType
+	if actorType == "" {
+		actorType = task.UpdatedByType
+		if actorType == "" {
+			actorType = domain.ActorTypeUser
+		}
+	}
+	if err := s.enforceMutationGuard(ctx, task.ProjectID, actorType, domain.CapabilityScopeProject, task.ProjectID); err != nil {
+		return domain.Task{}, err
+	}
 	if err := task.UpdateDetails(in.Title, in.Description, in.Priority, in.DueAt, in.Labels, s.clock()); err != nil {
 		return domain.Task{}, err
 	}
 	if in.Metadata != nil {
-		actorType := in.UpdatedType
-		if actorType == "" {
-			actorType = domain.ActorTypeUser
+		var parent *domain.Task
+		if strings.TrimSpace(task.ParentID) != "" {
+			parentTask, parentErr := s.repo.GetTask(ctx, task.ParentID)
+			if parentErr != nil {
+				return domain.Task{}, parentErr
+			}
+			parent = &parentTask
+		}
+		if _, validateErr := s.validateTaskKind(ctx, task.ProjectID, domain.KindID(task.Kind), task.Scope, parent, in.Metadata.KindPayload); validateErr != nil {
+			return domain.Task{}, validateErr
 		}
 		if err := task.UpdatePlanningMetadata(*in.Metadata, in.UpdatedBy, actorType, s.clock()); err != nil {
 			return domain.Task{}, err
@@ -418,9 +539,19 @@ func (s *Service) DeleteTask(ctx context.Context, taskID string, mode DeleteMode
 		if err != nil {
 			return err
 		}
+		if err := s.enforceMutationGuard(ctx, task.ProjectID, task.UpdatedByType, domain.CapabilityScopeProject, task.ProjectID); err != nil {
+			return err
+		}
 		task.Archive(s.clock())
 		return s.repo.UpdateTask(ctx, task)
 	case DeleteModeHard:
+		task, err := s.repo.GetTask(ctx, taskID)
+		if err != nil {
+			return err
+		}
+		if err := s.enforceMutationGuard(ctx, task.ProjectID, task.UpdatedByType, domain.CapabilityScopeProject, task.ProjectID); err != nil {
+			return err
+		}
 		return s.repo.DeleteTask(ctx, taskID)
 	default:
 		return ErrInvalidDeleteMode
@@ -465,6 +596,10 @@ func (s *Service) CreateComment(ctx context.Context, in CreateCommentInput) (dom
 	if err != nil {
 		return domain.Comment{}, err
 	}
+	actorType := normalizeActorTypeInput(in.ActorType)
+	if err := s.enforceMutationGuard(ctx, target.ProjectID, actorType, domain.CapabilityScopeProject, target.ProjectID); err != nil {
+		return domain.Comment{}, err
+	}
 	body := strings.TrimSpace(in.BodyMarkdown)
 	if body == "" {
 		return domain.Comment{}, domain.ErrInvalidBodyMarkdown
@@ -476,7 +611,7 @@ func (s *Service) CreateComment(ctx context.Context, in CreateCommentInput) (dom
 		TargetType:   target.TargetType,
 		TargetID:     target.TargetID,
 		BodyMarkdown: body,
-		ActorType:    normalizeActorTypeInput(in.ActorType),
+		ActorType:    actorType,
 		AuthorName:   strings.TrimSpace(in.AuthorName),
 	}, s.clock())
 	if err != nil {
@@ -561,14 +696,33 @@ func (s *Service) ReparentTask(ctx context.Context, taskID, parentID string) (do
 	if err != nil {
 		return domain.Task{}, err
 	}
+	if err := s.enforceMutationGuard(ctx, task.ProjectID, task.UpdatedByType, domain.CapabilityScopeProject, task.ProjectID); err != nil {
+		return domain.Task{}, err
+	}
+	parentID = strings.TrimSpace(parentID)
+	var parent *domain.Task
 	if parentID != "" {
-		parent, parentErr := s.repo.GetTask(ctx, parentID)
+		parentTask, parentErr := s.repo.GetTask(ctx, parentID)
 		if parentErr != nil {
 			return domain.Task{}, parentErr
 		}
-		if parent.ProjectID != task.ProjectID {
+		if parentTask.ProjectID != task.ProjectID {
 			return domain.Task{}, domain.ErrInvalidParentID
 		}
+		parent = &parentTask
+		tasks, listErr := s.repo.ListTasks(ctx, task.ProjectID, true)
+		if listErr != nil {
+			return domain.Task{}, listErr
+		}
+		if wouldCreateParentCycle(task.ID, parentTask.ID, tasks) {
+			return domain.Task{}, domain.ErrInvalidParentID
+		}
+	}
+	if parentID == "" && task.Scope == domain.KindAppliesToSubtask {
+		return domain.Task{}, domain.ErrInvalidParentID
+	}
+	if _, err := s.validateTaskKind(ctx, task.ProjectID, domain.KindID(task.Kind), task.Scope, parent, task.Metadata.KindPayload); err != nil {
+		return domain.Task{}, err
 	}
 	if err := task.Reparent(parentID, s.clock()); err != nil {
 		return domain.Task{}, err
@@ -653,8 +807,8 @@ func (s *Service) SearchTaskMatches(ctx context.Context, in SearchTasksFilter) (
 			}
 
 			if query != "" {
-				if !strings.Contains(strings.ToLower(task.Title), query) &&
-					!strings.Contains(strings.ToLower(task.Description), query) &&
+				if !fuzzyContainsQuery(task.Title, query) &&
+					!fuzzyContainsQuery(task.Description, query) &&
 					!labelsContainQuery(task.Labels, query) {
 					continue
 				}
@@ -687,10 +841,40 @@ func (s *Service) SearchTaskMatches(ctx context.Context, in SearchTasksFilter) (
 	return out, nil
 }
 
-// labelsContainQuery handles labels contain query.
+// labelsContainQuery reports whether any label fuzzy-matches query.
 func labelsContainQuery(labels []string, query string) bool {
 	for _, label := range labels {
-		if strings.Contains(strings.ToLower(label), query) {
+		if fuzzyContainsQuery(label, query) {
+			return true
+		}
+	}
+	return false
+}
+
+// fuzzyContainsQuery reports whether candidate matches query by exact/prefix/contains
+// checks first, then by deterministic rune-order subsequence matching.
+func fuzzyContainsQuery(candidate, query string) bool {
+	query = strings.TrimSpace(strings.ToLower(query))
+	candidate = strings.TrimSpace(strings.ToLower(candidate))
+	if query == "" {
+		return true
+	}
+	if candidate == "" {
+		return false
+	}
+	if strings.Contains(candidate, query) {
+		return true
+	}
+
+	qRunes := []rune(query)
+	qi := 0
+	// Fallback to subsequence matching so fuzzy queries work across gaps.
+	for _, r := range []rune(candidate) {
+		if r != qRunes[qi] {
+			continue
+		}
+		qi++
+		if qi == len(qRunes) {
 			return true
 		}
 	}
@@ -747,6 +931,36 @@ func uniqueNonEmptyIDs(in []string) []string {
 		out = append(out, id)
 	}
 	return out
+}
+
+// wouldCreateParentCycle reports whether assigning candidateParentID would create a cycle.
+func wouldCreateParentCycle(taskID, candidateParentID string, tasks []domain.Task) bool {
+	taskID = strings.TrimSpace(taskID)
+	candidateParentID = strings.TrimSpace(candidateParentID)
+	if taskID == "" || candidateParentID == "" {
+		return false
+	}
+	parentByID := make(map[string]string, len(tasks))
+	for _, task := range tasks {
+		parentByID[task.ID] = strings.TrimSpace(task.ParentID)
+	}
+	current := candidateParentID
+	visited := map[string]struct{}{}
+	for current != "" {
+		if current == taskID {
+			return true
+		}
+		if _, ok := visited[current]; ok {
+			return true
+		}
+		visited[current] = struct{}{}
+		next, ok := parentByID[current]
+		if !ok {
+			return false
+		}
+		current = next
+	}
+	return false
 }
 
 // defaultStateTemplates returns default state templates.

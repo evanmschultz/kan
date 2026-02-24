@@ -2,6 +2,7 @@
 
 Use this worksheet to validate only the behavior added/fixed after the previous full worksheet pass.
 Run against a clean DB and clean config path.
+This refresh explicitly carries forward unfinished delta checks from the previous run.
 
 ## 0) Setup
 
@@ -25,6 +26,38 @@ Expected:
 - No stdin/terminal prompt flow appears outside TUI.
 
 ### USER NOTES D0.1-N1
+
+- Pass/Fail:
+- Evidence:
+- Notes:
+
+---
+
+### 0.2 Carry-forward unfinished delta checklist
+
+Actions:
+
+1. Treat every anchor listed below as required for this rerun.
+2. Re-run each section and set each listed USER NOTES block to explicit `pass` or `fail`.
+3. For every `fail`, add reproduction details and the blocking observation in that section's notes.
+
+Carry-forward anchors (must all be completed):
+
+- `D0.1-N1`
+- `D1.1-N1`, `D1.2-N1`, `D1.3-N1`, `D1.4-N1`, `D1.5-N1`, `D1.6-N1`
+- `D2.1-N1`
+- `D3.1-N1`, `D3.2-N1`
+- `D4.1-N1`, `D4.2-N1`
+- `D5.1-N1`, `D5.2-N1`
+- `D6.1-N1`, `D6.2-N1`, `D6.3-N1`
+- `D7.1-N1`
+
+Expected:
+
+- No listed anchor remains blank.
+- Delta worksheet is actionable as a complete rerun artifact (not partial notes).
+
+### USER NOTES D0.2-N1
 
 - Pass/Fail:
 - Evidence:
@@ -58,12 +91,13 @@ Actions:
 
 1. Enter display name.
 2. Move focus with `tab`.
-3. Change default actor using `h/l`.
+3. In startup-required mode, try changing default actor using `h/l`.
 
 Expected:
 
 - Display name input updates normally.
-- Actor options cycle only between `user|agent|system`.
+- Mandatory startup mode keeps default actor locked to `user`.
+- Actor row remains visible and lock behavior is clear.
 
 ### USER NOTES D1.2-N1
 
@@ -79,13 +113,14 @@ Actions:
 
 1. Focus `global search roots` section.
 2. Press `a` or `ctrl+r` to open picker.
-3. Use filter input to narrow entries.
-4. Select a directory and add it.
+3. Use filter input to narrow entries; use arrow keys for navigation and `left/right` for parent/child traversal.
+4. Press `ctrl+a` to choose the current directory as a root.
 
 Expected:
 
-- Picker opens in a directory context that is easy to navigate.
+- Picker opens in a directory context that is easy to navigate and shows current path.
 - Filtering narrows visible entries.
+- Typing into filter does not trigger unrelated hotkeys.
 - Selected root is added to modal list.
 
 ### USER NOTES D1.3-N1
@@ -102,7 +137,7 @@ Actions:
 
 1. In roots list, select an entry.
 2. Press `d`.
-3. Re-add one root through picker.
+3. Re-add one root through picker (`a`/`ctrl+r`, then `ctrl+a` in picker).
 
 Expected:
 
@@ -241,14 +276,46 @@ Actions:
 
 1. Open add/edit task modal.
 2. Trigger resource picker (`ctrl+r`).
-3. Observe initial picker root and use filter.
+3. Observe initial picker root, use filter input, and navigate with arrow keys.
+4. Use `ctrl+a` attach behavior and confirm expected attach target.
 
 Expected:
 
 - Picker starts from global search-root fallback.
 - Fuzzy filter behaves consistently while browsing.
+- Filter typing keeps text-input priority.
+- `ctrl+a` behavior is deterministic for the active picker context.
 
 ### USER NOTES D4.1-N1
+
+- Pass/Fail:
+- Evidence:
+- Notes:
+
+---
+
+### 4.2 Project-root boundary gate for resource attach
+
+Precondition:
+
+- Current project has explicit root mapping set via `paths-roots`.
+
+Actions:
+
+1. Set a project root path where you can browse to a parent/sibling path outside that root.
+2. Open task info and trigger resource picker (`r`).
+3. Navigate outside the configured root using `..`.
+4. Attempt to attach an out-of-root file/dir.
+5. Repeat from add/edit task form picker (`ctrl+r`).
+
+Expected:
+
+- Browsing outside root may be visible for navigation context.
+- Attach operation is blocked when selected path is outside configured project root.
+- Status message reports root-boundary failure (`resource path is outside allowed root`).
+- No new out-of-root resource ref is saved to task metadata.
+
+### USER NOTES D4.2-N1
 
 - Pass/Fail:
 - Evidence:
@@ -335,6 +402,33 @@ Expected:
 - New comment appends (no overwrite of prior in-memory thread list).
 
 ### USER NOTES D6.2-N1
+
+- Pass/Fail:
+- Evidence:
+- Notes:
+
+---
+
+### 6.3 Fuzzy backend parity follow-up
+
+Precondition:
+
+- Have tasks with titles/labels that allow abbrev/fuzzy checks (for example `roadmap parser cleanup`, label `backend-fuzzy`).
+
+Actions:
+
+1. In command palette (`:`), type `ns` and verify `new-subtask` ranking remains stable.
+2. In search modal (`/`), query `rdmp` and capture matching tasks.
+3. In dependency inspector (`ctrl+o`), run `rdmp` and compare candidate set to search modal.
+4. Toggle state/archive filters and confirm query behavior updates consistently.
+
+Expected:
+
+- Command palette abbreviation matching remains predictable.
+- Backend search behavior used by search/dependency flows matches fuzzy-policy expectations.
+- State/archive filters still gate results strictly.
+
+### USER NOTES D6.3-N1
 
 - Pass/Fail:
 - Evidence:

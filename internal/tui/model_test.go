@@ -4693,3 +4693,33 @@ func applyCmd(t *testing.T, m Model, cmd tea.Cmd) Model {
 func keyRune(r rune) tea.KeyPressMsg {
 	return tea.KeyPressMsg{Code: r, Text: string(r)}
 }
+
+// TestNormalizeAttachmentPathWithinRoot verifies root-bound attachment validation behavior.
+func TestNormalizeAttachmentPathWithinRoot(t *testing.T) {
+	root := t.TempDir()
+	inside := filepath.Join(root, "docs", "readme.md")
+	if err := os.MkdirAll(filepath.Dir(inside), 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	if err := os.WriteFile(inside, []byte("ok"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	outsideDir := t.TempDir()
+	outside := filepath.Join(outsideDir, "outside.md")
+	if err := os.WriteFile(outside, []byte("bad"), 0o644); err != nil {
+		t.Fatalf("WriteFile(outside) error = %v", err)
+	}
+
+	normalizedInside, err := normalizeAttachmentPathWithinRoot(root, inside)
+	if err != nil {
+		t.Fatalf("normalizeAttachmentPathWithinRoot(inside) error = %v", err)
+	}
+	if filepath.Clean(normalizedInside) != filepath.Clean(inside) {
+		t.Fatalf("expected normalized inside path %q, got %q", inside, normalizedInside)
+	}
+
+	if _, err := normalizeAttachmentPathWithinRoot(root, outside); err == nil {
+		t.Fatal("expected outside-root path to be rejected")
+	}
+}

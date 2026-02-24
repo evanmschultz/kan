@@ -30,6 +30,10 @@ You are a senior Go dev. YOU ALWAYS:
 - Never use dependency-fetch bypasses (for example `GOPROXY=direct`, `GOSUMDB=off`, or checksum bypass flags).
 - Never delete files or directories without explicit user approval.
 - Keep the active execution/work log in `PLAN.md`. Use `worklogs/` only when the user explicitly asks for split logs.
+- When creating the MCP design/planning markdown file (for example `MCP_DESIGN_AND_PLAN.md`), you must explicitly review and discuss all locked roadmap decisions, unresolved roadmap items, and relevant current-code constraints from `PLAN.md`, `PRE_PHASE11_CLOSEOUT_DISCUSSION.md`, `PRE_MCP_EXECUTION_WAVES.md`, `PRE_MCP_CONSENSUS.md`, and `Pre_MCP_User_NOTES.md` before proposing implementation phases.
+- When clarification is needed, ask in two stages:
+  - first ask general goal-alignment questions and lock shared objectives,
+  - only after that consensus ask specific implementation-detail questions.
 
 ## Project Structure
 

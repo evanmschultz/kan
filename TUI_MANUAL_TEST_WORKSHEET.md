@@ -2,6 +2,7 @@
 
 Use this worksheet for a fresh end-to-end validation pass of all pre-Phase-11 behavior.
 Run against a clean DB. Capture screenshots/GIFs for any failures.
+For this refresh pass, keep prior USER NOTES as historical context and append a dated retest outcome in each section.
 
 ## 0) Setup
 
@@ -9,22 +10,24 @@ Run against a clean DB. Capture screenshots/GIFs for any failures.
 
 Actions:
 
-1. Start with a clean DB path.
+1. Start with clean DB and config paths.
 2. Run the app in a terminal at least 140x45.
-3. If no projects exist, confirm first-run immediately opens project creation flow.
+3. On first launch, complete `Startup Setup Required` (display name + at least one global search root).
+4. Save bootstrap settings and confirm project picker opens with `New Project` access.
 
 Commands:
 
 ```bash
-rm -f /tmp/kan-manual-test.db
-KAN_DB_PATH=/tmp/kan-manual-test.db just run
+rm -f /tmp/kan-manual-test.db /tmp/kan-manual-test.toml
+KAN_DB_PATH=/tmp/kan-manual-test.db KAN_CONFIG=/tmp/kan-manual-test.toml just run
 ```
 
 Expected:
 
 - App launches without migration/runtime error.
-- Board + status + bottom help render.
-- Empty DB does not auto-create a default project; `New Project` flow is shown.
+- First-run opens `Startup Setup Required` before project picker.
+- No terminal/stdin prompt appears outside the TUI.
+- After save, project picker shows and `New Project` flow is available.
 
 ### USER NOTES S0.1-N1
 
@@ -58,6 +61,26 @@ Expected:
 ### USER NOTES S0.2-N1
 
 - Pass/Fail: pass
+- Evidence:
+- Notes:
+
+---
+
+### 0.3 Delta carry-forward prerequisite
+
+Actions:
+
+1. Open `TUI_MANUAL_TEST_WORKSHEET_DELTA_BOOTSTRAP_THREADS.md`.
+2. Complete the explicit carry-forward checklist in `D0.2-N1` before final sign-off here.
+
+Expected:
+
+- No unresolved delta anchors remain blank.
+- Full worksheet sign-off is blocked until delta carry-forward checks are completed.
+
+### USER NOTES S0.3-N1
+
+- Pass/Fail:
 - Evidence:
 - Notes:
 
@@ -309,6 +332,7 @@ Expected:
 
 - Picker opens centered.
 - Filter narrows entries.
+- While filter input is focused, typing updates filter text (no hotkey hijack).
 - Attach behavior is explicit and predictable.
 - Attached refs appear in task info.
 
@@ -341,6 +365,35 @@ Expected:
 
 ---
 
+### 4.3 Root-boundary attachment guard
+
+Precondition:
+
+- Current project has explicit root mapping set to a directory with at least one sibling directory outside that root.
+
+Actions:
+
+1. Open command palette and run `paths-roots`; set/confirm the project root path.
+2. Open task info (`i`) for any task and press `r`.
+3. In picker, navigate to `..` so you reach a parent/sibling path outside the configured project root.
+4. Attempt to attach that out-of-root file/dir.
+5. Repeat from add/edit task forms via `ctrl+r`.
+
+Expected:
+
+- Picker navigation can still browse parent paths for visibility.
+- Attach attempt outside the configured project root is blocked.
+- Status message reports root-boundary rejection (`resource path is outside allowed root`).
+- No out-of-root reference is persisted in task metadata.
+
+### USER NOTES S4.3-N1
+
+- Pass/Fail:
+- Evidence:
+- Notes:
+
+---
+
 ## 5) Search + Command Palette
 
 ### 5.1 Search modal ergonomics
@@ -350,11 +403,13 @@ Actions:
 1. Press `/`.
 2. Tab across query/state/scope/archive controls.
 3. Apply filters and inspect results.
+4. While query input is focused, type `j/k` and confirm they are inserted as text.
 
 Expected:
 
 - Focus order is deterministic.
 - Search results update correctly.
+- Query input keeps text-input priority while focused.
 - Clear query vs reset filters remain distinct.
 
 ### USER NOTES S5.1-N1
@@ -410,6 +465,35 @@ Expected:
 ### USER NOTES S5.3-N1
 
 - Pass/Fail: pass
+- Evidence:
+- Notes:
+
+---
+
+### 5.4 Fuzzy backend parity checks (consensus lock)
+
+Precondition:
+
+- Have tasks with predictable titles/labels: `new-subtask parser`, `roadmap parser cleanup`, and one task labeled `backend-fuzzy`.
+
+Actions:
+
+1. Open command palette (`:`), type `ns`, and verify `new-subtask` ranks near the top.
+2. Open search (`/`) and run query `rdmp` (abbrev for roadmap).
+3. Change state filters and archived toggle; rerun the same query.
+4. Open dependency inspector (`ctrl+o`) from add/edit flow and run query `rdmp`.
+5. Compare search results between search modal and dependency inspector for the same query and filter settings.
+
+Expected:
+
+- Command palette abbreviation matching remains deterministic.
+- Search + dependency inspector use aligned fuzzy matching behavior (no backend-only substring divergence).
+- State/archive filters remain strict regardless of fuzzy query text.
+- `no matches` status appears clearly when expected.
+
+### USER NOTES S5.4-N1
+
+- Pass/Fail:
 - Evidence:
 - Notes:
 

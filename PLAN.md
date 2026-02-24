@@ -703,14 +703,18 @@ Goal: capture all edits with provenance and prepare incremental sync semantics f
 
 ### Phase 10.4: Attention Signals and Branch-Scoped Delivery Contract
 
-- Add first-class attention fields on work items:
-    - `attention_state` enum: `none|note|unresolved`.
-    - `attention_note`.
-    - `attention_set_by`, `attention_set_at`.
-    - `attention_cleared_by`, `attention_cleared_at`.
+- Add first-class attention records (node-scoped, capability-gated), not a single inline flag:
+    - `attention_items` model keyed by level scope:
+        - `scope_type`: `project|branch|phase|task|subtask`
+        - `scope_id`
+        - `state`: `open|acknowledged|resolved`
+        - `kind`: `blocker|consensus_required|approval_required|risk_note` (extensible)
+        - `summary`, `body_markdown`
+        - actor audit (`created_by`, `created_at`, `resolved_by`, `resolved_at`)
+        - optional `requires_user_action` marker.
 - Delivery contract for future branch-context reads:
     - always return `changes_since_cursor` for all meaningful edits at or below the requested branch scope.
-    - always return `active_attention_items` (open `note|unresolved`) in the same response.
+    - always return `active_attention_items` (open, unresolved attention entries) in the same response.
 - Event-noise policy:
     - emit events for committed mutations only (`save`, `move`, `transition`, `archive`, `restore`, `delete`, contract/policy updates).
     - never emit per-keystroke modal typing events.
@@ -722,10 +726,10 @@ Goal: capture all edits with provenance and prepare incremental sync semantics f
     - `session_id` may be carried optionally for diagnostics.
     - correctness and delivery guarantees are branch-scoped and do not require session affinity.
 - Active-attention shape:
-    - one active attention record per work item (`state + note + audit metadata`).
-    - many items may be concurrently flagged; item-level history remains in `change_events`.
+    - multiple active attention records are allowed per node and per branch context.
+    - history remains auditable in `change_events` plus attention record lifecycle fields.
 - Default transition gate:
-    - `attention_state=unresolved` blocks `progress -> done` by default.
+    - unresolved blocker/approval-required attention blocks `progress -> done` by default.
     - explicit override remains policy-controlled and must be actor-attributed with reason.
 
 ### Phase 10.5: Authorization Model and Dangerous Mode Policy
@@ -799,7 +803,9 @@ Goal: define the path to expose this system as an MCP-capable planning backend.
 - `create_item` / `update_item`
 - `append_memory_node`
 - `set_attention_state`
-- `clear_attention_state`
+- `resolve_attention_item`
+- `list_attention_items`
+- `ack_attention_item`
 - `list_changes_since`
 - `ack_changes`.
 
@@ -819,20 +825,37 @@ Goal: define the path to expose this system as an MCP-capable planning backend.
     - `ack_changes` is the canonical cursor-advance mechanism.
     - `get_branch_context` must not advance cursor unless an explicit ack behavior is requested by contract.
 - Attention gating:
-    - unresolved attention blocks `progress -> done` by default.
+    - unresolved blocker/approval-required attention blocks `progress -> done` by default.
     - policy may allow explicit override with required actor-attributed reason.
 - Attention cardinality:
-    - one active attention record per work item.
-    - event history captures prior set/clear operations.
+    - many active attention records may exist per node.
+    - event history captures create/ack/resolve operations with actor attribution.
 - Branch-context delta scope:
     - include branch and descendants changes since cursor.
     - include project-level/config changes only when they affect branch execution context.
     - exclude unrelated project/global chatter from default payloads.
 - Agent attention defaults:
-    - agents can set `note|unresolved` by default.
-    - clearing `unresolved` requires user approval by default (configurable).
+    - agents can raise blocker/consensus/approval/risk attention records on scoped nodes.
+    - resolving blocker/approval-required attention requires user approval by default (configurable).
 - Session metadata:
     - optional diagnostics only; never correctness-critical.
+
+### Phase 11.5: Attention UX + Query Contract Prerequisites
+
+- TUI updates required for attention readiness:
+    - list-row warning indicator when node has open attention/blocker entries.
+    - always-visible compact attention panel that updates by currently rendered scope level.
+    - filter integration for attention signals via search flow, quick actions (`.`), and command palette (`:`).
+- DB/query requirements:
+    - paginated scope query for attention records:
+        - filters: `scope_type`, `scope_id`, `state`, `kind`, `requires_user_action`
+        - pagination: `limit`, `cursor` (or equivalent deterministic page token)
+        - sort: newest-first default with explicit alternate ordering support.
+    - gatekeeping:
+        - attention create/update/list operations must respect capability scope leases.
+- MCP/tooling contract requirement:
+    - all node-mutating tools must document that agents can raise attention/blocker records when blocked on consensus or approval.
+    - tool docs and generated agent templates must include "raise attention + ask user" behavior for unresolved consensus/approval paths.
 
 ### Phase 11 Acceptance
 
@@ -855,8 +878,8 @@ Goal: define the path to expose this system as an MCP-capable planning backend.
 - History policy:
     - append-only event envelope, optional retention for older detailed diffs.
 - Attention policy:
-    - one active attention record per item (`none|note|unresolved`), with set/clear audit metadata.
-    - unresolved attention blocks completion transitions by default.
+    - node-scoped `attention_items` records (project/branch/phase/task/subtask) with audit metadata.
+    - unresolved blocker/approval-required attention blocks completion transitions by default.
 - Lifecycle model:
     - fixed non-configurable lifecycle states: `todo`, `progress`, `done`, `archived`.
     - UI display label for `progress` is always `In Progress`.
@@ -1905,7 +1928,7 @@ Single-branch parallel execution is now bootstrapped. This section is the source
         - remaining UX concerns in `PRE_PHASE11_CLOSEOUT_DISCUSSION.md` are treated as backlog/roadmap context, not pre-Phase-11 blockers.
     - status:
         - pre-Phase-11 implementation scope remains closed.
-- [ ] 2026-02-22: Re-open pre-Phase-11 remediation from live user QA (orchestrator reset)
+- [x] 2026-02-22: Re-open pre-Phase-11 remediation from live user QA (orchestrator reset)
     - objective:
         - re-open previously closed pre-Phase-11 scope based on confirmed runtime UX regressions and workflow gaps.
         - execute fixes under single-orchestrator control; only spawn fresh subagents after lock reset and lane scoping.
@@ -1934,7 +1957,7 @@ Single-branch parallel execution is now bootstrapped. This section is the source
         - attempted fresh worker spawn for runtime hygiene lane (`L-RH1`) failed due environment agent-capacity limit (`max 6`).
         - fallback policy activated: orchestrator executes lane work directly until fresh capacity is available.
     - status:
-        - in progress (docs baseline updated; code remediation pending).
+        - complete (resolved by subsequent remediation checkpoints and CI verification in this file).
     - progress update (2026-02-22, orchestrator):
         - rewrote `TUI_MANUAL_TEST_WORKSHEET.md` with strict machine-readable anchors in every section:
             - `### USER NOTES Sx.y-Nz`
@@ -2340,7 +2363,7 @@ Single-branch parallel execution is now bootstrapped. This section is the source
             - 7-wave parallel execution breakdown with lane scopes, acceptance criteria, and subagent handoff requirements.
     - verification log:
         - `test_not_applicable`: docs/process-only checkpoint; no Go/runtime behavior changed in this step, so package tests were not run.
-- [ ] 2026-02-23: Pre-MCP implementation kickoff (subagent orchestration)
+- [x] 2026-02-23: Pre-MCP implementation kickoff (subagent orchestration)
     - objective:
         - implement locked pre-MCP consensus in code using parallel worker lanes:
             - first-run identity + global root-search bootstrap,
@@ -2375,7 +2398,7 @@ Single-branch parallel execution is now bootstrapped. This section is the source
             - lock scope: `internal/tui/*.go`, `internal/tui/testdata/*.golden`, `TUI_MANUAL_TEST_WORKSHEET.md`
             - starts after `W11-A`+`W11-B` integration because it depends on new runtime config + comments API.
     - status:
-        - in progress (pre-edit orchestration complete; next step is worker-lane execution and integration checkpoints).
+        - complete (worker execution and integration checkpoints captured in subsequent entries).
     - progress update (2026-02-23, orchestrator, lane handoff integration before W11-C):
         - `W11-B` handoff ingested:
             - comments domain + app + sqlite persistence landed (`internal/domain/comment.go`, `internal/app/service.go`, `internal/adapters/storage/sqlite/repo.go` + tests).
@@ -2566,3 +2589,196 @@ Single-branch parallel execution is now bootstrapped. This section is the source
         - `just ci` -> pass
     - status:
         - complete; requested final UI/key-routing behavior and gate verification finished.
+- [x] 2026-02-23: Pre-MCP consensus register creation + policy sync (docs-only)
+    - objective:
+        - create a single active pre-MCP consensus register containing locked decisions and open questions.
+        - add explicit AGENTS guidance that MCP design/planning must reconcile all roadmap and decision sources.
+    - files updated:
+        - `PRE_MCP_CONSENSUS.md`
+        - `AGENTS.md`
+    - command evidence:
+        - `sed -n '1,260p' AGENTS.md` -> pass
+        - `tail -n 140 PLAN.md` -> pass
+        - `apply_patch` updates for new consensus file + AGENTS policy note -> pass
+    - tests/checks:
+        - `test_not_applicable` (docs-only change; no runtime/code-path modifications)
+    - status:
+        - complete; consensus register now exists with explicit final MCP design-file handoff task.
+- [x] 2026-02-23: Pre-MCP consensus refinement from latest discussion (docs-only)
+    - objective:
+        - incorporate newly locked user decisions into `PRE_MCP_CONSENSUS.md` and reduce open questions to genuinely unresolved design items.
+    - files updated:
+        - `PRE_MCP_CONSENSUS.md`
+    - implementation notes:
+        - locked JSON-schema-backed kind validation contract and clarified runtime-enum enforcement model.
+        - moved fuzzy backend parity into build-now consensus.
+        - locked token lease lifecycle (heartbeat + renew/revive), equal-scope warning policy, and emergency revoke-all MVP intent.
+        - captured explicit kind-template purpose for auto-actions and AGENTS/CLAUDE autofill intent.
+        - added roadmap callouts for override-token hardening and default template-catalog expansion.
+    - command evidence:
+        - `rg -n \"branch|phase|hierarchy|template|token|override\" TUI_MANUAL_TEST_WORKSHEET.md PRE_MCP_CONSENSUS.md` -> pass
+        - `sed -n '430,820p' TUI_MANUAL_TEST_WORKSHEET.md` -> pass
+        - `apply_patch` update for `PRE_MCP_CONSENSUS.md` -> pass
+    - tests/checks:
+        - `test_not_applicable` (docs-only change; no runtime/code-path modifications)
+    - status:
+        - complete; consensus register updated with latest locked direction and narrowed open-question set.
+- [x] 2026-02-23: Pre-MCP consensus lock expansion + execution protocol update (docs-only)
+    - objective:
+        - lock final user-decided open items and add explicit pre-MCP execution protocol/closeout checklist.
+    - files updated:
+        - `PRE_MCP_CONSENSUS.md`
+    - implementation notes:
+        - locked thread payload default as recent-window + pagination for future MCP/HTTP contract direction.
+        - locked maintainable JSON-schema execution strategy and customizable metadata direction.
+        - reinforced pre-MCP scope guard: no transport implementation in this phase.
+        - added orchestrator-owned checkpoint protocol, parallel lane lock scopes, and test gate contract (`just test-pkg` lanes -> final `just ci`).
+        - added explicit closeout tasks for docs + worksheet refresh + user manual rerun.
+    - command evidence:
+        - `rg -n \"branch|phase|subtask|thread|template|token|override\" TUI_MANUAL_TEST_WORKSHEET.md PRE_MCP_CONSENSUS.md` -> pass
+        - `sed -n '430,820p' TUI_MANUAL_TEST_WORKSHEET.md` -> pass
+        - `apply_patch` update for `PRE_MCP_CONSENSUS.md` -> pass
+    - tests/checks:
+        - `test_not_applicable` (docs-only change; no runtime/code-path modifications)
+    - status:
+        - complete; consensus register now includes current-lock execution protocol and near-term closeout list.
+- [x] 2026-02-24: Parallel pre-MCP integration wave (fuzzy backend + README + worksheet refresh)
+    - objective:
+        - execute parallel lanes under lock scopes to implement backend fuzzy-search parity and refresh docs/worksheets for user retest.
+    - subagent lanes:
+        - `L-A-FUZZY-BACKEND` (worker `019c8d0a-c069-7dd0-9f2c-a3cf0a48cf9c`)
+            - files: `internal/app/service.go`, `internal/app/service_test.go`
+            - outcome: replaced substring-only query checks in `SearchTaskMatches` with fuzzy matching helper and added fuzzy query tests.
+            - worker package gate: `just test-pkg ./internal/app` -> pass
+        - `L-B-README-ALIGN` (worker `019c8d0a-c08e-7233-a87e-65de5b99d2d8`)
+            - file: `README.md`
+            - outcome: aligned README to pre-MCP scope and current dangerous-limitation wording for future override-token trust model.
+            - worker check: `test_not_applicable` (docs-only)
+        - `L-C-WORKSHEET-REFRESH` (worker `019c8d0a-c0a3-7063-a34b-e72ab6e0208b`)
+            - files: `TUI_MANUAL_TEST_WORKSHEET.md`, `TUI_MANUAL_TEST_WORKSHEET_DELTA_BOOTSTRAP_THREADS.md`
+            - outcome: refreshed anchors and added explicit carry-forward delta rerun requirements + fuzzy-parity checks.
+            - worker check: `test_not_applicable` (docs-only)
+    - orchestrator integration checks:
+        - `just test-pkg ./internal/app` -> pass
+        - `just ci` -> pass
+    - orchestrator register updates:
+        - `PRE_MCP_CONSENSUS.md` updated with lane checkpoint status and near-term closeout checklist completion markers.
+    - status:
+        - complete; ready for user manual validation pass using updated worksheets.
+- [x] 2026-02-24: Pre-MCP readiness implementation wave (kinds + capability leases + strict validation)
+    - objective:
+        - complete remaining non-roadmap, non-transport pre-MCP scope in code:
+            - dynamic kind catalog + project allowlist + runtime schema validation,
+            - project typed kind + project policy metadata persistence,
+            - strict capability-lease mutation gating scaffolding with overlap prevention,
+            - hierarchy/kind validation hard-fail path before persistence.
+    - Context7 evidence (required):
+        - pre-edit consult:
+            - `resolve-library-id` `go standard library testing` -> pass (`/websites/pkg_go_dev_go1_25_3`)
+            - `query-docs` `/websites/pkg_go_dev_go1_25_3` (testing patterns / error assertions) -> pass
+        - failure-triggered re-consults:
+            - `query-docs` `/websites/pkg_go_dev_go1_25_3` after `just test-pkg ./internal/app` compile failures -> pass
+            - `query-docs` `/websites/pkg_go_dev_go1_25_3` after fixture-setup failure in template-action test -> pass
+    - files updated:
+        - runtime/domain/app/storage/TUI implementation:
+            - `internal/domain/kind.go`
+            - `internal/domain/capability.go`
+            - `internal/domain/errors.go`
+            - `internal/domain/project.go`
+            - `internal/domain/task.go`
+            - `internal/domain/workitem.go`
+            - `internal/app/mutation_guard.go`
+            - `internal/app/schema_validator.go`
+            - `internal/app/kind_capability.go`
+            - `internal/app/ports.go`
+            - `internal/app/service.go`
+            - `internal/app/snapshot.go`
+            - `internal/adapters/storage/sqlite/repo.go`
+            - `internal/tui/model.go`
+        - tests:
+            - `internal/domain/kind_capability_test.go`
+            - `internal/app/service_test.go`
+            - `internal/adapters/storage/sqlite/repo_test.go`
+            - `internal/tui/model_test.go`
+            - `internal/app/schema_validator_test.go`
+            - `internal/app/mutation_guard_test.go`
+            - `internal/app/kind_capability_test.go`
+        - docs/manual verification artifacts:
+            - `README.md`
+            - `PRE_MCP_CONSENSUS.md`
+            - `TUI_MANUAL_TEST_WORKSHEET.md`
+            - `TUI_MANUAL_TEST_WORKSHEET_DELTA_BOOTSTRAP_THREADS.md`
+    - implementation notes:
+        - added DB-backed kind-catalog and project allowlist runtime enforcement.
+        - added runtime JSON-schema payload validator + schema cache for kind payload checks.
+        - added project `kind` and task `scope` persistence/migration support.
+        - added capability-lease lifecycle APIs and strict mutation-guard enforcement hooks.
+        - added template-driven checklist/child auto-create actions at task-create time.
+        - added root-boundary attachment enforcement in TUI (`resource path is outside allowed root`).
+        - aligned docs and manual worksheets to current implemented behavior and retest anchors.
+    - failure/remediation log:
+        - `just ci` -> fail
+            - failure: coverage gate rejected `internal/app` at `62.7%`.
+            - remediation: added targeted app tests (`schema_validator_test.go`, `mutation_guard_test.go`, `kind_capability_test.go`) covering new branches and helper paths.
+        - `just test-pkg ./internal/app` -> fail
+            - failure: compile errors in newly added tests due outdated field/role names.
+            - remediation: updated tests to current API (`CapabilityLeaseTTL`, `CapabilityRoleWorker`, `HeartbeatAt`, repo-based parent lookup).
+        - `just test-pkg ./internal/app` -> fail
+            - failure: template-action fixture setup created project before bootstrapped `project` kind.
+            - remediation: bootstrap kind catalog before custom-kind upsert and create explicit column fixture.
+    - verification log:
+        - `just fmt` -> pass
+        - `just test-pkg ./internal/app` -> pass
+        - `just ci` -> pass
+            - `internal/app` coverage now `77.8%` (above gate floor).
+    - status:
+        - complete; implementation + docs + gate checks done, ready for user manual worksheet pass.
+- [x] 2026-02-24: Pre-MCP closeout audit + MCP-plan attention model update + strict lease gating completion
+    - objective:
+        - add new MCP-plan direction for agent-raised blocker/consensus attention signaling.
+        - audit all plan artifacts for unresolved pre-MCP implementation items and close remaining code gap(s).
+        - finalize docs/tests, re-run full gate, and prepare commit-ready state.
+    - Context7 evidence (required):
+        - pre-edit consult:
+            - `resolve-library-id` `go standard library` -> pass (`/websites/pkg_go_dev_go1_25_3`)
+            - `resolve-library-id` `charmbracelet/bubbletea` -> pass (`/charmbracelet/bubbletea`)
+            - `query-docs` `/websites/pkg_go_dev_go1_25_3` (pagination/service-layer API patterns) -> pass
+            - `query-docs` `/charmbracelet/bubbletea` (Update/View key-handling patterns) -> pass
+        - failure-triggered re-consults:
+            - `query-docs` `/websites/pkg_go_dev_go1_25_3` after `just test-pkg ./internal/app` failure in comment mutation-guard tests -> pass
+    - files updated:
+        - `AGENTS.md`
+        - `PLAN.md`
+        - `PRE_MCP_CONSENSUS.md`
+        - `PRE_MCP_EXECUTION_WAVES.md`
+        - `README.md`
+        - `internal/app/kind_capability.go`
+        - `internal/app/service_test.go`
+        - `internal/app/kind_capability_test.go`
+    - implementation notes:
+        - locked AGENTS clarification protocol update:
+            - ask general goal-alignment questions first, then specific implementation questions after consensus.
+        - tightened mutation-guard enforcement in app service:
+            - non-user mutations are now strict lease-gated by default (no optional bypass via missing guard context).
+        - updated tests to match strict lease-gating behavior for agent writes.
+        - updated planning docs for MCP-phase attention/blocker signaling:
+            - node-scoped attention records,
+            - TUI warning/panel expectations,
+            - search/quick-action/command-palette integration requirements,
+            - paginated level-scoped list contract and capability-gated tool expectations.
+        - normalized plan checklist state:
+            - historical pre-MCP in-progress checkpoint markers were reconciled to completed where superseded by later integrated checkpoints.
+    - failure/remediation log:
+        - `just test-pkg ./internal/app` -> fail
+            - failure: `TestCreateAndListCommentsByTarget` blocked by strict lease-gating for non-user actor.
+            - remediation: test fixture updated to use user actor for that non-lease path and retain strict lease-gate coverage in dedicated guard tests.
+    - verification log:
+        - `just fmt` -> pass
+        - `just test-pkg ./internal/app` -> pass
+        - `just test-pkg ./internal/tui` -> pass
+        - `just test-pkg ./internal/adapters/storage/sqlite` -> pass
+        - `just test-pkg ./cmd/kan` -> pass
+        - `just test-pkg ./internal/config` -> pass
+        - `just ci` -> pass
+    - status:
+        - complete; pre-MCP implementation and planning artifacts are synchronized, tested, and commit-ready.

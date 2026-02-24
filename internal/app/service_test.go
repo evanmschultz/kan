@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -12,21 +13,27 @@ import (
 
 // fakeRepo represents fake repo data used by this package.
 type fakeRepo struct {
-	projects     map[string]domain.Project
-	columns      map[string]domain.Column
-	tasks        map[string]domain.Task
-	comments     map[string][]domain.Comment
-	changeEvents map[string][]domain.ChangeEvent
+	projects            map[string]domain.Project
+	columns             map[string]domain.Column
+	tasks               map[string]domain.Task
+	comments            map[string][]domain.Comment
+	changeEvents        map[string][]domain.ChangeEvent
+	kindDefs            map[domain.KindID]domain.KindDefinition
+	projectAllowedKinds map[string][]domain.KindID
+	capabilityLeases    map[string]domain.CapabilityLease
 }
 
 // newFakeRepo constructs fake repo.
 func newFakeRepo() *fakeRepo {
 	return &fakeRepo{
-		projects:     map[string]domain.Project{},
-		columns:      map[string]domain.Column{},
-		tasks:        map[string]domain.Task{},
-		comments:     map[string][]domain.Comment{},
-		changeEvents: map[string][]domain.ChangeEvent{},
+		projects:            map[string]domain.Project{},
+		columns:             map[string]domain.Column{},
+		tasks:               map[string]domain.Task{},
+		comments:            map[string][]domain.Comment{},
+		changeEvents:        map[string][]domain.ChangeEvent{},
+		kindDefs:            map[domain.KindID]domain.KindDefinition{},
+		projectAllowedKinds: map[string][]domain.KindID{},
+		capabilityLeases:    map[string]domain.CapabilityLease{},
 	}
 }
 
@@ -59,6 +66,53 @@ func (f *fakeRepo) ListProjects(_ context.Context, includeArchived bool) ([]doma
 			continue
 		}
 		out = append(out, p)
+	}
+	return out, nil
+}
+
+// SetProjectAllowedKinds updates one project's kind allowlist.
+func (f *fakeRepo) SetProjectAllowedKinds(_ context.Context, projectID string, kindIDs []domain.KindID) error {
+	f.projectAllowedKinds[projectID] = append([]domain.KindID(nil), kindIDs...)
+	return nil
+}
+
+// ListProjectAllowedKinds lists one project's kind allowlist.
+func (f *fakeRepo) ListProjectAllowedKinds(_ context.Context, projectID string) ([]domain.KindID, error) {
+	return append([]domain.KindID(nil), f.projectAllowedKinds[projectID]...), nil
+}
+
+// CreateKindDefinition creates one kind definition.
+func (f *fakeRepo) CreateKindDefinition(_ context.Context, kind domain.KindDefinition) error {
+	f.kindDefs[kind.ID] = kind
+	return nil
+}
+
+// UpdateKindDefinition updates one kind definition.
+func (f *fakeRepo) UpdateKindDefinition(_ context.Context, kind domain.KindDefinition) error {
+	if _, ok := f.kindDefs[kind.ID]; !ok {
+		return ErrNotFound
+	}
+	f.kindDefs[kind.ID] = kind
+	return nil
+}
+
+// GetKindDefinition returns one kind definition by ID.
+func (f *fakeRepo) GetKindDefinition(_ context.Context, kindID domain.KindID) (domain.KindDefinition, error) {
+	kind, ok := f.kindDefs[kindID]
+	if !ok {
+		return domain.KindDefinition{}, ErrNotFound
+	}
+	return kind, nil
+}
+
+// ListKindDefinitions lists kind definitions.
+func (f *fakeRepo) ListKindDefinitions(_ context.Context, includeArchived bool) ([]domain.KindDefinition, error) {
+	out := make([]domain.KindDefinition, 0, len(f.kindDefs))
+	for _, kind := range f.kindDefs {
+		if !includeArchived && kind.ArchivedAt != nil {
+			continue
+		}
+		out = append(out, kind)
 	}
 	return out, nil
 }
@@ -158,6 +212,66 @@ func (f *fakeRepo) ListProjectChangeEvents(_ context.Context, projectID string, 
 		return events, nil
 	}
 	return events[:limit], nil
+}
+
+// CreateCapabilityLease creates one capability lease row.
+func (f *fakeRepo) CreateCapabilityLease(_ context.Context, lease domain.CapabilityLease) error {
+	f.capabilityLeases[lease.InstanceID] = lease
+	return nil
+}
+
+// UpdateCapabilityLease updates one capability lease row.
+func (f *fakeRepo) UpdateCapabilityLease(_ context.Context, lease domain.CapabilityLease) error {
+	if _, ok := f.capabilityLeases[lease.InstanceID]; !ok {
+		return ErrNotFound
+	}
+	f.capabilityLeases[lease.InstanceID] = lease
+	return nil
+}
+
+// GetCapabilityLease returns one capability lease row.
+func (f *fakeRepo) GetCapabilityLease(_ context.Context, instanceID string) (domain.CapabilityLease, error) {
+	lease, ok := f.capabilityLeases[instanceID]
+	if !ok {
+		return domain.CapabilityLease{}, ErrNotFound
+	}
+	return lease, nil
+}
+
+// ListCapabilityLeasesByScope lists scope-matching capability leases.
+func (f *fakeRepo) ListCapabilityLeasesByScope(_ context.Context, projectID string, scopeType domain.CapabilityScopeType, scopeID string) ([]domain.CapabilityLease, error) {
+	out := make([]domain.CapabilityLease, 0)
+	for _, lease := range f.capabilityLeases {
+		if lease.ProjectID != projectID {
+			continue
+		}
+		if lease.ScopeType != scopeType {
+			continue
+		}
+		if strings.TrimSpace(scopeID) != "" && lease.ScopeID != strings.TrimSpace(scopeID) {
+			continue
+		}
+		out = append(out, lease)
+	}
+	return out, nil
+}
+
+// RevokeCapabilityLeasesByScope revokes all scope-matching leases.
+func (f *fakeRepo) RevokeCapabilityLeasesByScope(_ context.Context, projectID string, scopeType domain.CapabilityScopeType, scopeID string, revokedAt time.Time, reason string) error {
+	for instanceID, lease := range f.capabilityLeases {
+		if lease.ProjectID != projectID {
+			continue
+		}
+		if lease.ScopeType != scopeType {
+			continue
+		}
+		if strings.TrimSpace(scopeID) != "" && lease.ScopeID != strings.TrimSpace(scopeID) {
+			continue
+		}
+		lease.Revoke(reason, revokedAt)
+		f.capabilityLeases[instanceID] = lease
+	}
+	return nil
 }
 
 // TestEnsureDefaultProject verifies behavior for the covered scenario.
@@ -497,6 +611,89 @@ func TestSearchTaskMatchesAcrossProjectsAndStates(t *testing.T) {
 	}
 	if len(matches) != 1 || matches[0].Task.ID != "t3" || matches[0].StateID != "archived" {
 		t.Fatalf("unexpected archived matches %#v", matches)
+	}
+}
+
+// TestSearchTaskMatchesFuzzyQuery verifies behavior for the covered scenario.
+func TestSearchTaskMatchesFuzzyQuery(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	p1, _ := domain.NewProject("p1", "Inbox", "", now)
+	repo.projects[p1.ID] = p1
+
+	c1, _ := domain.NewColumn("c1", p1.ID, "To Do", 0, 0, now)
+	repo.columns[c1.ID] = c1
+
+	t1, _ := domain.NewTask(domain.TaskInput{
+		ID:          "t1",
+		ProjectID:   p1.ID,
+		ColumnID:    c1.ID,
+		Position:    0,
+		Title:       "Implement parser",
+		Description: "tokenization pipeline",
+		Priority:    domain.PriorityMedium,
+		Labels:      []string{"frontend", "parsing"},
+	}, now)
+	t2, _ := domain.NewTask(domain.TaskInput{
+		ID:          "t2",
+		ProjectID:   p1.ID,
+		ColumnID:    c1.ID,
+		Position:    1,
+		Title:       "Write docs",
+		Description: "onboarding guide",
+		Priority:    domain.PriorityLow,
+		Labels:      []string{"docs"},
+	}, now)
+	repo.tasks[t1.ID] = t1
+	repo.tasks[t2.ID] = t2
+
+	svc := NewService(repo, nil, func() time.Time { return now }, ServiceConfig{})
+
+	tests := []struct {
+		name    string
+		query   string
+		wantIDs []string
+	}{
+		{
+			name:    "title subsequence",
+			query:   "imppsr",
+			wantIDs: []string{"t1"},
+		},
+		{
+			name:    "description subsequence",
+			query:   "tkpln",
+			wantIDs: []string{"t1"},
+		},
+		{
+			name:    "label subsequence",
+			query:   "frnd",
+			wantIDs: []string{"t1"},
+		},
+		{
+			name:    "preserves rune order",
+			query:   "psrmpi",
+			wantIDs: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			matches, err := svc.SearchTaskMatches(context.Background(), SearchTasksFilter{
+				ProjectID: p1.ID,
+				Query:     tt.query,
+			})
+			if err != nil {
+				t.Fatalf("SearchTaskMatches() error = %v", err)
+			}
+			if len(matches) != len(tt.wantIDs) {
+				t.Fatalf("expected %d results, got %d for query %q", len(tt.wantIDs), len(matches), tt.query)
+			}
+			for i := range tt.wantIDs {
+				if matches[i].Task.ID != tt.wantIDs[i] {
+					t.Fatalf("unexpected result order for query %q: got %q want %q", tt.query, matches[i].Task.ID, tt.wantIDs[i])
+				}
+			}
+		})
 	}
 }
 
@@ -913,8 +1110,8 @@ func TestCreateAndListCommentsByTarget(t *testing.T) {
 		TargetType:   domain.CommentTargetTypeTask,
 		TargetID:     "t1",
 		BodyMarkdown: "first",
-		ActorType:    domain.ActorType("AGENT"),
-		AuthorName:   "agent-1",
+		ActorType:    domain.ActorType("USER"),
+		AuthorName:   "user-1",
 	}); err != nil {
 		t.Fatalf("CreateComment(first) error = %v", err)
 	}
@@ -982,5 +1179,259 @@ func TestCreateCommentValidation(t *testing.T) {
 	})
 	if err != domain.ErrInvalidTargetType {
 		t.Fatalf("expected ErrInvalidTargetType, got %v", err)
+	}
+}
+
+// TestIssueCapabilityLeaseOverlapPolicy verifies orchestrator overlap behavior and override token handling.
+func TestIssueCapabilityLeaseOverlapPolicy(t *testing.T) {
+	repo := newFakeRepo()
+	ids := []string{"p1", "lease-a", "lease-token-a", "lease-b", "lease-token-b", "lease-c", "lease-token-c", "lease-d", "lease-token-d"}
+	idx := 0
+	svc := NewService(repo, func() string {
+		id := ids[idx]
+		idx++
+		return id
+	}, func() time.Time {
+		return time.Date(2026, 2, 24, 10, 0, 0, 0, time.UTC)
+	}, ServiceConfig{DefaultDeleteMode: DeleteModeArchive})
+
+	project, err := svc.CreateProjectWithMetadata(context.Background(), CreateProjectInput{
+		Name:        "Lease Policy",
+		Description: "",
+		Metadata: domain.ProjectMetadata{
+			CapabilityPolicy: domain.ProjectCapabilityPolicy{
+				AllowOrchestratorOverride: true,
+				OrchestratorOverrideToken: "override-123",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateProjectWithMetadata() error = %v", err)
+	}
+
+	if _, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+		ProjectID:       project.ID,
+		ScopeType:       domain.CapabilityScopeProject,
+		Role:            domain.CapabilityRoleOrchestrator,
+		AgentName:       "orch-a",
+		AgentInstanceID: "orch-a",
+	}); err != nil {
+		t.Fatalf("IssueCapabilityLease(first) error = %v", err)
+	}
+
+	if _, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+		ProjectID:       project.ID,
+		ScopeType:       domain.CapabilityScopeProject,
+		Role:            domain.CapabilityRoleOrchestrator,
+		AgentName:       "orch-b",
+		AgentInstanceID: "orch-b",
+	}); err != domain.ErrOverrideTokenRequired {
+		t.Fatalf("expected ErrOverrideTokenRequired, got %v", err)
+	}
+
+	if _, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+		ProjectID:       project.ID,
+		ScopeType:       domain.CapabilityScopeProject,
+		Role:            domain.CapabilityRoleOrchestrator,
+		AgentName:       "orch-c",
+		AgentInstanceID: "orch-c",
+		OverrideToken:   "wrong",
+	}); err != domain.ErrOverrideTokenInvalid {
+		t.Fatalf("expected ErrOverrideTokenInvalid, got %v", err)
+	}
+
+	if _, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+		ProjectID:       project.ID,
+		ScopeType:       domain.CapabilityScopeProject,
+		Role:            domain.CapabilityRoleOrchestrator,
+		AgentName:       "orch-d",
+		AgentInstanceID: "orch-d",
+		OverrideToken:   "override-123",
+	}); err != nil {
+		t.Fatalf("IssueCapabilityLease(override) error = %v", err)
+	}
+}
+
+// TestCreateTaskMutationGuardRequiredForAgent verifies strict guard enforcement for non-user actor writes.
+func TestCreateTaskMutationGuardRequiredForAgent(t *testing.T) {
+	repo := newFakeRepo()
+	ids := []string{"p1", "c1", "t1", "lease-1", "lease-token-1", "t2"}
+	idx := 0
+	svc := NewService(repo, func() string {
+		id := ids[idx]
+		idx++
+		return id
+	}, func() time.Time {
+		return time.Date(2026, 2, 24, 10, 0, 0, 0, time.UTC)
+	}, ServiceConfig{DefaultDeleteMode: DeleteModeArchive})
+
+	project, err := svc.CreateProject(context.Background(), "Guard Project", "")
+	if err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	column, err := svc.CreateColumn(context.Background(), project.ID, "To Do", 0, 0)
+	if err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+
+	_, err = svc.CreateTask(context.Background(), CreateTaskInput{
+		ProjectID:      project.ID,
+		ColumnID:       column.ID,
+		Title:          "agent task",
+		Priority:       domain.PriorityMedium,
+		CreatedByActor: "agent-1",
+		UpdatedByActor: "agent-1",
+		UpdatedByType:  domain.ActorTypeAgent,
+	})
+	if err != domain.ErrMutationLeaseRequired {
+		t.Fatalf("expected ErrMutationLeaseRequired, got %v", err)
+	}
+
+	lease, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+		ProjectID:       project.ID,
+		ScopeType:       domain.CapabilityScopeProject,
+		Role:            domain.CapabilityRoleWorker,
+		AgentName:       "agent-1",
+		AgentInstanceID: "agent-1",
+	})
+	if err != nil {
+		t.Fatalf("IssueCapabilityLease() error = %v", err)
+	}
+
+	guardedCtx := WithMutationGuard(context.Background(), MutationGuard{
+		AgentName:       "agent-1",
+		AgentInstanceID: lease.InstanceID,
+		LeaseToken:      lease.LeaseToken,
+	})
+	created, err := svc.CreateTask(guardedCtx, CreateTaskInput{
+		ProjectID:      project.ID,
+		ColumnID:       column.ID,
+		Title:          "guarded agent task",
+		Priority:       domain.PriorityMedium,
+		CreatedByActor: "agent-1",
+		UpdatedByActor: "agent-1",
+		UpdatedByType:  domain.ActorTypeAgent,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask(guarded) error = %v", err)
+	}
+	if strings.TrimSpace(created.ID) == "" {
+		t.Fatal("expected created task id to be populated")
+	}
+	if created.UpdatedByType != domain.ActorTypeAgent {
+		t.Fatalf("expected agent attribution on guarded task, got %q", created.UpdatedByType)
+	}
+}
+
+// TestCreateTaskKindPayloadValidation verifies schema-based runtime validation for dynamic kinds.
+func TestCreateTaskKindPayloadValidation(t *testing.T) {
+	repo := newFakeRepo()
+	ids := []string{"p1", "c1", "t1", "t2"}
+	idx := 0
+	svc := NewService(repo, func() string {
+		id := ids[idx]
+		idx++
+		return id
+	}, func() time.Time {
+		return time.Date(2026, 2, 24, 10, 0, 0, 0, time.UTC)
+	}, ServiceConfig{DefaultDeleteMode: DeleteModeArchive})
+
+	project, err := svc.CreateProject(context.Background(), "Kinds", "")
+	if err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	column, err := svc.CreateColumn(context.Background(), project.ID, "To Do", 0, 0)
+	if err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+
+	_, err = svc.UpsertKindDefinition(context.Background(), CreateKindDefinitionInput{
+		ID:                "refactor",
+		DisplayName:       "Refactor",
+		AppliesTo:         []domain.KindAppliesTo{domain.KindAppliesToTask},
+		PayloadSchemaJSON: `{"type":"object","required":["package"],"properties":{"package":{"type":"string"}},"additionalProperties":false}`,
+	})
+	if err != nil {
+		t.Fatalf("UpsertKindDefinition() error = %v", err)
+	}
+	if err := svc.SetProjectAllowedKinds(context.Background(), SetProjectAllowedKindsInput{
+		ProjectID: project.ID,
+		KindIDs:   []domain.KindID{"refactor", domain.DefaultProjectKind, domain.KindID(domain.WorkKindTask), domain.KindID(domain.WorkKindSubtask)},
+	}); err != nil {
+		t.Fatalf("SetProjectAllowedKinds() error = %v", err)
+	}
+
+	_, err = svc.CreateTask(context.Background(), CreateTaskInput{
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Kind:      domain.WorkKind("refactor"),
+		Title:     "invalid payload",
+		Priority:  domain.PriorityMedium,
+		Metadata:  domain.TaskMetadata{KindPayload: json.RawMessage(`{"missing":"value"}`)},
+	})
+	if !errors.Is(err, domain.ErrInvalidKindPayload) {
+		t.Fatalf("expected ErrInvalidKindPayload, got %v", err)
+	}
+
+	created, err := svc.CreateTask(context.Background(), CreateTaskInput{
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Kind:      domain.WorkKind("refactor"),
+		Title:     "valid payload",
+		Priority:  domain.PriorityMedium,
+		Metadata:  domain.TaskMetadata{KindPayload: json.RawMessage(`{"package":"internal/app"}`)},
+	})
+	if err != nil {
+		t.Fatalf("CreateTask(valid payload) error = %v", err)
+	}
+	if created.Kind != domain.WorkKind("refactor") {
+		t.Fatalf("expected refactor kind, got %q", created.Kind)
+	}
+}
+
+// TestReparentTaskRejectsCycle verifies cycle prevention during reparenting.
+func TestReparentTaskRejectsCycle(t *testing.T) {
+	repo := newFakeRepo()
+	ids := []string{"p1", "c1", "t-parent", "t-child"}
+	idx := 0
+	svc := NewService(repo, func() string {
+		id := ids[idx]
+		idx++
+		return id
+	}, func() time.Time {
+		return time.Date(2026, 2, 24, 10, 0, 0, 0, time.UTC)
+	}, ServiceConfig{DefaultDeleteMode: DeleteModeArchive})
+
+	project, err := svc.CreateProject(context.Background(), "Hierarchy", "")
+	if err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	column, err := svc.CreateColumn(context.Background(), project.ID, "To Do", 0, 0)
+	if err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+	parent, err := svc.CreateTask(context.Background(), CreateTaskInput{
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Title:     "parent",
+		Priority:  domain.PriorityMedium,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask(parent) error = %v", err)
+	}
+	child, err := svc.CreateTask(context.Background(), CreateTaskInput{
+		ProjectID: project.ID,
+		ParentID:  parent.ID,
+		Kind:      domain.WorkKindSubtask,
+		ColumnID:  column.ID,
+		Title:     "child",
+		Priority:  domain.PriorityMedium,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask(child) error = %v", err)
+	}
+
+	if _, err := svc.ReparentTask(context.Background(), parent.ID, child.ID); err != domain.ErrInvalidParentID {
+		t.Fatalf("expected ErrInvalidParentID, got %v", err)
 	}
 }

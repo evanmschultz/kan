@@ -1,6 +1,8 @@
 package domain
 
 import (
+	"bytes"
+	"encoding/json"
 	"strings"
 	"time"
 )
@@ -11,19 +13,30 @@ type Project struct {
 	Slug        string
 	Name        string
 	Description string
+	Kind        KindID
 	Metadata    ProjectMetadata
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 	ArchivedAt  *time.Time
 }
 
+// ProjectCapabilityPolicy stores project-level capability and override policy values.
+type ProjectCapabilityPolicy struct {
+	AllowOrchestratorOverride bool
+	OrchestratorOverrideToken string
+	AllowEqualScopeDelegation bool
+}
+
 // ProjectMetadata represents project metadata data used by this package.
 type ProjectMetadata struct {
-	Owner    string
-	Icon     string
-	Color    string
-	Homepage string
-	Tags     []string
+	Owner             string
+	Icon              string
+	Color             string
+	Homepage          string
+	Tags              []string
+	StandardsMarkdown string
+	KindPayload       json.RawMessage
+	CapabilityPolicy  ProjectCapabilityPolicy
 }
 
 // NewProject constructs a new value for this package.
@@ -44,6 +57,7 @@ func NewProject(id, name, description string, now time.Time) (Project, error) {
 		Slug:        slug,
 		Name:        name,
 		Description: strings.TrimSpace(description),
+		Kind:        DefaultProjectKind,
 		Metadata:    ProjectMetadata{},
 		CreatedAt:   now.UTC(),
 		UpdatedAt:   now.UTC(),
@@ -62,6 +76,17 @@ func (p *Project) Rename(name string, now time.Time) error {
 	return nil
 }
 
+// SetKind sets the project kind identifier.
+func (p *Project) SetKind(kind KindID, now time.Time) error {
+	kind = NormalizeKindID(kind)
+	if kind == "" {
+		return ErrInvalidKindID
+	}
+	p.Kind = kind
+	p.UpdatedAt = now.UTC()
+	return nil
+}
+
 // UpdateDetails updates state for the requested operation.
 func (p *Project) UpdateDetails(name, description string, metadata ProjectMetadata, now time.Time) error {
 	name = strings.TrimSpace(name)
@@ -71,7 +96,11 @@ func (p *Project) UpdateDetails(name, description string, metadata ProjectMetada
 	p.Name = name
 	p.Slug = normalizeSlug(name)
 	p.Description = strings.TrimSpace(description)
-	p.Metadata = normalizeProjectMetadata(metadata)
+	normalized, err := normalizeProjectMetadata(metadata)
+	if err != nil {
+		return err
+	}
+	p.Metadata = normalized
 	p.UpdatedAt = now.UTC()
 	return nil
 }
@@ -118,11 +147,17 @@ func normalizeSlug(s string) string {
 }
 
 // normalizeProjectMetadata normalizes project metadata.
-func normalizeProjectMetadata(meta ProjectMetadata) ProjectMetadata {
+func normalizeProjectMetadata(meta ProjectMetadata) (ProjectMetadata, error) {
 	meta.Owner = strings.TrimSpace(meta.Owner)
 	meta.Icon = strings.TrimSpace(meta.Icon)
 	meta.Color = strings.TrimSpace(meta.Color)
 	meta.Homepage = strings.TrimSpace(meta.Homepage)
 	meta.Tags = normalizeLabels(meta.Tags)
-	return meta
+	meta.StandardsMarkdown = strings.TrimSpace(meta.StandardsMarkdown)
+	meta.KindPayload = bytes.TrimSpace(meta.KindPayload)
+	if len(meta.KindPayload) > 0 && !json.Valid(meta.KindPayload) {
+		return ProjectMetadata{}, ErrInvalidKindPayload
+	}
+	meta.CapabilityPolicy.OrchestratorOverrideToken = strings.TrimSpace(meta.CapabilityPolicy.OrchestratorOverrideToken)
+	return meta, nil
 }

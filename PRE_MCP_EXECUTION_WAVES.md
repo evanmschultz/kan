@@ -324,6 +324,28 @@ Then:
 - external service synchronization logic.
 - non-local backend migrations beyond current pre-MCP scope.
 
+## 9) MCP-Phase Addendum: Node Attention/Blocker Signaling
+
+This addendum is design direction for later MCP/HTTP implementation; it is not a transport build task in this wave.
+
+- Required data-model direction:
+  - add DB-backed node-scoped attention/blocker records (project/branch/phase/task/subtask).
+  - include consensus/approval/blocker intent, actor attribution, lifecycle state, and markdown rationale.
+- Required TUI direction:
+  - warning marker in list rows for open attention items.
+  - always-visible compact panel for current-level unresolved items needing user action.
+  - filter hooks through search, quick actions (`.`), and command palette (`:`).
+- Required MCP/tool direction:
+  - each node-mutation tool must document and support escalation through attention/blocker records.
+  - add paginated list/read/update attention tool calls with capability-lease scope checks.
+- Required template direction:
+  - `AGENTS.md`/`CLAUDE.md` templates must explicitly instruct orchestrators to raise attention records when blocked on consensus/approval.
+
+Open design items to settle in MCP planning:
+- table vs JSON-field storage strategy for attention records.
+- final state/kind enum taxonomy and override semantics.
+- default pagination window and cursor contract for attention listing.
+
 ## 7) Current Execution Note (2026-02-23)
 
 Implementation has started with subagent lanes and produced integrated changes for:
