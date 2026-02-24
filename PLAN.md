@@ -854,7 +854,8 @@ Goal: define the path to expose this system as an MCP-capable planning backend.
     - gatekeeping:
         - attention create/update/list operations must respect capability scope leases.
 - MCP/tooling contract requirement:
-    - all node-mutating tools must document that agents can raise attention/blocker records when blocked on consensus or approval.
+    - all MCP tool definitions (read and write) must include a standard note that agents can escalate via node attention/blocker records when blocked on consensus/approval.
+    - node-mutating tools must document the expected escalation path and required node identifiers for attention creation/update calls.
     - tool docs and generated agent templates must include "raise attention + ask user" behavior for unresolved consensus/approval paths.
 
 ### Phase 11 Acceptance

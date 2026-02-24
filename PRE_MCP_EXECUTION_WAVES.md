@@ -336,6 +336,7 @@ This addendum is design direction for later MCP/HTTP implementation; it is not a
   - always-visible compact panel for current-level unresolved items needing user action.
   - filter hooks through search, quick actions (`.`), and command palette (`:`).
 - Required MCP/tool direction:
+  - all MCP tool definitions (read/write) must include a standard escalation note for attention/blocker usage when consensus/approval is required.
   - each node-mutation tool must document and support escalation through attention/blocker records.
   - add paginated list/read/update attention tool calls with capability-lease scope checks.
 - Required template direction:

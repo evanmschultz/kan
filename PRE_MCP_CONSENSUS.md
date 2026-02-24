@@ -231,6 +231,8 @@ This file is meant to replace ambiguity and reduce context loss between discussi
   - create/update/resolve attention calls per node,
   - list APIs with level filters + pagination/expansion controls,
   - actor attribution and audit metadata.
+- All MCP tool definitions should include explicit escalation guidance:
+  - when blocked on consensus/approval, raise node-scoped attention/blocker records using the attention tool surface.
 - Template guidance direction:
   - `AGENTS.md` / `CLAUDE.md` templates should instruct orchestrators/subagents to raise attention signals when consensus/approval is required before proceeding.
 
