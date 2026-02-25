@@ -505,7 +505,11 @@ func (s *Service) UpdateTask(ctx context.Context, in UpdateTaskInput) (domain.Ta
 	if err := s.enforceMutationGuard(ctx, task.ProjectID, actorType, domain.CapabilityScopeProject, task.ProjectID); err != nil {
 		return domain.Task{}, err
 	}
-	if err := task.UpdateDetails(in.Title, in.Description, in.Priority, in.DueAt, in.Labels, s.clock()); err != nil {
+	priority := in.Priority
+	if strings.TrimSpace(string(priority)) == "" {
+		priority = task.Priority
+	}
+	if err := task.UpdateDetails(in.Title, in.Description, priority, in.DueAt, in.Labels, s.clock()); err != nil {
 		return domain.Task{}, err
 	}
 	if in.Metadata != nil {
@@ -607,6 +611,9 @@ func (s *Service) CreateComment(ctx context.Context, in CreateCommentInput) (dom
 	if body == "" {
 		return domain.Comment{}, domain.ErrInvalidBodyMarkdown
 	}
+	if err := s.ensureCommentTargetExists(ctx, target); err != nil {
+		return domain.Comment{}, err
+	}
 
 	comment, err := domain.NewComment(domain.CommentInput{
 		ID:           s.idGen(),
@@ -624,6 +631,27 @@ func (s *Service) CreateComment(ctx context.Context, in CreateCommentInput) (dom
 		return domain.Comment{}, err
 	}
 	return comment, nil
+}
+
+// ensureCommentTargetExists validates one comment target reference before mutation.
+func (s *Service) ensureCommentTargetExists(ctx context.Context, target domain.CommentTarget) error {
+	if _, err := s.repo.GetProject(ctx, target.ProjectID); err != nil {
+		return err
+	}
+	if target.TargetType == domain.CommentTargetTypeProject {
+		if target.TargetID != target.ProjectID {
+			return ErrNotFound
+		}
+		return nil
+	}
+	task, err := s.repo.GetTask(ctx, target.TargetID)
+	if err != nil {
+		return err
+	}
+	if task.ProjectID != target.ProjectID {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // ListCommentsByTarget lists comments for a specific target in deterministic order.

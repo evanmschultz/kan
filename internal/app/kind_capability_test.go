@@ -214,6 +214,13 @@ func TestServiceCapabilityLeaseLifecycleAndRevokeAll(t *testing.T) {
 	}
 	if err := svc.RevokeAllCapabilityLeases(context.Background(), RevokeAllCapabilityLeasesInput{
 		ProjectID: project.ID,
+		ScopeType: domain.CapabilityScopeTask,
+		ScopeID:   "missing-task",
+	}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("RevokeAllCapabilityLeases(unknown task scope) error = %v, want ErrNotFound", err)
+	}
+	if err := svc.RevokeAllCapabilityLeases(context.Background(), RevokeAllCapabilityLeasesInput{
+		ProjectID: project.ID,
 		ScopeType: domain.CapabilityScopeProject,
 		ScopeID:   project.ID,
 	}); err != nil {

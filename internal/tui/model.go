@@ -7077,6 +7077,25 @@ func (m Model) taskByID(taskID string) (domain.Task, bool) {
 	return domain.Task{}, false
 }
 
+// directChildCount returns the number of direct children for one task id.
+func (m Model) directChildCount(taskID string) int {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return 0
+	}
+	count := 0
+	for _, task := range m.tasks {
+		if strings.TrimSpace(task.ParentID) != taskID {
+			continue
+		}
+		if !m.showArchived && task.ArchivedAt != nil {
+			continue
+		}
+		count++
+	}
+	return count
+}
+
 // renderProjectTabs renders output for the current model state.
 func (m Model) renderProjectTabs(accent, dim color.Color) string {
 	if len(m.projects) <= 1 {
@@ -7153,14 +7172,34 @@ func (m Model) renderOverviewPanel(project domain.Project, accent, muted, dim co
 
 // renderInfoLine renders output for the current model state.
 func (m Model) renderInfoLine(project domain.Project, muted color.Color) string {
-	task, ok := m.selectedTaskInCurrentColumn()
-	selected := "none"
-	if ok {
-		selected = truncate(task.Title, 36)
+	parts := []string{
+		fmt.Sprintf("project: %s", project.Name),
+		fmt.Sprintf("tasks: %d", len(m.tasks)),
 	}
-	return lipgloss.NewStyle().Foreground(muted).Render(
-		fmt.Sprintf("project: %s • tasks: %d • selected: %s", project.Name, len(m.tasks), selected),
-	)
+	task, ok := m.selectedTaskInCurrentColumn()
+	if !ok {
+		parts = append(parts, "selected: none")
+		return lipgloss.NewStyle().Foreground(muted).Render(strings.Join(parts, " • "))
+	}
+	parts = append(parts, fmt.Sprintf("selected: %s", truncate(task.Title, 36)))
+	levelByTaskID := m.searchLevelByTaskID([]domain.Task{task})
+	level := strings.TrimSpace(levelByTaskID[task.ID])
+	if level == "" {
+		level = baseSearchLevelForTask(task)
+	}
+	if label := strings.ToLower(strings.TrimSpace(canonicalSearchLevelLabels[level])); label != "" {
+		parts = append(parts, "level: "+label)
+	}
+	if children := m.directChildCount(task.ID); children > 0 {
+		parts = append(parts, fmt.Sprintf("children: %d", children))
+		if strings.TrimSpace(m.projectionRootTaskID) == "" {
+			parts = append(parts, fmt.Sprintf("%s focus subtree", m.keys.focusSubtree.Help().Key))
+		}
+	}
+	if strings.TrimSpace(m.projectionRootTaskID) != "" {
+		parts = append(parts, fmt.Sprintf("%s full board", m.keys.clearFocus.Help().Key))
+	}
+	return lipgloss.NewStyle().Foreground(muted).Render(strings.Join(parts, " • "))
 }
 
 // renderHelpOverlay renders output for the current model state.

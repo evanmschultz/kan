@@ -33,6 +33,7 @@ Implemented now:
 - Use `kan` as the canonical local planning/verification source while collaborating with an agent in terminal/chat.
 - Keep manual QA notes in `TUI_MANUAL_TEST_WORKSHEET.md` with sectioned anchors for precise replay.
 - Local-only TUI + SQLite workflows (including startup bootstrap, project picker, threads/comments, and import/export snapshots).
+- Board info line includes hierarchy-aware focus guidance (`f` focus subtree, `F` return full board) with selected level and child counts for branch/phase/subphase navigation.
 - Kind-catalog bootstrap + project `allowed_kinds` enforcement is active for project/task write paths.
 - Project-level `kind` and task-level `scope` persistence are active (`project|branch|phase|subphase|task|subtask` semantics enforced by kind rules).
 - Kind template system actions can auto-append checklist items and auto-create child work items during task creation.
@@ -53,6 +54,11 @@ Wave-locked MCP/HTTP direction (implemented and in active dogfooding closeout):
   - capability leases: `kan.issue_capability_lease`, `kan.heartbeat_capability_lease`, `kan.renew_capability_lease`, `kan.revoke_capability_lease`, `kan.revoke_all_capability_leases`
   - comments: `kan.create_comment`, `kan.list_comments_by_target`
   - empty-instance `capture_state` now returns deterministic `bootstrap_required` signaling, and agents can call `kan.get_bootstrap_guide` for next steps.
+  - parity/guardrail notes:
+    - `capture_state.state_hash` is stable across MCP/HTTP calls for unchanged underlying state (timestamp jitter excluded from hash input);
+    - `kan.revoke_all_capability_leases` fails closed on invalid/unknown scope tuples;
+    - `kan.create_comment` fails closed when the target does not exist in the referenced project;
+    - `kan.update_task` title-only updates preserve existing priority when `priority` is omitted.
 
 Roadmap-only in the active wave (explicitly deferred):
 - advanced import/export transport closure concerns (branch/commit-aware divergence reconciliation and conflict tooling),

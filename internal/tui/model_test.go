@@ -4157,6 +4157,59 @@ func TestModelFocusSubtreeRendersBoardForHierarchyLevels(t *testing.T) {
 	assertVisible(m, []string{subphase.ID, leafTask.ID})
 }
 
+// TestModelViewShowsSubtreeDiscoverabilityHint verifies hierarchy focus guidance in the board info line.
+func TestModelViewShowsSubtreeDiscoverabilityHint(t *testing.T) {
+	now := time.Date(2026, 2, 24, 11, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Roadmap", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	branch, _ := domain.NewTask(domain.TaskInput{
+		ID:        "b1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Branch",
+		Priority:  domain.PriorityMedium,
+		Kind:      domain.WorkKind("branch"),
+		Scope:     domain.KindAppliesToBranch,
+	}, now)
+	phase, _ := domain.NewTask(domain.TaskInput{
+		ID:        "p2",
+		ProjectID: p.ID,
+		ParentID:  branch.ID,
+		ColumnID:  c.ID,
+		Position:  1,
+		Title:     "Phase",
+		Priority:  domain.PriorityMedium,
+		Kind:      domain.WorkKindPhase,
+		Scope:     domain.KindAppliesToPhase,
+	}, now)
+
+	m := loadReadyModel(t, NewModel(newFakeService(
+		[]domain.Project{p},
+		[]domain.Column{c},
+		[]domain.Task{branch, phase},
+	)))
+	view := stripANSI(fmt.Sprint(m.View().Content))
+	if !strings.Contains(view, "level: branch") {
+		t.Fatalf("expected selected hierarchy level in info line, got\n%s", view)
+	}
+	if !strings.Contains(view, "children: 1") {
+		t.Fatalf("expected direct child count in info line, got\n%s", view)
+	}
+	if !strings.Contains(view, "f focus subtree") {
+		t.Fatalf("expected focus subtree hint in info line, got\n%s", view)
+	}
+
+	m = applyMsg(t, m, keyRune('f'))
+	focused := stripANSI(fmt.Sprint(m.View().Content))
+	if !strings.Contains(focused, "F full board") {
+		t.Fatalf("expected full-board hint while focused, got\n%s", focused)
+	}
+	if !strings.Contains(focused, "path: Roadmap -> Branch") {
+		t.Fatalf("expected focused path line while subtree focus is active, got\n%s", focused)
+	}
+}
+
 // TestModelViewShowsAttentionMarkersAndSummary verifies unresolved-attention markers and compact scope totals in board view.
 func TestModelViewShowsAttentionMarkersAndSummary(t *testing.T) {
 	now := time.Date(2026, 2, 24, 10, 0, 0, 0, time.UTC)

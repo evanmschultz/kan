@@ -413,7 +413,31 @@ func mapDomainAttentionItem(item domain.AttentionItem) AttentionItem {
 
 // computeCaptureSummaryHash computes a deterministic hash from app capture summary data.
 func computeCaptureSummaryHash(summary app.CaptureStateSummary) (string, error) {
-	encoded, err := json.Marshal(summary)
+	attentionOverview := summary.AttentionOverview
+	attentionOverview.Items = append([]app.CaptureStateAttentionItem(nil), attentionOverview.Items...)
+	slices.SortFunc(attentionOverview.Items, func(a, b app.CaptureStateAttentionItem) int {
+		if !a.CreatedAt.Equal(b.CreatedAt) {
+			if a.CreatedAt.Before(b.CreatedAt) {
+				return -1
+			}
+			return 1
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+	payload := struct {
+		Level             domain.LevelTuple                 `json:"level"`
+		GoalOverview      string                            `json:"goal_overview"`
+		AttentionOverview app.CaptureStateAttentionOverview `json:"attention_overview"`
+		WorkOverview      app.CaptureStateWorkOverview      `json:"work_overview"`
+		FollowUpPointers  app.CaptureStateFollowUpPointers  `json:"follow_up_pointers"`
+	}{
+		Level:             summary.Level,
+		GoalOverview:      summary.GoalOverview,
+		AttentionOverview: attentionOverview,
+		WorkOverview:      summary.WorkOverview,
+		FollowUpPointers:  summary.FollowUpPointers,
+	}
+	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return "", fmt.Errorf("marshal capture summary: %w", err)
 	}

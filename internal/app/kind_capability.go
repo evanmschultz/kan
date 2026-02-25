@@ -333,12 +333,63 @@ func (s *Service) RevokeAllCapabilityLeases(ctx context.Context, in RevokeAllCap
 	if !domain.IsValidCapabilityScopeType(scopeType) {
 		return domain.ErrInvalidCapabilityScope
 	}
-	scopeID := strings.TrimSpace(in.ScopeID)
+	scopeID, err := s.validateCapabilityScopeTuple(ctx, projectID, scopeType, strings.TrimSpace(in.ScopeID))
+	if err != nil {
+		return err
+	}
 	reason := strings.TrimSpace(in.Reason)
 	if reason == "" {
 		reason = "project scope revoke-all"
 	}
 	return s.repo.RevokeCapabilityLeasesByScope(ctx, projectID, scopeType, scopeID, s.clock().UTC(), reason)
+}
+
+// validateCapabilityScopeTuple validates one project/scope tuple and returns a normalized scope id.
+func (s *Service) validateCapabilityScopeTuple(ctx context.Context, projectID string, scopeType domain.CapabilityScopeType, scopeID string) (string, error) {
+	switch scopeType {
+	case domain.CapabilityScopeProject:
+		if scopeID == "" {
+			scopeID = projectID
+		}
+		if scopeID != projectID {
+			return "", domain.ErrInvalidCapabilityScope
+		}
+		if _, err := s.repo.GetProject(ctx, projectID); err != nil {
+			return "", err
+		}
+		return scopeID, nil
+	default:
+		if scopeID == "" {
+			return "", domain.ErrInvalidCapabilityScope
+		}
+		task, err := s.repo.GetTask(ctx, scopeID)
+		if err != nil {
+			return "", err
+		}
+		if task.ProjectID != projectID {
+			return "", ErrNotFound
+		}
+		if taskScopeType := capabilityScopeTypeForTask(task); taskScopeType != scopeType {
+			return "", domain.ErrInvalidCapabilityScope
+		}
+		return scopeID, nil
+	}
+}
+
+// capabilityScopeTypeForTask maps one task scope into a capability-scope value.
+func capabilityScopeTypeForTask(task domain.Task) domain.CapabilityScopeType {
+	switch task.Scope {
+	case domain.KindAppliesToBranch:
+		return domain.CapabilityScopeBranch
+	case domain.KindAppliesToPhase:
+		return domain.CapabilityScopePhase
+	case domain.KindAppliesToSubphase:
+		return domain.CapabilityScopeSubphase
+	case domain.KindAppliesToSubtask:
+		return domain.CapabilityScopeSubtask
+	default:
+		return domain.CapabilityScopeTask
+	}
 }
 
 // ensureOrchestratorOverlapPolicy enforces project policy for overlapping orchestrator leases.

@@ -104,6 +104,24 @@ Lane E (parity + gates + report synthesis)
 ## 6) Test Data Strategy
 Run two phases:
 
+Mandatory preflight (must pass before P0):
+1. Use an isolated temp runtime DB for this run, not the user’s existing dev DB.
+2. Record temp paths in the report (`TMP_DIR`, `DB_PATH`, optional `CFG_PATH`).
+3. Start server against that temp DB and confirm health.
+4. Hard-stop if the initial P0 empty-instance check is not empty.
+
+Suggested command shape:
+
+```bash
+TMP_DIR="$(mktemp -d /tmp/kan-mcp-e2e.XXXXXX)"
+DB_PATH="$TMP_DIR/kan-e2e.db"
+./kan --db "$DB_PATH" serve --http 127.0.0.1:18080 --api-endpoint /api/v1 --mcp-endpoint /mcp
+```
+
+Hard-stop rule:
+- If `kan.list_projects` returns non-empty during P0, mark run `blocked` and stop.
+- Do not continue to P1 on a dirty DB; reset the temp DB and restart P0.
+
 Phase P0: Empty instance validation
 1. Start with clean DB and no projects.
 2. Validate empty-instance behavior:

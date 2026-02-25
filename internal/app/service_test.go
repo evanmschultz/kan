@@ -554,6 +554,33 @@ func TestUpdateTask(t *testing.T) {
 	}
 }
 
+// TestUpdateTaskPreservesPriorityWhenOmitted verifies update behavior when priority is omitted.
+func TestUpdateTaskPreservesPriorityWhenOmitted(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: "p1",
+		ColumnID:  "c1",
+		Position:  0,
+		Title:     "old",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	repo.tasks[task.ID] = task
+
+	svc := NewService(repo, nil, func() time.Time { return now.Add(time.Minute) }, ServiceConfig{})
+	updated, err := svc.UpdateTask(context.Background(), UpdateTaskInput{
+		TaskID: task.ID,
+		Title:  "new title",
+	})
+	if err != nil {
+		t.Fatalf("UpdateTask(title-only) error = %v", err)
+	}
+	if updated.Priority != domain.PriorityMedium {
+		t.Fatalf("priority = %q, want %q", updated.Priority, domain.PriorityMedium)
+	}
+}
+
 // TestListAndSortHelpers verifies behavior for the covered scenario.
 func TestListAndSortHelpers(t *testing.T) {
 	repo := newFakeRepo()
@@ -1191,6 +1218,17 @@ func TestCreateAndListCommentsByTarget(t *testing.T) {
 	now := time.Date(2026, 2, 23, 9, 0, 0, 0, time.UTC)
 	ids := []string{"comment-2", "comment-1"}
 	nextID := 0
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	repo.projects[project.ID] = project
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  "c1",
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityLow,
+	}, now)
+	repo.tasks[task.ID] = task
 
 	svc := NewService(repo, func() string {
 		id := ids[nextID]
@@ -1202,9 +1240,9 @@ func TestCreateAndListCommentsByTarget(t *testing.T) {
 	}, ServiceConfig{})
 
 	if _, err := svc.CreateComment(context.Background(), CreateCommentInput{
-		ProjectID:    "p1",
+		ProjectID:    project.ID,
 		TargetType:   domain.CommentTargetTypeTask,
-		TargetID:     "t1",
+		TargetID:     task.ID,
 		BodyMarkdown: "first",
 		ActorType:    domain.ActorType("USER"),
 		AuthorName:   "user-1",
@@ -1212,9 +1250,9 @@ func TestCreateAndListCommentsByTarget(t *testing.T) {
 		t.Fatalf("CreateComment(first) error = %v", err)
 	}
 	second, err := svc.CreateComment(context.Background(), CreateCommentInput{
-		ProjectID:    "p1",
+		ProjectID:    project.ID,
 		TargetType:   domain.CommentTargetTypeTask,
-		TargetID:     "t1",
+		TargetID:     task.ID,
 		BodyMarkdown: "second",
 	})
 	if err != nil {
@@ -1228,9 +1266,9 @@ func TestCreateAndListCommentsByTarget(t *testing.T) {
 	}
 
 	comments, err := svc.ListCommentsByTarget(context.Background(), ListCommentsByTargetInput{
-		ProjectID:  "p1",
+		ProjectID:  project.ID,
 		TargetType: domain.CommentTargetTypeTask,
-		TargetID:   "t1",
+		TargetID:   task.ID,
 	})
 	if err != nil {
 		t.Fatalf("ListCommentsByTarget() error = %v", err)
@@ -1246,6 +1284,18 @@ func TestCreateAndListCommentsByTarget(t *testing.T) {
 // TestCreateCommentValidation verifies behavior for the covered scenario.
 func TestCreateCommentValidation(t *testing.T) {
 	repo := newFakeRepo()
+	now := time.Date(2026, 2, 23, 9, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	repo.projects[project.ID] = project
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  "c1",
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityLow,
+	}, now)
+	repo.tasks[task.ID] = task
 	svc := NewService(repo, func() string { return "comment-1" }, time.Now, ServiceConfig{})
 
 	_, err := svc.CreateComment(context.Background(), CreateCommentInput{
@@ -1259,19 +1309,28 @@ func TestCreateCommentValidation(t *testing.T) {
 	}
 
 	_, err = svc.CreateComment(context.Background(), CreateCommentInput{
-		ProjectID:    "p1",
+		ProjectID:    project.ID,
 		TargetType:   domain.CommentTargetTypeTask,
-		TargetID:     "t1",
+		TargetID:     task.ID,
 		BodyMarkdown: " ",
 	})
 	if err != domain.ErrInvalidBodyMarkdown {
 		t.Fatalf("expected ErrInvalidBodyMarkdown, got %v", err)
 	}
+	_, err = svc.CreateComment(context.Background(), CreateCommentInput{
+		ProjectID:    project.ID,
+		TargetType:   domain.CommentTargetTypeTask,
+		TargetID:     "missing-task",
+		BodyMarkdown: "body",
+	})
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound for unknown target, got %v", err)
+	}
 
 	_, err = svc.ListCommentsByTarget(context.Background(), ListCommentsByTargetInput{
-		ProjectID:  "p1",
+		ProjectID:  project.ID,
 		TargetType: domain.CommentTargetType("invalid"),
-		TargetID:   "t1",
+		TargetID:   task.ID,
 	})
 	if err != domain.ErrInvalidTargetType {
 		t.Fatalf("expected ErrInvalidTargetType, got %v", err)
