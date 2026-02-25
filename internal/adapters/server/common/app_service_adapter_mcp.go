@@ -503,6 +503,7 @@ func withMutationGuardContext(ctx context.Context, actor ActorLeaseTuple) (conte
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	requestedActorType := strings.TrimSpace(strings.ToLower(actor.ActorType))
 	actorType := normalizeActorType(actor.ActorType)
 	if !isValidActorType(actorType) {
 		return nil, "", fmt.Errorf("actor_type %q is unsupported: %w", actor.ActorType, ErrInvalidCaptureStateRequest)
@@ -513,6 +514,14 @@ func withMutationGuardContext(ctx context.Context, actor ActorLeaseTuple) (conte
 	leaseToken := strings.TrimSpace(actor.LeaseToken)
 	overrideToken := strings.TrimSpace(actor.OverrideToken)
 	hasAnyGuardField := agentName != "" || agentInstanceID != "" || leaseToken != "" || overrideToken != ""
+	if hasAnyGuardField && actorType == domain.ActorTypeUser {
+		// Preserve backward compatibility for guard-aware callers that omitted actor_type.
+		if requestedActorType == "" {
+			actorType = domain.ActorTypeAgent
+		} else {
+			return nil, "", fmt.Errorf("actor_type=user cannot be used with guarded mutation tuple: %w", ErrInvalidCaptureStateRequest)
+		}
+	}
 
 	if actorType != domain.ActorTypeUser || hasAnyGuardField {
 		if agentName == "" || agentInstanceID == "" || leaseToken == "" {

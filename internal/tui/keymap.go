@@ -70,7 +70,7 @@ func newKeyMap() keyMap {
 		search:           key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "search")),
 		projects:         key.NewBinding(key.WithKeys("p", "P"), key.WithHelp("p/P", "project picker")),
 		toggleArchived:   key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "toggle archived")),
-		toggleSelectMode: key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "text select mode")),
+		toggleSelectMode: key.NewBinding(key.WithKeys("ctrl+y"), key.WithHelp("ctrl+y", "text select mode")),
 		focusSubtree:     key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "focus subtree")),
 		clearFocus:       key.NewBinding(key.WithKeys("F", "shift+f"), key.WithHelp("F", "full board")),
 		multiSelect:      key.NewBinding(key.WithKeys(" ", "space"), key.WithHelp("space", "toggle select")),
@@ -102,7 +102,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.addTask, k.addSubtask, k.taskInfo, k.editTask, k.newProject, k.editProject, k.commandPalette, k.quickActions, k.search, k.projects, k.toggleArchived, k.toggleSelectMode, k.focusSubtree, k.clearFocus, k.toggleHelp, k.reload, k.quit},
 		{k.moveLeft, k.moveRight, k.moveUp, k.moveDown, k.moveTaskLeft, k.moveTaskRight},
-		{k.deleteTask, k.archiveTask, k.hardDeleteTask, k.restoreTask, k.multiSelect, k.undo, k.redo, k.activityLog},
+		{k.deleteTask, k.hardDeleteTask, k.restoreTask, k.multiSelect, k.undo, k.redo, k.activityLog},
 	}
 }
 

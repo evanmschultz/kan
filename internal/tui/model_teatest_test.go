@@ -164,7 +164,7 @@ func TestModelGoldenHelpExpandedOutput(t *testing.T) {
 
 	tm.Send(tea.KeyPressMsg{Code: '?', Text: "?"})
 	teatest.WaitFor(t, stream, func(out []byte) bool {
-		return strings.Contains(string(out), "hard delete")
+		return strings.Contains(string(out), "KAN Help")
 	}, teatest.WithDuration(2*time.Second), teatest.WithCheckInterval(10*time.Millisecond))
 
 	tm.Send(tea.KeyPressMsg{Code: 'q', Text: "q"})

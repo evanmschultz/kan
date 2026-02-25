@@ -142,6 +142,45 @@ func (f *fakeService) ListProjectChangeEvents(_ context.Context, projectID strin
 	return events, nil
 }
 
+// ListAttentionItems returns fake attention rows derived from blocked tasks.
+func (f *fakeService) ListAttentionItems(_ context.Context, in app.ListAttentionItemsInput) ([]domain.AttentionItem, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	projectID := strings.TrimSpace(in.Level.ProjectID)
+	if projectID == "" {
+		return nil, domain.ErrInvalidID
+	}
+	tasks := f.tasks[projectID]
+	out := make([]domain.AttentionItem, 0, len(tasks))
+	for idx, task := range tasks {
+		blockedBy := uniqueTrimmed(task.Metadata.BlockedBy)
+		dependsOn := uniqueTrimmed(task.Metadata.DependsOn)
+		if len(blockedBy) == 0 && len(dependsOn) == 0 && strings.TrimSpace(task.Metadata.BlockedReason) == "" {
+			continue
+		}
+		summary := strings.TrimSpace(task.Metadata.BlockedReason)
+		if summary == "" {
+			summary = fmt.Sprintf("blocked task %s", task.Title)
+		}
+		out = append(out, domain.AttentionItem{
+			ID:                 fmt.Sprintf("att-%s-%d", task.ID, idx),
+			ProjectID:          projectID,
+			ScopeType:          domain.ScopeLevelTask,
+			ScopeID:            task.ID,
+			State:              domain.AttentionStateOpen,
+			Kind:               domain.AttentionKindBlocker,
+			Summary:            summary,
+			RequiresUserAction: true,
+			CreatedAt:          time.Now().UTC(),
+		})
+	}
+	if in.Limit > 0 && len(out) > in.Limit {
+		out = out[:in.Limit]
+	}
+	return out, nil
+}
+
 // GetProjectDependencyRollup returns project dependency rollup totals.
 func (f *fakeService) GetProjectDependencyRollup(_ context.Context, projectID string) (domain.DependencyRollup, error) {
 	if f.err != nil {
@@ -1303,7 +1342,7 @@ func TestModelCommandPaletteProjectLifecycleActions(t *testing.T) {
 			Restore:    false,
 		}),
 	))
-	m.showArchived = true
+	m.showArchivedProjects = true
 
 	updated, cmd := m.executeCommandPalette("toggle-selection-mode")
 	m = applyResult(t, updated, cmd)
@@ -1355,7 +1394,7 @@ func TestModelProjectLifecycleConfirmBranches(t *testing.T) {
 	}
 	svc.projects[0] = archived
 	m.projects[0] = archived
-	m.showArchived = true
+	m.showArchivedProjects = true
 
 	updated, cmd = m.restoreCurrentProject(true)
 	m = applyResult(t, updated, cmd)
@@ -1404,7 +1443,7 @@ func TestModelProjectLifecycleGuardsAndSelection(t *testing.T) {
 	svc := newFakeService([]domain.Project{p1, p2, p3}, []domain.Column{c1, c2, c3}, nil)
 	m := loadReadyModel(t, NewModel(svc))
 	m.projects[1] = p2
-	m.showArchived = false
+	m.showArchivedProjects = false
 
 	updated, cmd = m.restoreCurrentProject(true)
 	m = applyResult(t, updated, cmd)
@@ -1759,7 +1798,7 @@ func TestClipboardShortcutHelpers(t *testing.T) {
 	}
 }
 
-// TestModelInputModeGlobalHelpAndSelectionToggles verifies '?' and 'v' work inside modal/input screens.
+// TestModelInputModeGlobalHelpAndSelectionToggles verifies '?' and selection-toggle keys work inside modal/input screens.
 func TestModelInputModeGlobalHelpAndSelectionToggles(t *testing.T) {
 	now := time.Date(2026, 2, 23, 9, 30, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -1779,7 +1818,7 @@ func TestModelInputModeGlobalHelpAndSelectionToggles(t *testing.T) {
 		t.Fatalf("expected help toggle to preserve add-project mode, got %v", m.mode)
 	}
 
-	m = applyMsg(t, m, keyRune('v'))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl})
 	if !m.mouseSelectionMode {
 		t.Fatal("expected text-selection mode to toggle while modal is open")
 	}
@@ -2066,7 +2105,7 @@ func TestModelCommandPaletteReloadConfigAppliesRuntimeSettings(t *testing.T) {
 	if m.taskFields.ShowPriority || m.taskFields.ShowDueDate || m.taskFields.ShowLabels || !m.taskFields.ShowDescription {
 		t.Fatalf("unexpected task fields after reload %#v", m.taskFields)
 	}
-	if !m.searchCrossProject || !m.searchDefaultCrossProject || !m.showArchived || !m.searchDefaultIncludeArchive {
+	if !m.searchCrossProject || !m.searchDefaultCrossProject || !m.searchIncludeArchived || !m.searchDefaultIncludeArchive {
 		t.Fatalf("unexpected search scope flags after reload %#v", m)
 	}
 	if got := strings.Join(m.searchStates, ","); got != "todo,archived" {
@@ -3734,8 +3773,8 @@ func TestTaskFormLabelSuggestions(t *testing.T) {
 	}
 }
 
-// TestTaskFormCtrlYAcceptsLabelSuggestion verifies ctrl+y applies label autocomplete.
-func TestTaskFormCtrlYAcceptsLabelSuggestion(t *testing.T) {
+// TestTaskFormCtrlGAcceptsLabelSuggestion verifies ctrl+g applies label autocomplete.
+func TestTaskFormCtrlGAcceptsLabelSuggestion(t *testing.T) {
 	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Inbox", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
@@ -3753,9 +3792,9 @@ func TestTaskFormCtrlYAcceptsLabelSuggestion(t *testing.T) {
 	m = applyCmd(t, m, m.focusTaskFormField(4))
 	m = applyMsg(t, m, keyRune('c'))
 	m = applyMsg(t, m, keyRune('h'))
-	m = applyMsg(t, m, tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
 	if got := strings.TrimSpace(m.formInputs[4].Value()); got != "chore" {
-		t.Fatalf("expected ctrl+y to apply label suggestion, got %q", got)
+		t.Fatalf("expected ctrl+g to apply label suggestion, got %q", got)
 	}
 }
 
@@ -3829,8 +3868,8 @@ func TestSearchAndCommandPaletteFlow(t *testing.T) {
 	if m.searchQuery != "road map" {
 		t.Fatalf("expected search query preserved, got %q", m.searchQuery)
 	}
-	if !m.searchCrossProject || !m.showArchived {
-		t.Fatalf("expected scope+archived toggled, got cross=%t archived=%t", m.searchCrossProject, m.showArchived)
+	if !m.searchCrossProject || !m.searchIncludeArchived {
+		t.Fatalf("expected scope+archived toggled, got cross=%t archived=%t", m.searchCrossProject, m.searchIncludeArchived)
 	}
 
 	m = applyMsg(t, m, keyRune(':'))
@@ -5475,6 +5514,12 @@ func TestModelViewShowsNoticesPanel(t *testing.T) {
 	}
 	if !strings.Contains(rendered, "g opens full activity log") {
 		t.Fatalf("expected activity-log hint in notices panel, got\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "work items report") {
+		t.Fatalf("expected blocker warning in notices panel, got\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "attention items requ") {
+		t.Fatalf("expected attention warning in notices panel, got\n%s", rendered)
 	}
 }
 

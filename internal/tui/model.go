@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -30,6 +31,7 @@ type Service interface {
 	CreateComment(context.Context, app.CreateCommentInput) (domain.Comment, error)
 	ListCommentsByTarget(context.Context, app.ListCommentsByTargetInput) ([]domain.Comment, error)
 	ListProjectChangeEvents(context.Context, string, int) ([]domain.ChangeEvent, error)
+	ListAttentionItems(context.Context, app.ListAttentionItemsInput) ([]domain.AttentionItem, error)
 	GetProjectDependencyRollup(context.Context, string) (domain.DependencyRollup, error)
 	SearchTaskMatches(context.Context, app.SearchTasksFilter) ([]app.TaskMatch, error)
 	CreateProjectWithMetadata(context.Context, app.CreateProjectInput) (domain.Project, error)
@@ -147,6 +149,7 @@ var quickActionSpecs = []quickActionSpec{
 	{ID: "move-left", Label: "Move Left"},
 	{ID: "move-right", Label: "Move Right"},
 	{ID: "archive-task", Label: "Archive Task"},
+	{ID: "restore-task", Label: "Restore Task"},
 	{ID: "hard-delete", Label: "Hard Delete"},
 	{ID: "toggle-selection", Label: "Toggle Selection"},
 	{ID: "clear-selection", Label: "Clear Selection"},
@@ -282,7 +285,8 @@ type Model struct {
 	height int
 	err    error
 
-	status string
+	status   string
+	warnings []string
 
 	help help.Model
 	keys keyMap
@@ -299,11 +303,13 @@ type Model struct {
 	launchPicker             bool
 	startupBootstrapRequired bool
 
-	mode          inputMode
-	input         string
-	searchQuery   string
-	searchApplied bool
-	showArchived  bool
+	mode                  inputMode
+	input                 string
+	searchQuery           string
+	searchApplied         bool
+	showArchived          bool
+	showArchivedProjects  bool
+	searchIncludeArchived bool
 
 	searchInput                 textinput.Model
 	commandInput                textinput.Model
@@ -363,6 +369,7 @@ type Model struct {
 	editingProjectID         string
 	editingTaskID            string
 	taskInfoTaskID           string
+	taskInfoOriginTaskID     string
 	taskInfoSubtaskIdx       int
 	taskFormParentID         string
 	taskFormKind             domain.WorkKind
@@ -446,12 +453,14 @@ type Model struct {
 
 // loadedMsg carries message data through update handling.
 type loadedMsg struct {
-	projects        []domain.Project
-	selectedProject int
-	columns         []domain.Column
-	tasks           []domain.Task
-	rollup          domain.DependencyRollup
-	err             error
+	projects                 []domain.Project
+	selectedProject          int
+	columns                  []domain.Column
+	tasks                    []domain.Task
+	rollup                   domain.DependencyRollup
+	err                      error
+	attentionItemsCount      int
+	attentionUserActionCount int
 }
 
 // resourcePickerLoadedMsg carries resource picker directory entries.
@@ -673,6 +682,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.columns = msg.columns
 		m.tasks = msg.tasks
 		m.dependencyRollup = msg.rollup
+		m.warnings = buildScopeWarnings(msg.attentionItemsCount, msg.attentionUserActionCount)
 		if len(m.projects) == 0 {
 			m.selectedProject = 0
 			m.selectedColumn = 0
@@ -1289,7 +1299,7 @@ func (m Model) activeMouseMode() tea.MouseMode {
 
 // loadData loads required data for the current operation.
 func (m Model) loadData() tea.Msg {
-	projects, err := m.svc.ListProjects(context.Background(), m.showArchived)
+	projects, err := m.svc.ListProjects(context.Background(), m.showArchivedProjects)
 	if err != nil {
 		return loadedMsg{err: err}
 	}
@@ -1319,7 +1329,7 @@ func (m Model) loadData() tea.Msg {
 			ProjectID:       projectID,
 			Query:           m.searchQuery,
 			CrossProject:    m.searchCrossProject,
-			IncludeArchived: m.showArchived,
+			IncludeArchived: m.searchIncludeArchived,
 			States:          append([]string(nil), m.searchStates...),
 		})
 		if searchErr != nil {
@@ -1343,12 +1353,33 @@ func (m Model) loadData() tea.Msg {
 		return loadedMsg{err: err}
 	}
 
+	attentionItems, attentionErr := m.svc.ListAttentionItems(context.Background(), app.ListAttentionItemsInput{
+		Level: domain.LevelTupleInput{
+			ProjectID: projectID,
+			ScopeType: domain.ScopeLevelProject,
+			ScopeID:   projectID,
+		},
+		UnresolvedOnly: true,
+		Limit:          256,
+	})
+	if attentionErr != nil {
+		return loadedMsg{err: attentionErr}
+	}
+	requiresUserAction := 0
+	for _, item := range attentionItems {
+		if item.RequiresUserAction {
+			requiresUserAction++
+		}
+	}
+
 	return loadedMsg{
-		projects:        projects,
-		selectedProject: projectIdx,
-		columns:         columns,
-		tasks:           tasks,
-		rollup:          rollup,
+		projects:                 projects,
+		selectedProject:          projectIdx,
+		columns:                  columns,
+		tasks:                    tasks,
+		rollup:                   rollup,
+		attentionItemsCount:      len(attentionItems),
+		attentionUserActionCount: requiresUserAction,
 	}
 }
 
@@ -1359,7 +1390,7 @@ func (m Model) loadSearchMatches() tea.Msg {
 		ProjectID:       projectID,
 		Query:           m.searchQuery,
 		CrossProject:    m.searchCrossProject,
-		IncludeArchived: m.showArchived,
+		IncludeArchived: m.searchIncludeArchived,
 		States:          append([]string(nil), m.searchStates...),
 	})
 	if err != nil {
@@ -2380,7 +2411,7 @@ func (m *Model) resetSearchFilters() tea.Cmd {
 	m.searchQuery = ""
 	m.searchInput.SetValue("")
 	m.searchCrossProject = m.searchDefaultCrossProject
-	m.showArchived = m.searchDefaultIncludeArchive
+	m.searchIncludeArchived = m.searchDefaultIncludeArchive
 	m.searchStates = canonicalSearchStates(m.searchDefaultStates)
 	m.searchLevels = canonicalSearchLevels(m.searchDefaultLevels)
 	m.searchApplied = false
@@ -2798,6 +2829,31 @@ func (m *Model) duePickerOptions() []duePickerOption {
 					Value: value,
 				}}, options...)
 			}
+		} else if prefixDates := resolveDuePickerDatePrefix(dateInput, now); len(prefixDates) > 0 {
+			matched := make([]duePickerOption, 0, len(prefixDates))
+			for _, candidate := range prefixDates {
+				if !m.duePickerIncludeTime {
+					value := candidate.Format("2006-01-02")
+					matched = append(matched, duePickerOption{
+						Label: fmt.Sprintf("Use matched date (%s)", value),
+						Value: value,
+					})
+					continue
+				}
+				hour, minute, ok := parseDuePickerTimeToken(timeInput)
+				if !ok {
+					continue
+				}
+				dt := time.Date(candidate.Year(), candidate.Month(), candidate.Day(), hour, minute, 0, 0, time.Local)
+				value := dt.Format("2006-01-02 15:04")
+				matched = append(matched, duePickerOption{
+					Label: fmt.Sprintf("Use matched datetime (%s)", value),
+					Value: value,
+				})
+			}
+			if len(matched) > 0 {
+				options = append(matched, options...)
+			}
 		}
 	}
 
@@ -2864,6 +2920,52 @@ func resolveDuePickerDateToken(raw string, now time.Time) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	return parsed, true
+}
+
+// resolveDuePickerDatePrefix returns upcoming local dates for month/day-prefix tokens (for example 2-2).
+func resolveDuePickerDatePrefix(raw string, now time.Time) []time.Time {
+	token := strings.TrimSpace(strings.ToLower(raw))
+	if token == "" {
+		return nil
+	}
+	parts := strings.Split(token, "-")
+	if len(parts) != 2 {
+		return nil
+	}
+	month, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+	if err != nil || month < 1 || month > 12 {
+		return nil
+	}
+	dayPrefix := strings.TrimSpace(parts[1])
+	if dayPrefix == "" || len(dayPrefix) > 2 {
+		return nil
+	}
+	for _, ch := range dayPrefix {
+		if ch < '0' || ch > '9' {
+			return nil
+		}
+	}
+
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
+	year := now.Year()
+	monthTime := time.Month(month)
+	daysInMonth := time.Date(year, monthTime+1, 0, 0, 0, 0, 0, time.Local).Day()
+	out := make([]time.Time, 0, daysInMonth)
+	for day := 1; day <= daysInMonth; day++ {
+		if !strings.HasPrefix(strconv.Itoa(day), dayPrefix) {
+			continue
+		}
+		candidate := time.Date(year, monthTime, day, 0, 0, 0, 0, time.Local)
+		if candidate.Before(today) {
+			candidate = candidate.AddDate(1, 0, 0)
+		}
+		out = append(out, candidate)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Before(out[j]) })
+	if len(out) > 10 {
+		out = out[:10]
+	}
+	return out
 }
 
 // parseDuePickerTimeToken parses due-picker time text into hour and minute values.
@@ -4476,10 +4578,7 @@ func (m Model) handleNormalModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.help.ShowAll = false
-		m.mode = modeTaskInfo
-		m.taskInfoTaskID = task.ID
-		m.taskInfoSubtaskIdx = 0
-		m.status = "task info"
+		m.openTaskInfo(task.ID, "task info")
 		return m, nil
 	case key.Matches(msg, m.keys.search):
 		m.help.ShowAll = false
@@ -4546,8 +4645,6 @@ func (m Model) handleNormalModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.moveSelectedTask(1)
 	case key.Matches(msg, m.keys.deleteTask):
 		return m.confirmDeleteAction(m.defaultDeleteMode, m.confirmDelete, "delete task")
-	case key.Matches(msg, m.keys.archiveTask):
-		return m.confirmDeleteAction(app.DeleteModeArchive, m.confirmArchive, "archive task")
 	case key.Matches(msg, m.keys.hardDeleteTask):
 		return m.confirmDeleteAction(app.DeleteModeHard, m.confirmHardDelete, "hard delete task")
 	case key.Matches(msg, m.keys.restoreTask):
@@ -4655,28 +4752,28 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.mode == modeTaskInfo {
 		task, ok := m.taskInfoTask()
 		if !ok {
-			m.mode = modeNone
-			m.taskInfoTaskID = ""
-			m.taskInfoSubtaskIdx = 0
-			m.status = "task info unavailable"
+			m.closeTaskInfo("task info unavailable")
 			return m, nil
 		}
 		subtasks := m.subtasksForParent(task.ID)
 		switch msg.String() {
 		case "esc":
+			originID := strings.TrimSpace(m.taskInfoOriginTaskID)
+			if originID != "" && originID != task.ID {
+				if _, ok := m.taskByID(originID); ok {
+					m.taskInfoTaskID = originID
+					m.taskInfoSubtaskIdx = 0
+					m.status = "task info"
+					return m, nil
+				}
+			}
 			if m.stepBackTaskInfo(task) {
 				return m, nil
 			}
-			m.mode = modeNone
-			m.taskInfoTaskID = ""
-			m.taskInfoSubtaskIdx = 0
-			m.status = "ready"
+			m.closeTaskInfo("ready")
 			return m, nil
 		case "i":
-			m.mode = modeNone
-			m.taskInfoTaskID = ""
-			m.taskInfoSubtaskIdx = 0
-			m.status = "ready"
+			m.closeTaskInfo("ready")
 			return m, nil
 		case "j", "down":
 			if len(subtasks) > 0 && m.taskInfoSubtaskIdx < len(subtasks)-1 {
@@ -4729,10 +4826,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			if !m.activateSubtreeFocus(task.ID) {
 				return m, nil
 			}
-			m.mode = modeNone
-			m.taskInfoTaskID = ""
-			m.taskInfoSubtaskIdx = 0
-			m.status = "focused subtree"
+			m.closeTaskInfo("focused subtree")
 			return m, nil
 		default:
 			return m, nil
@@ -5039,6 +5133,14 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.mode = modeNone
 			m.status = "cancelled"
 			return m, nil
+		case msg.String() == "A" || msg.String() == "shift+a":
+			m.showArchivedProjects = !m.showArchivedProjects
+			if m.showArchivedProjects {
+				m.status = "showing archived projects"
+			} else {
+				m.status = "hiding archived projects"
+			}
+			return m, m.loadData
 		case key.Matches(msg, m.keys.newProject):
 			return m, m.startProjectForm(nil)
 		case msg.String() == "j" || msg.String() == "down":
@@ -5127,7 +5229,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.searchCrossProject = !m.searchCrossProject
 			return m, nil
 		case msg.String() == "ctrl+a" && m.searchFocus != 0:
-			m.showArchived = !m.showArchived
+			m.searchIncludeArchived = !m.searchIncludeArchived
 			return m, nil
 		case msg.String() == "ctrl+u" && m.searchFocus != 0:
 			return m, m.clearSearchQuery()
@@ -5142,7 +5244,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			case 3:
 				m.searchCrossProject = !m.searchCrossProject
 			case 4:
-				m.showArchived = !m.showArchived
+				m.searchIncludeArchived = !m.searchIncludeArchived
 			}
 			return m, nil
 		case (msg.String() == "l" || msg.String() == "right") && m.searchFocus != 0:
@@ -5154,7 +5256,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			case 3:
 				m.searchCrossProject = !m.searchCrossProject
 			case 4:
-				m.showArchived = !m.showArchived
+				m.searchIncludeArchived = !m.searchIncludeArchived
 			}
 			return m, nil
 		case (msg.String() == " " || msg.String() == "space") && m.searchFocus != 0:
@@ -5172,7 +5274,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			case 3:
 				m.searchCrossProject = !m.searchCrossProject
 			case 4:
-				m.showArchived = !m.showArchived
+				m.searchIncludeArchived = !m.searchIncludeArchived
 			}
 			return m, nil
 		case msg.Code == tea.KeyEnter || msg.String() == "enter":
@@ -5193,7 +5295,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.searchCrossProject = !m.searchCrossProject
 				return m, nil
 			case 4:
-				m.showArchived = !m.showArchived
+				m.searchIncludeArchived = !m.searchIncludeArchived
 				return m, nil
 			default:
 				return m, m.applySearchFilter()
@@ -5403,7 +5505,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case " ", "space":
-			if m.duePickerFocus == 0 {
+			if m.duePickerFocus == 0 || m.duePickerFocus == 1 || m.duePickerFocus == 2 {
 				return m, m.setDuePickerIncludeTime(!m.duePickerIncludeTime)
 			}
 			return m, nil
@@ -5692,7 +5794,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case msg.String() == "ctrl+s":
 			return m, m.startSubtaskFormFromTaskForm()
-		case isCtrlY(msg):
+		case isCtrlG(msg):
 			if m.formFocus == taskFieldLabels {
 				if m.acceptCurrentLabelSuggestion() {
 					m.status = "accepted label suggestion"
@@ -5879,18 +5981,18 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
-// isCtrlY reports whether a keypress represents the Ctrl+Y autocomplete shortcut.
-func isCtrlY(msg tea.KeyPressMsg) bool {
-	if msg.String() == "ctrl+y" {
+// isCtrlG reports whether a keypress represents the Ctrl+G autocomplete shortcut.
+func isCtrlG(msg tea.KeyPressMsg) bool {
+	if msg.String() == "ctrl+g" {
 		return true
 	}
 	if (msg.Mod & tea.ModCtrl) == 0 {
 		return false
 	}
-	if msg.Code == 'y' || msg.Code == 'Y' {
+	if msg.Code == 'g' || msg.Code == 'G' {
 		return true
 	}
-	return strings.EqualFold(msg.Text, "y")
+	return strings.EqualFold(msg.Text, "g")
 }
 
 // isClipboardCopyKey reports whether a keypress is a platform clipboard-copy shortcut.
@@ -6548,6 +6650,14 @@ func (m Model) quickActionAvailability(actionID string, hasTask bool, hasSelecti
 			return false, "no task selected"
 		}
 		return true, ""
+	case "restore-task":
+		if task, ok := m.selectedTaskInCurrentColumn(); ok && task.ArchivedAt != nil {
+			return true, ""
+		}
+		if strings.TrimSpace(m.lastArchivedTaskID) != "" {
+			return true, ""
+		}
+		return false, "no archived task selected"
 	case "move-left":
 		if !hasTask {
 			return false, "no task selected"
@@ -6633,10 +6743,7 @@ func (m Model) applyQuickAction() (tea.Model, tea.Cmd) {
 			m.status = "no task selected"
 			return m, nil
 		}
-		m.mode = modeTaskInfo
-		m.taskInfoTaskID = task.ID
-		m.taskInfoSubtaskIdx = 0
-		m.status = "task info"
+		m.openTaskInfo(task.ID, "task info")
 		return m, nil
 	case "edit-task":
 		task, ok := m.selectedTaskInCurrentColumn()
@@ -6651,6 +6758,8 @@ func (m Model) applyQuickAction() (tea.Model, tea.Cmd) {
 		return m.moveSelectedTask(1)
 	case "archive-task":
 		return m.confirmDeleteAction(app.DeleteModeArchive, m.confirmArchive, "archive task")
+	case "restore-task":
+		return m.confirmRestoreAction()
 	case "hard-delete":
 		return m.confirmDeleteAction(app.DeleteModeHard, m.confirmHardDelete, "hard delete task")
 	case "toggle-selection":
@@ -7033,7 +7142,7 @@ func (m Model) archiveCurrentProject(needsConfirm bool) (tea.Model, tea.Cmd) {
 	}
 	projectID := project.ID
 	nextProjectID := ""
-	if !m.showArchived {
+	if !m.showArchivedProjects {
 		for _, candidate := range m.projects {
 			if candidate.ID == projectID || candidate.ArchivedAt != nil {
 				continue
@@ -7106,7 +7215,7 @@ func (m Model) deleteCurrentProject(needsConfirm bool) (tea.Model, tea.Cmd) {
 		if candidate.ID == projectID {
 			continue
 		}
-		if !m.showArchived && candidate.ArchivedAt != nil {
+		if !m.showArchivedProjects && candidate.ArchivedAt != nil {
 			continue
 		}
 		nextProjectID = candidate.ID
@@ -8093,6 +8202,18 @@ func (m Model) scopeAttentionSummary(byID map[string]domain.Task) (int, int, int
 	return items, total, blocked, top
 }
 
+// buildScopeWarnings synthesizes warning text from attention counts.
+func buildScopeWarnings(attentionItemsCount, attentionUserActionCount int) []string {
+	warnings := make([]string, 0, 2)
+	if attentionItemsCount > 0 {
+		warnings = append(warnings, fmt.Sprintf("%d work items report open blockers", attentionItemsCount))
+	}
+	if attentionUserActionCount > 0 {
+		warnings = append(warnings, fmt.Sprintf("%d attention items require user action", attentionUserActionCount))
+	}
+	return warnings
+}
+
 // dependencyRollupSummary returns compact project dependency totals for board rendering.
 func (m Model) dependencyRollupSummary() string {
 	rollup := m.dependencyRollup
@@ -8458,6 +8579,15 @@ func (m Model) renderOverviewPanel(
 	}
 
 	lines = append(lines, "")
+	lines = append(lines, lipgloss.NewStyle().Bold(true).Foreground(accent).Render("Warnings"))
+	if len(m.warnings) == 0 {
+		lines = append(lines, lipgloss.NewStyle().Foreground(muted).Render("none"))
+	} else {
+		for _, warning := range m.warnings {
+			lines = append(lines, lipgloss.NewStyle().Foreground(muted).Render(truncate(warning, contentWidth)))
+		}
+	}
+	lines = append(lines, "")
 	lines = append(lines, lipgloss.NewStyle().Bold(true).Foreground(accent).Render("Agent/User Action"))
 	if attentionTotal <= 0 {
 		lines = append(lines, lipgloss.NewStyle().Foreground(muted).Render("no unresolved notices"))
@@ -8571,7 +8701,7 @@ func (m Model) renderHelpOverlay(accent, muted, dim color.Color, _ lipgloss.Styl
 	lines = append(
 		lines,
 		"",
-		lipgloss.NewStyle().Foreground(muted).Render(fmt.Sprintf("selection mode: %s (v toggles)", selectionState)),
+		lipgloss.NewStyle().Foreground(muted).Render(fmt.Sprintf("selection mode: %s (%s toggles)", selectionState, m.keys.toggleSelectMode.Help().Key)),
 		lipgloss.NewStyle().Foreground(muted).Render("press ? or esc to close help"),
 	)
 	style := lipgloss.NewStyle().
@@ -8591,9 +8721,10 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 		return "board", []string{
 			"h/l or left/right move columns; j/k or up/down move task selection",
 			"n new task; s new subtask; i/enter task info; e edit task",
-			"space multi-select; [ / ] move task; d delete; a archive; D hard delete; u restore",
+			"space multi-select; [ / ] move task; d delete; D hard delete; u restore",
 			"f focus subtree; F full board; t toggle archived",
 			"/ search; p project picker; : command palette; . quick actions",
+			"ctrl+y toggles text selection mode; ctrl+c/ctrl+v copy/paste in text inputs",
 			"z undo; Z redo; g activity log; q quit",
 		}
 	case modeAddTask:
@@ -8601,7 +8732,7 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 			"tab/shift+tab move fields; enter saves; esc cancels",
 			"h/l changes priority when priority field is focused",
 			"d opens due picker; supports date-only or local date+time",
-			"labels field: enter or ctrl+l opens label picker; ctrl+y accepts suggestion",
+			"labels field: enter or ctrl+l opens label picker; ctrl+g accepts suggestion",
 			"depends_on/blocked_by fields: enter or o opens dependency picker",
 			"ctrl+r opens resource picker",
 		}
@@ -8610,7 +8741,7 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 			"tab/shift+tab move fields; enter saves; esc cancels",
 			"h/l changes priority when priority field is focused",
 			"d opens due picker; supports date-only or local date+time",
-			"labels field: enter or ctrl+l opens label picker; ctrl+y accepts suggestion",
+			"labels field: enter or ctrl+l opens label picker; ctrl+g accepts suggestion",
 			"depends_on/blocked_by fields: enter or o opens dependency picker",
 			"ctrl+r opens resource picker",
 		}
@@ -8638,6 +8769,7 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 			"j/k or mouse wheel changes selection",
 			"enter chooses project",
 			"N opens new-project form",
+			"A toggles archived project visibility in picker",
 			"esc closes picker",
 		}
 	case modeTaskInfo:
@@ -8881,6 +9013,38 @@ func (m Model) taskInfoTask() (domain.Task, bool) {
 		return m.selectedTaskInCurrentColumn()
 	}
 	return m.taskByID(taskID)
+}
+
+// openTaskInfo enters task-info mode and stores the origin task for contextual esc back behavior.
+func (m *Model) openTaskInfo(taskID string, status string) bool {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return false
+	}
+	if _, ok := m.taskByID(taskID); !ok {
+		return false
+	}
+	m.mode = modeTaskInfo
+	m.taskInfoTaskID = taskID
+	m.taskInfoOriginTaskID = taskID
+	m.taskInfoSubtaskIdx = 0
+	if strings.TrimSpace(status) == "" {
+		status = "task info"
+	}
+	m.status = status
+	return true
+}
+
+// closeTaskInfo exits task-info mode and clears tracked origin/task ids.
+func (m *Model) closeTaskInfo(status string) {
+	m.mode = modeNone
+	m.taskInfoTaskID = ""
+	m.taskInfoOriginTaskID = ""
+	m.taskInfoSubtaskIdx = 0
+	if strings.TrimSpace(status) == "" {
+		status = "ready"
+	}
+	m.status = status
 }
 
 // stepBackTaskInfo moves task-info focus to the parent task when available.
@@ -9594,6 +9758,11 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 
 		title := lipgloss.NewStyle().Bold(true).Foreground(accent).Render("Projects")
 		lines := []string{title}
+		archivedText := "archived projects: hidden"
+		if m.showArchivedProjects {
+			archivedText = "archived projects: shown"
+		}
+		lines = append(lines, helpStyle.Render(archivedText))
 		if len(m.projects) == 0 {
 			lines = append(lines, helpStyle.Render("(no projects yet)"))
 		} else {
@@ -9608,9 +9777,9 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		}
 		lines = append(lines, helpStyle.Render("N new project"))
 		if len(m.projects) == 0 {
-			lines = append(lines, helpStyle.Render("enter/N create • esc close"))
+			lines = append(lines, helpStyle.Render("enter/N create • A toggle archived • esc close"))
 		} else {
-			lines = append(lines, helpStyle.Render("j/k or wheel • enter choose • N new • esc cancel"))
+			lines = append(lines, helpStyle.Render("j/k or wheel • enter choose • N new • A toggle archived • esc cancel"))
 		}
 		return pickerStyle.Render(strings.Join(lines, "\n"))
 
@@ -9986,7 +10155,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		switch m.mode {
 		case modeAddTask:
 			title = "New Task"
-			hint = "enter save • esc cancel • tab next field • enter/o deps picker • d due picker • ctrl+r attach resource • ctrl+y label suggestion"
+			hint = "enter save • esc cancel • tab next field • enter/o deps picker • d due picker • ctrl+r attach resource • ctrl+g label suggestion"
 		case modeSearch:
 			title = "Search"
 			hint = "tab focus • space/enter toggle • ctrl+u clear query • ctrl+r reset filters"
@@ -9994,7 +10163,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 			title = "Rename Task"
 		case modeEditTask:
 			title = "Edit Task"
-			hint = "enter save • esc cancel • tab next field • enter/o deps picker • d due picker • ctrl+r attach resource • ctrl+y label suggestion"
+			hint = "enter save • esc cancel • tab next field • enter/o deps picker • d due picker • ctrl+r attach resource • ctrl+g label suggestion"
 		case modeAddProject:
 			title = "New Project"
 		case modeEditProject:
@@ -10078,7 +10247,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 			if m.searchFocus == 4 {
 				archivedLabel = lipgloss.NewStyle().Bold(true).Foreground(accent)
 			}
-			if m.showArchived {
+			if m.searchIncludeArchived {
 				lines = append(lines, archivedLabel.Render("archived: included"))
 			} else {
 				lines = append(lines, archivedLabel.Render("archived: hidden"))
@@ -10112,7 +10281,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 				lines = append(lines, hintStyle.Render("time without timezone is interpreted in local time"))
 			}
 			if m.formFocus == taskFieldLabels {
-				lines = append(lines, hintStyle.Render("enter or ctrl+l opens label picker • ctrl+y accept autocomplete"))
+				lines = append(lines, hintStyle.Render("enter or ctrl+l opens label picker • ctrl+g accept autocomplete"))
 			}
 			if m.formFocus == taskFieldDependsOn || m.formFocus == taskFieldBlockedBy {
 				lines = append(lines, hintStyle.Render("enter or o opens dependency picker • csv task IDs still supported"))
@@ -10355,7 +10524,7 @@ func (m Model) modePrompt() string {
 	case modeDuePicker:
 		return "due picker: tab focus controls, type date/time to filter, j/k navigate list, enter apply, esc cancel"
 	case modeProjectPicker:
-		return "project picker: j/k select, enter choose, N new project, esc cancel"
+		return "project picker: j/k select, enter choose, N new project, A archived toggle, esc cancel"
 	case modeTaskInfo:
 		return "task info: e edit, s subtask, c thread, [ / ] move, space toggle subtask complete, b deps inspector, r attach, esc back/close"
 	case modeAddProject:

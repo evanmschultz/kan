@@ -136,7 +136,7 @@ func WithSearchConfig(cfg SearchConfig) Option {
 		m.searchDefaultCrossProject = cfg.CrossProject
 		m.searchDefaultIncludeArchive = cfg.IncludeArchived
 		m.searchCrossProject = cfg.CrossProject
-		m.showArchived = cfg.IncludeArchived
+		m.searchIncludeArchived = cfg.IncludeArchived
 		if len(cfg.States) > 0 {
 			m.searchDefaultStates = canonicalSearchStates(cfg.States)
 			m.searchStates = append([]string(nil), m.searchDefaultStates...)

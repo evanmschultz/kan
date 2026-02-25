@@ -7,6 +7,9 @@ path: Inbox
 │  │  Golden board task                  │ │ project: Inbox         │
 │     [medium|#alpha,#beta]              │ │ path: Inbox            │
 │                                        │ │                        │
+│                                        │ │ Warnings               │
+│                                        │ │ none                   │
+│                                        │ │                        │
 │                                        │ │ Agent/User Action      │
 │                                        │ │ no unresolved notices  │
 │                                        │ │                        │
@@ -17,12 +20,6 @@ path: Inbox
 │                                        │ │ Recent Activity        │
 │                                        │ │ (no activity yet)      │
 │                                        │ │                        │
-│                                        │ │ g opens full activity  │
-│                                        │ │ log                    │
-│                                        │ │                        │
-╰────────────────────────────────────────╯ ╰────────────────────────╯
-project: Inbox • tasks: 1 • selected: Golden board task • level: task
-deps: total 1 • blocked 0 • unresolved 0 • edges 0
-0 overdue * 0 due soon
-
+╰────────────────────────────────────────╯ │ g opens full activity  │[24;44H│ log                    │[25;44H│                        │[26;44H╰────────────────────────╯
+…
  n new task • s new subtask • i/enter task info • e edit task • f focus subtree …[?1049l[?25h[?2004l[?1002l[?1003l[?1006l[=0;1u
