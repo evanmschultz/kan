@@ -52,6 +52,27 @@ func (f *fakeRepo) UpdateProject(_ context.Context, p domain.Project) error {
 	return nil
 }
 
+// DeleteProject deletes one project.
+func (f *fakeRepo) DeleteProject(_ context.Context, id string) error {
+	if _, ok := f.projects[id]; !ok {
+		return ErrNotFound
+	}
+	delete(f.projects, id)
+	for columnID, column := range f.columns {
+		if column.ProjectID != id {
+			continue
+		}
+		delete(f.columns, columnID)
+	}
+	for taskID, task := range f.tasks {
+		if task.ProjectID != id {
+			continue
+		}
+		delete(f.tasks, taskID)
+	}
+	return nil
+}
+
 // GetProject returns project.
 func (f *fakeRepo) GetProject(_ context.Context, id string) (domain.Project, error) {
 	p, ok := f.projects[id]
@@ -909,6 +930,65 @@ func TestUpdateProject(t *testing.T) {
 	}
 	if updated.Metadata.Owner != "team-kan" || len(updated.Metadata.Tags) != 1 || updated.Metadata.Tags[0] != "go" {
 		t.Fatalf("unexpected metadata %#v", updated.Metadata)
+	}
+}
+
+// TestArchiveRestoreAndDeleteProject verifies project archive, restore, and hard-delete behavior.
+func TestArchiveRestoreAndDeleteProject(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 2, 24, 8, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "desc", now)
+	repo.projects[project.ID] = project
+
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	repo.columns[column.ID] = column
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	repo.tasks[task.ID] = task
+
+	svc := NewService(repo, nil, func() time.Time { return now.Add(time.Minute) }, ServiceConfig{})
+
+	archived, err := svc.ArchiveProject(context.Background(), project.ID)
+	if err != nil {
+		t.Fatalf("ArchiveProject() error = %v", err)
+	}
+	if archived.ArchivedAt == nil {
+		t.Fatal("expected project archived_at to be set")
+	}
+
+	active, err := svc.ListProjects(context.Background(), false)
+	if err != nil {
+		t.Fatalf("ListProjects(active) error = %v", err)
+	}
+	if len(active) != 0 {
+		t.Fatalf("expected no active projects after archive, got %d", len(active))
+	}
+
+	restored, err := svc.RestoreProject(context.Background(), project.ID)
+	if err != nil {
+		t.Fatalf("RestoreProject() error = %v", err)
+	}
+	if restored.ArchivedAt != nil {
+		t.Fatal("expected project archived_at cleared after restore")
+	}
+
+	if err := svc.DeleteProject(context.Background(), project.ID); err != nil {
+		t.Fatalf("DeleteProject() error = %v", err)
+	}
+	if _, err := repo.GetProject(context.Background(), project.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected deleted project not found, got %v", err)
+	}
+	if _, ok := repo.columns[column.ID]; ok {
+		t.Fatal("expected project columns deleted with project")
+	}
+	if _, ok := repo.tasks[task.ID]; ok {
+		t.Fatal("expected project tasks deleted with project")
 	}
 }
 

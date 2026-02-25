@@ -17,6 +17,7 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/atotto/clipboard"
 	"github.com/evanschultz/kan/internal/app"
 	"github.com/evanschultz/kan/internal/domain"
 )
@@ -33,6 +34,9 @@ type Service interface {
 	SearchTaskMatches(context.Context, app.SearchTasksFilter) ([]app.TaskMatch, error)
 	CreateProjectWithMetadata(context.Context, app.CreateProjectInput) (domain.Project, error)
 	UpdateProject(context.Context, app.UpdateProjectInput) (domain.Project, error)
+	ArchiveProject(context.Context, string) (domain.Project, error)
+	RestoreProject(context.Context, string) (domain.Project, error)
+	DeleteProject(context.Context, string) error
 	CreateTask(context.Context, app.CreateTaskInput) (domain.Task, error)
 	UpdateTask(context.Context, app.UpdateTaskInput) (domain.Task, error)
 	MoveTask(context.Context, string, string, int) (domain.Task, error)
@@ -105,6 +109,9 @@ const (
 	defaultHighlightColor = "212"
 )
 
+// defaultLabelSuggestionsSeed provides baseline label suggestions before user/project customization exists.
+var defaultLabelSuggestionsSeed = []string{"todo", "blocked", "urgent", "bug", "feature", "docs"}
+
 // priorityOptions stores a package-level helper value.
 var priorityOptions = []domain.Priority{
 	domain.PriorityLow,
@@ -152,7 +159,7 @@ var quickActionSpecs = []quickActionSpec{
 }
 
 // canonicalSearchStates stores canonical searchable lifecycle states.
-var canonicalSearchStatesOrdered = []string{"todo", "progress", "done"}
+var canonicalSearchStatesOrdered = []string{"todo", "progress", "done", "archived"}
 
 // canonicalSearchLevelsOrdered stores canonical searchable hierarchy levels.
 var canonicalSearchLevelsOrdered = []string{"project", "branch", "phase", "subphase", "task", "subtask"}
@@ -169,6 +176,7 @@ var canonicalSearchStateLabels = map[string]string{
 	"todo":     "To Do",
 	"progress": "In Progress",
 	"done":     "Done",
+	"archived": "Archived",
 }
 
 // canonicalSearchLevelLabels stores display labels for canonical hierarchy levels.
@@ -205,6 +213,7 @@ type labelPickerItem struct {
 type labelInheritanceSources struct {
 	Global  []string
 	Project []string
+	Branch  []string
 	Phase   []string
 }
 
@@ -218,6 +227,7 @@ type dependencyCandidate struct {
 type confirmAction struct {
 	Kind    string
 	Task    domain.Task
+	Project domain.Project
 	TaskIDs []string
 	Mode    app.DeleteMode
 	Label   string
@@ -329,29 +339,35 @@ type Model struct {
 	dependencyMatches           []dependencyCandidate
 	dependencyIndex             int
 
-	formInputs  []textinput.Model
-	formFocus   int
-	priorityIdx int
-	duePicker   int
-	pickerBack  inputMode
+	formInputs           []textinput.Model
+	formFocus            int
+	priorityIdx          int
+	duePicker            int
+	duePickerFocus       int
+	duePickerIncludeTime bool
+	pickerBack           inputMode
+	duePickerDateInput   textinput.Model
+	duePickerTimeInput   textinput.Model
 	// taskFormResourceRefs stages resource refs while creating or editing a task.
 	taskFormResourceRefs []domain.ResourceRef
 
-	projectPickerIndex int
-	projectFormInputs  []textinput.Model
-	projectFormFocus   int
-	labelsConfigInputs []textinput.Model
-	labelsConfigFocus  int
-	labelsConfigSlug   string
-	editingProjectID   string
-	editingTaskID      string
-	taskInfoTaskID     string
-	taskInfoSubtaskIdx int
-	taskFormParentID   string
-	taskFormKind       domain.WorkKind
-	taskFormScope      domain.KindAppliesTo
-	pendingProjectID   string
-	pendingFocusTaskID string
+	projectPickerIndex       int
+	projectFormInputs        []textinput.Model
+	projectFormFocus         int
+	labelsConfigInputs       []textinput.Model
+	labelsConfigFocus        int
+	labelsConfigSlug         string
+	labelsConfigBranchTaskID string
+	labelsConfigPhaseTaskID  string
+	editingProjectID         string
+	editingTaskID            string
+	taskInfoTaskID           string
+	taskInfoSubtaskIdx       int
+	taskFormParentID         string
+	taskFormKind             domain.WorkKind
+	taskFormScope            domain.KindAppliesTo
+	pendingProjectID         string
+	pendingFocusTaskID       string
 
 	lastArchivedTaskID string
 
@@ -388,9 +404,11 @@ type Model struct {
 	resourcePickerItems  []resourcePickerEntry
 	resourcePickerFilter textinput.Model
 
-	labelPickerBack  inputMode
-	labelPickerIndex int
-	labelPickerItems []labelPickerItem
+	labelPickerBack     inputMode
+	labelPickerIndex    int
+	labelPickerItems    []labelPickerItem
+	labelPickerAllItems []labelPickerItem
+	labelPickerInput    textinput.Model
 
 	dependencyBack        inputMode
 	dependencyOwnerTaskID string
@@ -402,6 +420,8 @@ type Model struct {
 	allowedLabelGlobal   []string
 	allowedLabelProject  map[string][]string
 	enforceAllowedLabels bool
+
+	mouseSelectionMode bool
 
 	reloadConfig    ReloadConfigFunc
 	saveProjectRoot SaveProjectRootFunc
@@ -441,17 +461,19 @@ type resourcePickerLoadedMsg struct {
 
 // actionMsg carries message data through update handling.
 type actionMsg struct {
-	err          error
-	status       string
-	reload       bool
-	projectID    string
-	focusTaskID  string
-	clearSelect  bool
-	clearTaskIDs []string
-	historyPush  *historyActionSet
-	historyUndo  *historyActionSet
-	historyRedo  *historyActionSet
-	activityItem *activityEntry
+	err             error
+	status          string
+	reload          bool
+	projectID       string
+	projectRootSlug string
+	projectRootPath string
+	focusTaskID     string
+	clearSelect     bool
+	clearTaskIDs    []string
+	historyPush     *historyActionSet
+	historyUndo     *historyActionSet
+	historyRedo     *historyActionSet
+	activityItem    *activityEntry
 }
 
 // searchResultsMsg carries message data through update handling.
@@ -514,34 +536,57 @@ func NewModel(svc Service, opts ...Option) Model {
 	searchInput.Prompt = ""
 	searchInput.Placeholder = "title, description, labels"
 	searchInput.CharLimit = 120
+	configureTextInputClipboardBindings(&searchInput)
 	commandInput := textinput.New()
 	commandInput.Prompt = ": "
 	commandInput.Placeholder = "type to filter commands"
 	commandInput.CharLimit = 120
+	configureTextInputClipboardBindings(&commandInput)
 	bootstrapDisplayInput := textinput.New()
-	bootstrapDisplayInput.Prompt = "name: "
+	bootstrapDisplayInput.Prompt = ""
 	bootstrapDisplayInput.Placeholder = "display name"
 	bootstrapDisplayInput.CharLimit = 120
+	configureTextInputClipboardBindings(&bootstrapDisplayInput)
 	pathsRootInput := textinput.New()
 	pathsRootInput.Prompt = "root: "
 	pathsRootInput.Placeholder = "absolute path (empty clears mapping)"
 	pathsRootInput.CharLimit = 512
+	configureTextInputClipboardBindings(&pathsRootInput)
 	highlightColorInput := textinput.New()
 	highlightColorInput.Prompt = "color: "
 	highlightColorInput.Placeholder = "ansi index (e.g. 212) or #RRGGBB"
 	highlightColorInput.CharLimit = 32
+	configureTextInputClipboardBindings(&highlightColorInput)
 	dependencyInput := textinput.New()
 	dependencyInput.Prompt = "query: "
 	dependencyInput.Placeholder = "search title, description, labels"
 	dependencyInput.CharLimit = 120
+	configureTextInputClipboardBindings(&dependencyInput)
 	threadInput := textinput.New()
 	threadInput.Prompt = "comment: "
 	threadInput.Placeholder = "write markdown and press enter"
 	threadInput.CharLimit = 4000
+	configureTextInputClipboardBindings(&threadInput)
 	resourcePickerFilter := textinput.New()
 	resourcePickerFilter.Prompt = "filter: "
 	resourcePickerFilter.Placeholder = "type to fuzzy-filter files/dirs"
 	resourcePickerFilter.CharLimit = 120
+	configureTextInputClipboardBindings(&resourcePickerFilter)
+	duePickerDateInput := textinput.New()
+	duePickerDateInput.Prompt = "date: "
+	duePickerDateInput.Placeholder = "today | tomorrow | 2026-03-01"
+	duePickerDateInput.CharLimit = 64
+	configureTextInputClipboardBindings(&duePickerDateInput)
+	duePickerTimeInput := textinput.New()
+	duePickerTimeInput.Prompt = "time: "
+	duePickerTimeInput.Placeholder = "17:00"
+	duePickerTimeInput.CharLimit = 16
+	configureTextInputClipboardBindings(&duePickerTimeInput)
+	labelPickerInput := textinput.New()
+	labelPickerInput.Prompt = "filter: "
+	labelPickerInput.Placeholder = "type to fuzzy-find labels"
+	labelPickerInput.CharLimit = 120
+	configureTextInputClipboardBindings(&labelPickerInput)
 	m := Model{
 		svc:                      svc,
 		status:                   "loading...",
@@ -557,6 +602,9 @@ func NewModel(svc Service, opts ...Option) Model {
 		dependencyInput:          dependencyInput,
 		threadInput:              threadInput,
 		resourcePickerFilter:     resourcePickerFilter,
+		duePickerDateInput:       duePickerDateInput,
+		duePickerTimeInput:       duePickerTimeInput,
+		labelPickerInput:         labelPickerInput,
 		searchStates:             []string{"todo", "progress", "done"},
 		searchDefaultStates:      []string{"todo", "progress", "done"},
 		searchLevels:             []string{"project", "branch", "phase", "subphase", "task", "subtask"},
@@ -707,6 +755,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.projectID != "" {
 			m.pendingProjectID = msg.projectID
+		}
+		if msg.projectRootSlug != "" {
+			if m.projectRoots == nil {
+				m.projectRoots = map[string]string{}
+			}
+			if strings.TrimSpace(msg.projectRootPath) == "" {
+				delete(m.projectRoots, msg.projectRootSlug)
+			} else {
+				m.projectRoots[msg.projectRootSlug] = strings.TrimSpace(msg.projectRootPath)
+			}
 		}
 		if msg.focusTaskID != "" {
 			m.pendingFocusTaskID = msg.focusTaskID
@@ -875,13 +933,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) View() tea.View {
 	if m.err != nil {
 		v := tea.NewView("error: " + m.err.Error() + "\n\npress r to retry • q quit\n")
-		v.MouseMode = tea.MouseModeCellMotion
+		v.MouseMode = m.activeMouseMode()
 		v.AltScreen = true
 		return v
 	}
 	if !m.ready {
 		v := tea.NewView("loading...")
-		v.MouseMode = tea.MouseModeCellMotion
+		v.MouseMode = m.activeMouseMode()
 		v.AltScreen = true
 		return v
 	}
@@ -931,7 +989,7 @@ func (m Model) View() tea.View {
 			fullContent = overlayOnContent(fullContent, overlay, max(1, m.width), max(1, overlayHeight))
 		}
 		v := tea.NewView(fullContent)
-		v.MouseMode = tea.MouseModeCellMotion
+		v.MouseMode = m.activeMouseMode()
 		v.AltScreen = true
 		return v
 	}
@@ -1213,14 +1271,22 @@ func (m Model) View() tea.View {
 	}
 
 	view := tea.NewView(fullContent)
-	view.MouseMode = tea.MouseModeCellMotion
+	view.MouseMode = m.activeMouseMode()
 	view.AltScreen = true
 	return view
 }
 
+// activeMouseMode returns the current mouse mode, including clipboard-friendly selection mode.
+func (m Model) activeMouseMode() tea.MouseMode {
+	if m.mouseSelectionMode {
+		return tea.MouseModeNone
+	}
+	return tea.MouseModeCellMotion
+}
+
 // loadData loads required data for the current operation.
 func (m Model) loadData() tea.Msg {
-	projects, err := m.svc.ListProjects(context.Background(), false)
+	projects, err := m.svc.ListProjects(context.Background(), m.showArchived)
 	if err != nil {
 		return loadedMsg{err: err}
 	}
@@ -1373,10 +1439,19 @@ func newModalInput(prompt, placeholder, value string, limit int) textinput.Model
 	in.Prompt = prompt
 	in.Placeholder = placeholder
 	in.CharLimit = limit
+	configureTextInputClipboardBindings(&in)
 	if value != "" {
 		in.SetValue(value)
 	}
 	return in
+}
+
+// configureTextInputClipboardBindings adds platform-friendly clipboard paste bindings for text inputs.
+func configureTextInputClipboardBindings(in *textinput.Model) {
+	if in == nil {
+		return
+	}
+	in.KeyMap.Paste.SetKeys("ctrl+v", "meta+v", "super+v")
 }
 
 // startSearchMode starts search mode.
@@ -1427,7 +1502,7 @@ func (m *Model) startBootstrapSettingsMode(mandatory bool) tea.Cmd {
 
 // focusBootstrapField sets focus to one bootstrap/settings modal section.
 func (m *Model) focusBootstrapField(idx int) tea.Cmd {
-	const totalFields = 4
+	const totalFields = 3
 	idx = clamp(idx, 0, totalFields-1)
 	m.bootstrapFocus = idx
 	m.bootstrapDisplayInput.Blur()
@@ -1451,20 +1526,18 @@ func (m *Model) cycleBootstrapActor(delta int) {
 	m.bootstrapActorIndex = wrapIndex(m.bootstrapActorIndex, delta, len(bootstrapActorTypes))
 }
 
-// addBootstrapSearchRoot appends one normalized bootstrap root when it is not already present.
+// addBootstrapSearchRoot sets the single normalized bootstrap default path.
 func (m *Model) addBootstrapSearchRoot(root string) bool {
 	root = strings.TrimSpace(root)
 	if root == "" {
 		return false
 	}
 	root = filepath.Clean(root)
-	for _, existing := range m.bootstrapRoots {
-		if strings.EqualFold(existing, root) {
-			return false
-		}
+	if len(m.bootstrapRoots) == 1 && strings.EqualFold(m.bootstrapRoots[0], root) {
+		return false
 	}
-	m.bootstrapRoots = append(m.bootstrapRoots, root)
-	m.bootstrapRootIndex = clamp(len(m.bootstrapRoots)-1, 0, len(m.bootstrapRoots)-1)
+	m.bootstrapRoots = []string{root}
+	m.bootstrapRootIndex = 0
 	return true
 }
 
@@ -1488,7 +1561,7 @@ func (m Model) submitBootstrapSettings() (tea.Model, tea.Cmd) {
 	}
 	roots := normalizeSearchRoots(m.bootstrapRoots)
 	if len(roots) == 0 {
-		m.status = "at least one global search root is required"
+		m.status = "default path is required"
 		return m, nil
 	}
 	if m.saveBootstrap == nil {
@@ -1708,6 +1781,55 @@ func (m *Model) startSubtaskForm(parent domain.Task) tea.Cmd {
 	return cmd
 }
 
+// startBranchForm opens the task form preconfigured for a branch work item.
+func (m *Model) startBranchForm(parent *domain.Task) tea.Cmd {
+	cmd := m.startTaskForm(nil)
+	m.taskFormKind = domain.WorkKind("branch")
+	m.taskFormScope = domain.KindAppliesToBranch
+	m.taskFormParentID = ""
+	if parent != nil && strings.TrimSpace(parent.ID) != "" {
+		m.taskFormParentID = parent.ID
+	}
+	if len(m.formInputs) > taskFieldTitle {
+		m.formInputs[taskFieldTitle].Placeholder = "branch title (required)"
+	}
+	m.refreshTaskFormLabelSuggestions()
+	m.status = "new branch"
+	return cmd
+}
+
+// startSubtaskFormFromTaskForm opens a subtask form from create/edit task modal context.
+func (m *Model) startSubtaskFormFromTaskForm() tea.Cmd {
+	if m.mode == modeEditTask {
+		taskID := strings.TrimSpace(m.editingTaskID)
+		if taskID == "" {
+			task, ok := m.selectedTaskInCurrentColumn()
+			if !ok {
+				m.status = "no task selected"
+				return nil
+			}
+			taskID = task.ID
+		}
+		task, ok := m.taskByID(taskID)
+		if !ok {
+			m.status = "task not found"
+			return nil
+		}
+		return m.startSubtaskForm(task)
+	}
+	parentID := strings.TrimSpace(m.taskFormParentID)
+	if parentID == "" {
+		m.status = "save task first to add subtask"
+		return nil
+	}
+	parent, ok := m.taskByID(parentID)
+	if !ok {
+		m.status = "parent task not found"
+		return nil
+	}
+	return m.startSubtaskForm(parent)
+}
+
 // focusTaskFormField focuses task form field.
 func (m *Model) focusTaskFormField(idx int) tea.Cmd {
 	if len(m.formInputs) == 0 {
@@ -1737,7 +1859,7 @@ func (m *Model) focusProjectFormField(idx int) tea.Cmd {
 	return m.projectFormInputs[idx].Focus()
 }
 
-// startLabelsConfigForm opens a modal for editing global + current-project label defaults.
+// startLabelsConfigForm opens a modal for editing global/project/branch/phase label defaults.
 func (m *Model) startLabelsConfigForm() tea.Cmd {
 	project, ok := m.currentProject()
 	if !ok {
@@ -1750,16 +1872,32 @@ func (m *Model) startLabelsConfigForm() tea.Cmd {
 		return nil
 	}
 	m.labelsConfigSlug = slug
+	m.labelsConfigBranchTaskID = ""
+	m.labelsConfigPhaseTaskID = ""
 	m.labelsConfigFocus = 0
 	m.labelsConfigInputs = []textinput.Model{
 		newModalInput("", "global labels csv", "", 240),
 		newModalInput("", "project labels csv", "", 240),
+		newModalInput("", "branch labels csv (optional)", "", 240),
+		newModalInput("", "phase labels csv (optional)", "", 240),
 	}
 	if len(m.allowedLabelGlobal) > 0 {
 		m.labelsConfigInputs[0].SetValue(strings.Join(m.allowedLabelGlobal, ","))
 	}
 	if labels := m.allowedLabelProject[slug]; len(labels) > 0 {
 		m.labelsConfigInputs[1].SetValue(strings.Join(labels, ","))
+	}
+	if branch, ok := m.labelsConfigContextTask("branch"); ok {
+		m.labelsConfigBranchTaskID = branch.ID
+		if len(branch.Labels) > 0 {
+			m.labelsConfigInputs[2].SetValue(strings.Join(branch.Labels, ","))
+		}
+	}
+	if phase, ok := m.labelsConfigContextTask("phase", "subphase"); ok {
+		m.labelsConfigPhaseTaskID = phase.ID
+		if len(phase.Labels) > 0 {
+			m.labelsConfigInputs[3].SetValue(strings.Join(phase.Labels, ","))
+		}
 	}
 	m.mode = modeLabelsConfig
 	m.status = "edit labels config"
@@ -1777,6 +1915,46 @@ func (m *Model) focusLabelsConfigField(idx int) tea.Cmd {
 		m.labelsConfigInputs[i].Blur()
 	}
 	return m.labelsConfigInputs[idx].Focus()
+}
+
+// labelsConfigContextTask resolves the nearest selected task at one of the requested levels.
+func (m Model) labelsConfigContextTask(levels ...string) (domain.Task, bool) {
+	if len(levels) == 0 {
+		return domain.Task{}, false
+	}
+	targetSet := map[string]struct{}{}
+	for _, level := range levels {
+		level = strings.TrimSpace(strings.ToLower(level))
+		if level == "" {
+			continue
+		}
+		targetSet[level] = struct{}{}
+	}
+	task, ok := m.selectedTaskForLabelInheritance()
+	if !ok {
+		return domain.Task{}, false
+	}
+	visited := map[string]struct{}{}
+	current := task
+	for strings.TrimSpace(current.ID) != "" {
+		if _, seen := visited[current.ID]; seen {
+			break
+		}
+		visited[current.ID] = struct{}{}
+		if _, wanted := targetSet[baseSearchLevelForTask(current)]; wanted {
+			return current, true
+		}
+		parentID := strings.TrimSpace(current.ParentID)
+		if parentID == "" {
+			break
+		}
+		parent, found := m.taskByID(parentID)
+		if !found {
+			break
+		}
+		current = parent
+	}
+	return domain.Task{}, false
 }
 
 // taskFormValues returns task form values.
@@ -1840,20 +2018,23 @@ func parseDueInput(raw string, current *time.Time) (*time.Time, error) {
 	if text == "-" {
 		return nil, nil
 	}
-	layouts := []string{
+	if parsed, err := time.Parse(time.RFC3339, text); err == nil {
+		ts := parsed.UTC()
+		return &ts, nil
+	}
+
+	localLayouts := []string{
 		"2006-01-02",
 		"2006-01-02T15:04",
 		"2006-01-02 15:04",
-		time.RFC3339,
 	}
-	var parsed time.Time
-	var err error
-	for _, layout := range layouts {
-		parsed, err = time.Parse(layout, text)
-		if err == nil {
-			ts := parsed.UTC()
-			return &ts, nil
+	for _, layout := range localLayouts {
+		parsed, err := time.ParseInLocation(layout, text, time.Local)
+		if err != nil {
+			continue
 		}
+		ts := parsed.UTC()
+		return &ts, nil
 	}
 	return nil, fmt.Errorf("due date must be YYYY-MM-DD, YYYY-MM-DDTHH:MM, RFC3339, or -")
 }
@@ -1875,7 +2056,7 @@ func formatDueValue(dueAt *time.Time) string {
 	if dueAt == nil {
 		return "-"
 	}
-	due := dueAt.UTC()
+	due := dueAt.In(time.Local)
 	if due.Hour() == 0 && due.Minute() == 0 {
 		return due.Format("2006-01-02")
 	}
@@ -2271,23 +2452,17 @@ func normalizeSearchRootPathInput(raw string) (string, error) {
 	return filepath.Clean(rootPath), nil
 }
 
-// normalizeSearchRoots trims, deduplicates, and cleans global search root paths.
+// normalizeSearchRoots trims and cleans the configured default path, keeping a single entry.
 func normalizeSearchRoots(roots []string) []string {
-	out := make([]string, 0, len(roots))
-	seen := map[string]struct{}{}
 	for _, raw := range roots {
 		root := strings.TrimSpace(raw)
 		if root == "" {
 			continue
 		}
 		root = filepath.Clean(root)
-		if _, ok := seen[root]; ok {
-			continue
-		}
-		seen[root] = struct{}{}
-		out = append(out, root)
+		return []string{root}
 	}
-	return out
+	return nil
 }
 
 // saveProjectRootCmd persists one project-root mapping through the callback surface.
@@ -2308,10 +2483,18 @@ func commandPaletteItems() []commandPaletteItem {
 	return []commandPaletteItem{
 		{Command: "new-task", Aliases: []string{"task-new"}, Description: "create a new task"},
 		{Command: "new-subtask", Aliases: []string{"task-subtask"}, Description: "create subtask for selected item"},
+		{Command: "new-branch", Aliases: []string{"branch-new"}, Description: "create a new branch"},
+		{Command: "edit-branch", Aliases: []string{"branch-edit"}, Description: "edit selected branch"},
+		{Command: "archive-branch", Aliases: []string{"branch-archive"}, Description: "archive selected branch"},
+		{Command: "delete-branch", Aliases: []string{"branch-delete"}, Description: "hard delete selected branch"},
+		{Command: "restore-branch", Aliases: []string{"branch-restore"}, Description: "restore selected archived branch"},
 		{Command: "edit-task", Aliases: []string{"task-edit"}, Description: "edit selected task"},
 		{Command: "thread-item", Aliases: []string{"item-thread", "task-thread"}, Description: "open selected work-item thread"},
 		{Command: "new-project", Aliases: []string{"project-new"}, Description: "create a new project"},
 		{Command: "edit-project", Aliases: []string{"project-edit"}, Description: "edit selected project"},
+		{Command: "archive-project", Aliases: []string{"project-archive"}, Description: "archive selected project"},
+		{Command: "restore-project", Aliases: []string{"project-restore"}, Description: "restore selected archived project"},
+		{Command: "delete-project", Aliases: []string{"project-delete"}, Description: "hard delete selected project"},
 		{Command: "thread-project", Aliases: []string{"project-thread"}, Description: "open current project thread"},
 		{Command: "search", Aliases: []string{}, Description: "open search modal"},
 		{Command: "search-all", Aliases: []string{}, Description: "set search scope to all projects"},
@@ -2319,6 +2502,7 @@ func commandPaletteItems() []commandPaletteItem {
 		{Command: "clear-query", Aliases: []string{"clear-search-query"}, Description: "clear search text only"},
 		{Command: "reset-filters", Aliases: []string{"clear-search"}, Description: "reset query + states + scope + archived"},
 		{Command: "toggle-archived", Aliases: []string{}, Description: "toggle archived visibility"},
+		{Command: "toggle-selection-mode", Aliases: []string{"select-mode", "text-select"}, Description: "toggle mouse text-selection mode"},
 		{Command: "focus-subtree", Aliases: []string{"zoom-task"}, Description: "show selected task subtree only"},
 		{Command: "focus-clear", Aliases: []string{"zoom-reset"}, Description: "return to full board view"},
 		{Command: "toggle-select", Aliases: []string{"select-task"}, Description: "toggle selected task in multi-select"},
@@ -2331,8 +2515,8 @@ func commandPaletteItems() []commandPaletteItem {
 		{Command: "redo", Aliases: []string{}, Description: "redo last undone mutation"},
 		{Command: "reload-config", Aliases: []string{"config-reload", "reload"}, Description: "reload runtime config from disk"},
 		{Command: "paths-roots", Aliases: []string{"roots", "project-root"}, Description: "edit current project root mapping"},
-		{Command: "bootstrap-settings", Aliases: []string{"setup", "identity-roots"}, Description: "edit identity defaults + global search roots"},
-		{Command: "labels-config", Aliases: []string{"labels", "edit-labels"}, Description: "edit global + project labels defaults"},
+		{Command: "bootstrap-settings", Aliases: []string{"setup", "identity-roots"}, Description: "edit identity defaults + default path"},
+		{Command: "labels-config", Aliases: []string{"labels", "edit-labels"}, Description: "edit global/project/branch/phase labels"},
 		{Command: "highlight-color", Aliases: []string{"set-highlight", "focus-color"}, Description: "set focused-row highlight color"},
 		{Command: "activity-log", Aliases: []string{"log"}, Description: "open recent activity modal"},
 		{Command: "help", Aliases: []string{}, Description: "open help modal"},
@@ -2501,40 +2685,259 @@ func (m *Model) startDuePicker() {
 	m.pickerBack = m.mode
 	m.mode = modeDuePicker
 	m.duePicker = 0
+	m.duePickerFocus = 1
+	m.duePickerDateInput.SetValue("")
+	m.duePickerDateInput.CursorEnd()
+	m.duePickerTimeInput.SetValue("")
+	m.duePickerTimeInput.CursorEnd()
+	m.duePickerTimeInput.Blur()
+	_ = m.duePickerDateInput.Focus()
+	m.duePickerIncludeTime = false
+	if len(m.formInputs) > taskFieldDue {
+		current := strings.TrimSpace(m.formInputs[taskFieldDue].Value())
+		if current != "" && current != "-" {
+			if parsed, err := parseDueInput(current, nil); err == nil && parsed != nil {
+				local := parsed.In(time.Local)
+				m.duePickerDateInput.SetValue(local.Format("2006-01-02"))
+				if local.Hour() != 0 || local.Minute() != 0 {
+					m.duePickerIncludeTime = true
+					m.duePickerTimeInput.SetValue(local.Format("15:04"))
+				}
+			}
+		}
+	}
+	m.duePicker = 0
 }
 
 // duePickerOptions handles due picker options.
 func (m *Model) duePickerOptions() []duePickerOption {
-	now := time.Now().UTC()
-	today := now.Format("2006-01-02")
-	tomorrow := now.AddDate(0, 0, 1).Format("2006-01-02")
-	nextWeek := now.AddDate(0, 0, 7).Format("2006-01-02")
-	inTwoWeeks := now.AddDate(0, 0, 14).Format("2006-01-02")
-	todayEnd := time.Date(now.Year(), now.Month(), now.Day(), 17, 0, 0, 0, time.UTC).Format("2006-01-02 15:04")
-	tomorrowStart := time.Date(now.Year(), now.Month(), now.Day(), 9, 0, 0, 0, time.UTC).AddDate(0, 0, 1).Format("2006-01-02 15:04")
-	return []duePickerOption{
-		{Label: "No due date", Value: "-"},
-		{Label: "Today (" + today + ")", Value: today},
-		{Label: "Today 17:00 UTC (" + todayEnd + ")", Value: todayEnd},
-		{Label: "Tomorrow (" + tomorrow + ")", Value: tomorrow},
-		{Label: "Tomorrow 09:00 UTC (" + tomorrowStart + ")", Value: tomorrowStart},
-		{Label: "Next week (" + nextWeek + ")", Value: nextWeek},
-		{Label: "In two weeks (" + inTwoWeeks + ")", Value: inTwoWeeks},
+	now := time.Now().In(time.Local)
+	baseDates := []struct {
+		label string
+		when  time.Time
+	}{
+		{label: "Today", when: now},
+		{label: "Tomorrow", when: now.AddDate(0, 0, 1)},
+		{label: "Next week", when: now.AddDate(0, 0, 7)},
+		{label: "In two weeks", when: now.AddDate(0, 0, 14)},
 	}
+	options := make([]duePickerOption, 0, 16)
+	options = append(options, duePickerOption{Label: "No due date", Value: "-"})
+	if !m.duePickerIncludeTime {
+		for _, item := range baseDates {
+			value := item.when.Format("2006-01-02")
+			options = append(options, duePickerOption{
+				Label: fmt.Sprintf("%s (%s)", item.label, value),
+				Value: value,
+			})
+		}
+	} else {
+		times := []struct {
+			label string
+			hour  int
+			min   int
+		}{
+			{label: "09:00", hour: 9, min: 0},
+			{label: "12:00", hour: 12, min: 0},
+			{label: "17:00", hour: 17, min: 0},
+		}
+		for _, day := range baseDates {
+			for _, tm := range times {
+				dt := time.Date(day.when.Year(), day.when.Month(), day.when.Day(), tm.hour, tm.min, 0, 0, time.Local)
+				value := dt.Format("2006-01-02 15:04")
+				options = append(options, duePickerOption{
+					Label: fmt.Sprintf("%s %s (%s)", day.label, tm.label, value),
+					Value: value,
+				})
+			}
+		}
+	}
+
+	dateInput := strings.TrimSpace(m.duePickerDateInput.Value())
+	timeInput := strings.TrimSpace(m.duePickerTimeInput.Value())
+	if dateInput != "" {
+		if typedDate, ok := resolveDuePickerDateToken(dateInput, now); ok {
+			if !m.duePickerIncludeTime {
+				value := typedDate.Format("2006-01-02")
+				options = append([]duePickerOption{{
+					Label: fmt.Sprintf("Use typed date (%s)", value),
+					Value: value,
+				}}, options...)
+			} else if hour, minute, ok := parseDuePickerTimeToken(timeInput); ok {
+				typedDateTime := time.Date(typedDate.Year(), typedDate.Month(), typedDate.Day(), hour, minute, 0, 0, time.Local)
+				value := typedDateTime.Format("2006-01-02 15:04")
+				options = append([]duePickerOption{{
+					Label: fmt.Sprintf("Use typed datetime (%s)", value),
+					Value: value,
+				}}, options...)
+			}
+		}
+	}
+
+	dateQuery := strings.TrimSpace(strings.ToLower(m.duePickerDateInput.Value()))
+	timeQuery := strings.TrimSpace(strings.ToLower(m.duePickerTimeInput.Value()))
+	if dateQuery == "" && (!m.duePickerIncludeTime || timeQuery == "") {
+		return options
+	}
+
+	type scoredOption struct {
+		option duePickerOption
+		score  int
+	}
+	scored := make([]scoredOption, 0, len(options))
+	for _, option := range options {
+		score := 0
+		if dateQuery != "" {
+			dateScore, ok := bestFuzzyScore(dateQuery, option.Label, option.Value)
+			if !ok {
+				continue
+			}
+			score += dateScore
+		}
+		if m.duePickerIncludeTime && timeQuery != "" {
+			timeScore, ok := bestFuzzyScore(timeQuery, option.Label, option.Value)
+			if !ok {
+				continue
+			}
+			score += timeScore
+		}
+		scored = append(scored, scoredOption{option: option, score: score})
+	}
+	sort.SliceStable(scored, func(i, j int) bool {
+		if scored[i].score != scored[j].score {
+			return scored[i].score > scored[j].score
+		}
+		return scored[i].option.Value < scored[j].option.Value
+	})
+	out := make([]duePickerOption, 0, len(scored))
+	for _, item := range scored {
+		out = append(out, item.option)
+	}
+	return out
+}
+
+// resolveDuePickerDateToken parses due-picker date text into a local calendar date.
+func resolveDuePickerDateToken(raw string, now time.Time) (time.Time, bool) {
+	token := strings.TrimSpace(strings.ToLower(raw))
+	if token == "" {
+		return time.Time{}, false
+	}
+	switch token {
+	case "today":
+		return now, true
+	case "tomorrow":
+		return now.AddDate(0, 0, 1), true
+	case "next week":
+		return now.AddDate(0, 0, 7), true
+	case "in two weeks":
+		return now.AddDate(0, 0, 14), true
+	}
+	parsed, err := time.ParseInLocation("2006-01-02", token, time.Local)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return parsed, true
+}
+
+// parseDuePickerTimeToken parses due-picker time text into hour and minute values.
+func parseDuePickerTimeToken(raw string) (int, int, bool) {
+	token := strings.TrimSpace(strings.ToLower(raw))
+	if token == "" {
+		return 0, 0, false
+	}
+	layouts := []string{
+		"15:04",
+		"3:04pm",
+		"3pm",
+	}
+	for _, layout := range layouts {
+		parsed, err := time.Parse(layout, token)
+		if err != nil {
+			continue
+		}
+		return parsed.Hour(), parsed.Minute(), true
+	}
+	return 0, 0, false
+}
+
+// duePickerFocusSlots returns the ordered focus slots for due-picker controls.
+func (m Model) duePickerFocusSlots() []int {
+	slots := []int{0, 1, 3}
+	if m.duePickerIncludeTime {
+		slots = []int{0, 1, 2, 3}
+	}
+	return slots
+}
+
+// focusDuePickerSlot focuses one due-picker control slot.
+func (m *Model) focusDuePickerSlot(slot int) tea.Cmd {
+	m.duePickerDateInput.Blur()
+	m.duePickerTimeInput.Blur()
+	m.duePickerFocus = slot
+	switch slot {
+	case 1:
+		return m.duePickerDateInput.Focus()
+	case 2:
+		if !m.duePickerIncludeTime {
+			m.duePickerFocus = 3
+			return nil
+		}
+		return m.duePickerTimeInput.Focus()
+	default:
+		return nil
+	}
+}
+
+// cycleDuePickerFocus advances due-picker focus to the next/previous control.
+func (m *Model) cycleDuePickerFocus(delta int) tea.Cmd {
+	slots := m.duePickerFocusSlots()
+	if len(slots) == 0 {
+		return nil
+	}
+	idx := 0
+	for i, slot := range slots {
+		if slot == m.duePickerFocus {
+			idx = i
+			break
+		}
+	}
+	idx = wrapIndex(idx, delta, len(slots))
+	return m.focusDuePickerSlot(slots[idx])
+}
+
+// setDuePickerIncludeTime toggles timed due-picker options while preserving focus sanity.
+func (m *Model) setDuePickerIncludeTime(enabled bool) tea.Cmd {
+	m.duePickerIncludeTime = enabled
+	if !enabled && m.duePickerFocus == 2 {
+		return m.focusDuePickerSlot(3)
+	}
+	if enabled && m.duePickerFocus == 3 && strings.TrimSpace(m.duePickerTimeInput.Value()) == "" {
+		return m.focusDuePickerSlot(2)
+	}
+	return nil
 }
 
 // startLabelPicker opens a modal picker with inherited label suggestions.
 func (m *Model) startLabelPicker() tea.Cmd {
 	m.labelPickerBack = m.mode
 	m.mode = modeLabelPicker
-	m.labelPickerItems = m.taskFormLabelPickerItems()
+	m.labelPickerInput.SetValue("")
+	m.labelPickerInput.CursorEnd()
+	m.labelPickerAllItems = m.taskFormLabelPickerItems()
+	for _, label := range m.labelSuggestions(48) {
+		m.labelPickerAllItems = append(m.labelPickerAllItems, labelPickerItem{Label: label, Source: "suggested"})
+	}
+	for _, label := range normalizeConfigLabels(defaultLabelSuggestionsSeed) {
+		m.labelPickerAllItems = append(m.labelPickerAllItems, labelPickerItem{Label: label, Source: "default"})
+	}
+	m.refreshLabelPickerMatches()
 	m.labelPickerIndex = 0
 	if len(m.labelPickerItems) == 0 {
-		m.status = "no inherited labels available"
+		m.status = "no labels available"
 	} else {
-		m.status = "label inheritance picker"
+		m.status = "label picker"
 	}
-	return nil
+	return m.labelPickerInput.Focus()
 }
 
 // startDependencyInspectorFromTaskInfo opens dependency inspector for one existing task.
@@ -3022,6 +3425,7 @@ func (m *Model) refreshTaskFormLabelSuggestions() {
 	suggestions := mergeUniqueLabels(
 		mergeLabelSources(m.taskFormLabelSources()),
 		m.labelSuggestions(24),
+		defaultLabelSuggestionsSeed,
 	)
 	m.formInputs[taskFieldLabels].SetSuggestions(suggestions)
 }
@@ -3065,6 +3469,7 @@ func (m Model) labelSourcesForTask(task domain.Task) labelInheritanceSources {
 		sources.Project = normalizeConfigLabels(m.allowedLabelProject[projectSlug])
 	}
 	if strings.TrimSpace(task.ID) != "" {
+		sources.Branch = m.labelsFromBranchAncestors(task)
 		sources.Phase = m.labelsFromPhaseAncestors(task)
 	}
 	return sources
@@ -3122,19 +3527,105 @@ func (m Model) labelsFromPhaseAncestors(task domain.Task) []string {
 	return out
 }
 
+// labelsFromBranchAncestors collects inherited labels from branch ancestors in parent-chain order.
+func (m Model) labelsFromBranchAncestors(task domain.Task) []string {
+	out := make([]string, 0)
+	seenLabels := map[string]struct{}{}
+	visited := map[string]struct{}{}
+	current := task
+	for strings.TrimSpace(current.ID) != "" {
+		if _, seen := visited[current.ID]; seen {
+			break
+		}
+		visited[current.ID] = struct{}{}
+		level := baseSearchLevelForTask(current)
+		if level == "branch" {
+			for _, rawLabel := range current.Labels {
+				label := strings.TrimSpace(strings.ToLower(rawLabel))
+				if label == "" {
+					continue
+				}
+				if _, ok := seenLabels[label]; ok {
+					continue
+				}
+				seenLabels[label] = struct{}{}
+				out = append(out, label)
+			}
+		}
+		parentID := strings.TrimSpace(current.ParentID)
+		if parentID == "" {
+			break
+		}
+		parent, ok := m.taskByID(parentID)
+		if !ok {
+			break
+		}
+		current = parent
+	}
+	return out
+}
+
 // taskFormLabelPickerItems builds source-tagged inherited labels for modal selection.
 func (m Model) taskFormLabelPickerItems() []labelPickerItem {
 	sources := m.taskFormLabelSources()
-	out := make([]labelPickerItem, 0, len(sources.Global)+len(sources.Project)+len(sources.Phase))
+	out := make([]labelPickerItem, 0, len(sources.Global)+len(sources.Project)+len(sources.Branch)+len(sources.Phase))
+	seen := map[string]struct{}{}
 	appendItems := func(source string, labels []string) {
 		for _, label := range labels {
+			key := source + "\x00" + label
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
 			out = append(out, labelPickerItem{Label: label, Source: source})
 		}
 	}
 	appendItems("global", sources.Global)
 	appendItems("project", sources.Project)
+	appendItems("branch", sources.Branch)
 	appendItems("phase", sources.Phase)
 	return out
+}
+
+// refreshLabelPickerMatches refreshes filtered label-picker rows from current query text.
+func (m *Model) refreshLabelPickerMatches() {
+	query := strings.TrimSpace(m.labelPickerInput.Value())
+	if query == "" {
+		m.labelPickerItems = append([]labelPickerItem(nil), m.labelPickerAllItems...)
+		m.labelPickerIndex = clamp(m.labelPickerIndex, 0, len(m.labelPickerItems)-1)
+		return
+	}
+
+	type scoredLabel struct {
+		item  labelPickerItem
+		score int
+	}
+	scored := make([]scoredLabel, 0, len(m.labelPickerAllItems))
+	for _, item := range m.labelPickerAllItems {
+		score, ok := bestFuzzyScore(query, item.Label, item.Source)
+		if !ok {
+			continue
+		}
+		scored = append(scored, scoredLabel{
+			item:  item,
+			score: score,
+		})
+	}
+	sort.SliceStable(scored, func(i, j int) bool {
+		if scored[i].score != scored[j].score {
+			return scored[i].score > scored[j].score
+		}
+		if scored[i].item.Label != scored[j].item.Label {
+			return scored[i].item.Label < scored[j].item.Label
+		}
+		return scored[i].item.Source < scored[j].item.Source
+	})
+	out := make([]labelPickerItem, 0, len(scored))
+	for _, entry := range scored {
+		out = append(out, entry.item)
+	}
+	m.labelPickerItems = out
+	m.labelPickerIndex = clamp(m.labelPickerIndex, 0, len(m.labelPickerItems)-1)
 }
 
 // appendTaskFormLabel appends one normalized label to the form without duplicating entries.
@@ -3422,7 +3913,7 @@ func (m *Model) attachResourcePickerEntry(entry resourcePickerEntry) tea.Cmd {
 		return nil
 	}
 
-	// Bootstrap settings flow appends one global search root.
+	// Bootstrap settings flow sets one default path.
 	if back == modeBootstrapSettings {
 		selectedDir := entry.Path
 		if !entry.IsDir {
@@ -3431,14 +3922,14 @@ func (m *Model) attachResourcePickerEntry(entry resourcePickerEntry) tea.Cmd {
 		root, err := normalizeSearchRootPathInput(selectedDir)
 		if err != nil {
 			m.status = err.Error()
-			return m.focusBootstrapField(2)
+			return m.focusBootstrapField(1)
 		}
 		if !m.addBootstrapSearchRoot(root) {
-			m.status = "search root already added"
-			return m.focusBootstrapField(2)
+			m.status = "default path unchanged"
+			return m.focusBootstrapField(1)
 		}
-		m.status = "search root added"
-		return m.focusBootstrapField(2)
+		m.status = "default path set"
+		return m.focusBootstrapField(1)
 	}
 
 	// Existing task-info path persists immediately to task metadata.
@@ -3584,9 +4075,9 @@ func formatLabelSource(source string, labels []string) string {
 	return source + ": " + strings.Join(labels, ", ")
 }
 
-// mergeLabelSources merges inherited label sources using global -> project -> phase precedence.
+// mergeLabelSources merges inherited label sources using global -> project -> branch -> phase precedence.
 func mergeLabelSources(sources labelInheritanceSources) []string {
-	out := make([]string, 0, len(sources.Global)+len(sources.Project)+len(sources.Phase))
+	out := make([]string, 0, len(sources.Global)+len(sources.Project)+len(sources.Branch)+len(sources.Phase))
 	seen := map[string]struct{}{}
 	appendUnique := func(values []string) {
 		for _, raw := range values {
@@ -3603,6 +4094,7 @@ func mergeLabelSources(sources labelInheritanceSources) []string {
 	}
 	appendUnique(sources.Global)
 	appendUnique(sources.Project)
+	appendUnique(sources.Branch)
 	appendUnique(sources.Phase)
 	return out
 }
@@ -4009,6 +4501,14 @@ func (m Model) handleNormalModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.selectedTask = 0
 		m.clearSelection()
 		return m, m.loadData
+	case key.Matches(msg, m.keys.toggleSelectMode):
+		m.mouseSelectionMode = !m.mouseSelectionMode
+		if m.mouseSelectionMode {
+			m.status = "text selection mode enabled"
+		} else {
+			m.status = "text selection mode disabled"
+		}
+		return m, nil
 	default:
 		return m, nil
 	}
@@ -4032,6 +4532,10 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.mode == modeThread {
+		if handled, status := applyClipboardShortcutToInput(msg, &m.threadInput); handled {
+			m.status = status
+			return m, nil
+		}
 		switch {
 		case msg.Code == tea.KeyEscape || msg.String() == "esc":
 			m.threadInput.Blur()
@@ -4165,6 +4669,12 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.mode == modeDependencyInspector {
+		if m.dependencyFocus == 0 {
+			if handled, status := applyClipboardShortcutToInput(msg, &m.dependencyInput); handled {
+				m.status = status
+				return m, nil
+			}
+		}
 		switch {
 		case msg.Code == tea.KeyEscape || msg.String() == "esc":
 			m.mode = m.dependencyBack
@@ -4368,6 +4878,12 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.mode == modeBootstrapSettings {
+		if m.bootstrapFocus == 0 {
+			if handled, status := applyClipboardShortcutToInput(msg, &m.bootstrapDisplayInput); handled {
+				m.status = status
+				return m, nil
+			}
+		}
 		switch {
 		case msg.Code == tea.KeyEscape || msg.String() == "esc":
 			if m.bootstrapMandatory {
@@ -4379,57 +4895,51 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.status = "cancelled"
 			return m, nil
 		case msg.Code == tea.KeyTab || msg.String() == "tab" || msg.String() == "ctrl+i":
-			return m, m.focusBootstrapField(wrapIndex(m.bootstrapFocus, 1, 4))
+			return m, m.focusBootstrapField(wrapIndex(m.bootstrapFocus, 1, 3))
 		case msg.String() == "shift+tab" || msg.String() == "backtab":
-			return m, m.focusBootstrapField(wrapIndex(m.bootstrapFocus, -1, 4))
+			return m, m.focusBootstrapField(wrapIndex(m.bootstrapFocus, -1, 3))
 		case msg.String() == "down":
-			if m.bootstrapFocus == 2 {
+			if m.bootstrapFocus == 1 {
 				if m.bootstrapRootIndex < len(m.bootstrapRoots)-1 {
 					m.bootstrapRootIndex++
 					return m, nil
 				}
 			}
-			return m, m.focusBootstrapField(wrapIndex(m.bootstrapFocus, 1, 4))
+			return m, m.focusBootstrapField(wrapIndex(m.bootstrapFocus, 1, 3))
 		case msg.String() == "up":
-			if m.bootstrapFocus == 2 {
+			if m.bootstrapFocus == 1 {
 				if m.bootstrapRootIndex > 0 {
 					m.bootstrapRootIndex--
 					return m, nil
 				}
 			}
-			return m, m.focusBootstrapField(wrapIndex(m.bootstrapFocus, -1, 4))
+			return m, m.focusBootstrapField(wrapIndex(m.bootstrapFocus, -1, 3))
 		case (msg.String() == "j") && m.bootstrapFocus != 0:
-			if m.bootstrapFocus == 2 {
+			if m.bootstrapFocus == 1 {
 				if m.bootstrapRootIndex < len(m.bootstrapRoots)-1 {
 					m.bootstrapRootIndex++
 					return m, nil
 				}
 			}
-			return m, m.focusBootstrapField(wrapIndex(m.bootstrapFocus, 1, 4))
+			return m, m.focusBootstrapField(wrapIndex(m.bootstrapFocus, 1, 3))
 		case (msg.String() == "k") && m.bootstrapFocus != 0:
-			if m.bootstrapFocus == 2 {
+			if m.bootstrapFocus == 1 {
 				if m.bootstrapRootIndex > 0 {
 					m.bootstrapRootIndex--
 					return m, nil
 				}
 			}
-			return m, m.focusBootstrapField(wrapIndex(m.bootstrapFocus, -1, 4))
-		case (msg.String() == "h" || msg.String() == "left") && m.bootstrapFocus == 1 && !m.bootstrapMandatory:
-			m.cycleBootstrapActor(-1)
-			return m, nil
-		case (msg.String() == "l" || msg.String() == "right") && m.bootstrapFocus == 1 && !m.bootstrapMandatory:
-			m.cycleBootstrapActor(1)
-			return m, nil
-		case msg.String() == "ctrl+r" && m.bootstrapFocus == 2:
+			return m, m.focusBootstrapField(wrapIndex(m.bootstrapFocus, -1, 3))
+		case (msg.String() == "ctrl+r" || msg.String() == "r") && m.bootstrapFocus == 1:
 			return m, m.startResourcePicker("", modeBootstrapSettings)
-		case msg.String() == "a" && m.bootstrapFocus == 2:
+		case msg.String() == "a" && m.bootstrapFocus == 1:
 			return m, m.startResourcePicker("", modeBootstrapSettings)
-		case (msg.String() == "d" || msg.String() == "x" || msg.String() == "backspace") && m.bootstrapFocus == 2:
+		case (msg.String() == "d" || msg.String() == "x" || msg.String() == "backspace") && m.bootstrapFocus == 1:
 			if !m.removeSelectedBootstrapRoot() {
-				m.status = "no search root selected"
+				m.status = "no default path selected"
 				return m, nil
 			}
-			m.status = "search root removed"
+			m.status = "default path cleared"
 			return m, nil
 		case msg.String() == "ctrl+u" && m.bootstrapFocus == 0:
 			m.bootstrapDisplayInput.SetValue("")
@@ -4438,12 +4948,6 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case msg.Code == tea.KeyEnter || msg.String() == "enter":
 			switch m.bootstrapFocus {
 			case 1:
-				if m.bootstrapMandatory {
-					return m, m.focusBootstrapField(2)
-				}
-				m.cycleBootstrapActor(1)
-				return m, nil
-			case 2:
 				return m, m.startResourcePicker("", modeBootstrapSettings)
 			default:
 				return m.submitBootstrapSettings()
@@ -4493,6 +4997,13 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	if m.mode == modeSearch {
 		const searchFocusSlots = 6
+		if m.searchFocus == 0 {
+			if handled, status := applyClipboardShortcutToInput(msg, &m.searchInput); handled {
+				m.status = status
+				m.searchQuery = strings.TrimSpace(m.searchInput.Value())
+				return m, nil
+			}
+		}
 		switch {
 		case msg.Code == tea.KeyEscape || msg.String() == "esc":
 			m.mode = modeNone
@@ -4667,6 +5178,12 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.mode == modeCommandPalette {
+		if handled, status := applyClipboardShortcutToInput(msg, &m.commandInput); handled {
+			m.status = status
+			m.commandMatches = m.filteredCommandItems(m.commandInput.Value())
+			m.commandIndex = clamp(m.commandIndex, 0, len(m.commandMatches)-1)
+			return m, nil
+		}
 		switch {
 		case msg.Code == tea.KeyEscape || msg.String() == "esc":
 			m.mode = modeNone
@@ -4769,6 +5286,20 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.mode == modeDuePicker {
+		if m.duePickerFocus == 1 {
+			if handled, status := applyClipboardShortcutToInput(msg, &m.duePickerDateInput); handled {
+				m.status = status
+				m.duePicker = 0
+				return m, nil
+			}
+		}
+		if m.duePickerFocus == 2 {
+			if handled, status := applyClipboardShortcutToInput(msg, &m.duePickerTimeInput); handled {
+				m.status = status
+				m.duePicker = 0
+				return m, nil
+			}
+		}
 		options := m.duePickerOptions()
 		switch msg.String() {
 		case "esc":
@@ -4776,17 +5307,69 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.pickerBack = modeNone
 			m.status = "due picker cancelled"
 			return m, m.focusTaskFormField(taskFieldDue)
+		case "tab", "ctrl+i":
+			return m, m.cycleDuePickerFocus(1)
+		case "shift+tab", "backtab":
+			return m, m.cycleDuePickerFocus(-1)
+		case "h", "left":
+			if m.duePickerFocus == 0 {
+				return m, m.setDuePickerIncludeTime(false)
+			}
+			return m, nil
+		case "l", "right":
+			if m.duePickerFocus == 0 {
+				return m, m.setDuePickerIncludeTime(true)
+			}
+			return m, nil
+		case " ", "space":
+			if m.duePickerFocus == 0 {
+				return m, m.setDuePickerIncludeTime(!m.duePickerIncludeTime)
+			}
+			return m, nil
 		case "j", "down":
+			if m.duePickerFocus == 3 {
+				if m.duePicker < len(options)-1 {
+					m.duePicker++
+				}
+				return m, nil
+			}
+			m.duePickerDateInput.Blur()
+			m.duePickerTimeInput.Blur()
+			m.duePickerFocus = 3
 			if m.duePicker < len(options)-1 {
 				m.duePicker++
 			}
 			return m, nil
 		case "k", "up":
+			if m.duePickerFocus == 3 {
+				if m.duePicker > 0 {
+					m.duePicker--
+				}
+				return m, nil
+			}
+			m.duePickerDateInput.Blur()
+			m.duePickerTimeInput.Blur()
+			m.duePickerFocus = 3
 			if m.duePicker > 0 {
 				m.duePicker--
 			}
 			return m, nil
+		case "ctrl+u":
+			switch m.duePickerFocus {
+			case 1:
+				m.duePickerDateInput.SetValue("")
+				m.duePickerDateInput.CursorEnd()
+				m.duePicker = 0
+			case 2:
+				m.duePickerTimeInput.SetValue("")
+				m.duePickerTimeInput.CursorEnd()
+				m.duePicker = 0
+			}
+			return m, nil
 		case "enter":
+			if m.duePickerFocus == 0 {
+				return m, m.setDuePickerIncludeTime(!m.duePickerIncludeTime)
+			}
 			if len(options) == 0 || len(m.formInputs) <= taskFieldDue {
 				m.mode = m.pickerBack
 				m.pickerBack = modeNone
@@ -4799,11 +5382,38 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.status = "due updated"
 			return m, m.focusTaskFormField(taskFieldDue)
 		default:
-			return m, nil
+			switch m.duePickerFocus {
+			case 1:
+				var cmd tea.Cmd
+				before := m.duePickerDateInput.Value()
+				m.duePickerDateInput, cmd = m.duePickerDateInput.Update(msg)
+				if m.duePickerDateInput.Value() != before {
+					m.duePicker = 0
+				}
+				return m, cmd
+			case 2:
+				if !m.duePickerIncludeTime {
+					return m, m.focusDuePickerSlot(3)
+				}
+				var cmd tea.Cmd
+				before := m.duePickerTimeInput.Value()
+				m.duePickerTimeInput, cmd = m.duePickerTimeInput.Update(msg)
+				if m.duePickerTimeInput.Value() != before {
+					m.duePicker = 0
+				}
+				return m, cmd
+			default:
+				return m, nil
+			}
 		}
 	}
 
 	if m.mode == modeResourcePicker {
+		if handled, status := applyClipboardShortcutToInput(msg, &m.resourcePickerFilter); handled {
+			m.status = status
+			m.resourcePickerIndex = 0
+			return m, nil
+		}
 		if msg.Text != "" && (msg.Mod&tea.ModCtrl) == 0 {
 			var cmd tea.Cmd
 			before := m.resourcePickerFilter.Value()
@@ -4855,11 +5465,15 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, m.attachSelectedResourceEntry()
 		case "enter":
-			entry, ok := m.selectedResourcePickerEntry()
-			if !ok {
-				return m, nil
+			if m.resourcePickerBack == modeAddProject || m.resourcePickerBack == modeEditProject || m.resourcePickerBack == modePathsRoots || m.resourcePickerBack == modeBootstrapSettings {
+				entry, ok := m.selectedResourcePickerEntry()
+				if !ok {
+					return m, m.attachCurrentResourcePickerDir()
+				}
+				return m, m.attachResourcePickerEntry(entry)
 			}
-			if entry.IsDir {
+			entry, ok := m.selectedResourcePickerEntry()
+			if ok && entry.IsDir {
 				return m, m.openResourcePickerDir(entry.Path)
 			}
 			return m, m.attachSelectedResourceEntry()
@@ -4875,13 +5489,36 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.mode == modeLabelPicker {
+		if handled, status := applyClipboardShortcutToInput(msg, &m.labelPickerInput); handled {
+			m.status = status
+			m.labelPickerIndex = 0
+			m.refreshLabelPickerMatches()
+			return m, nil
+		}
+		if msg.Text != "" && (msg.Mod&tea.ModCtrl) == 0 {
+			var cmd tea.Cmd
+			before := m.labelPickerInput.Value()
+			m.labelPickerInput, cmd = m.labelPickerInput.Update(msg)
+			if m.labelPickerInput.Value() != before {
+				m.labelPickerIndex = 0
+				m.refreshLabelPickerMatches()
+			}
+			return m, cmd
+		}
 		switch msg.String() {
 		case "esc":
 			m.mode = m.labelPickerBack
+			m.labelPickerInput.Blur()
 			m.status = "label picker cancelled"
 			if m.mode == modeAddTask || m.mode == modeEditTask {
 				return m, m.focusTaskFormField(taskFieldLabels)
 			}
+			return m, nil
+		case "ctrl+u":
+			m.labelPickerInput.SetValue("")
+			m.labelPickerInput.CursorEnd()
+			m.labelPickerIndex = 0
+			m.refreshLabelPickerMatches()
 			return m, nil
 		case "j", "down":
 			if m.labelPickerIndex < len(m.labelPickerItems)-1 {
@@ -4896,26 +5533,39 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case "enter":
 			if len(m.labelPickerItems) == 0 || len(m.formInputs) <= taskFieldLabels {
 				m.mode = m.labelPickerBack
+				m.labelPickerInput.Blur()
 				return m, m.focusTaskFormField(taskFieldLabels)
 			}
 			item := m.labelPickerItems[clamp(m.labelPickerIndex, 0, len(m.labelPickerItems)-1)]
 			m.appendTaskFormLabel(item.Label)
 			m.mode = m.labelPickerBack
-			m.status = "label added from inheritance"
+			m.labelPickerInput.Blur()
+			m.status = "label added"
 			return m, m.focusTaskFormField(taskFieldLabels)
 		default:
-			return m, nil
+			var cmd tea.Cmd
+			before := m.labelPickerInput.Value()
+			m.labelPickerInput, cmd = m.labelPickerInput.Update(msg)
+			if m.labelPickerInput.Value() != before {
+				m.labelPickerIndex = 0
+				m.refreshLabelPickerMatches()
+			}
+			return m, cmd
 		}
 	}
 
 	if m.mode == modePathsRoots {
+		if handled, status := applyClipboardShortcutToInput(msg, &m.pathsRootInput); handled {
+			m.status = status
+			return m, nil
+		}
 		switch {
 		case msg.Code == tea.KeyEscape || msg.String() == "esc":
 			m.mode = modeNone
 			m.pathsRootInput.Blur()
 			m.status = "paths/roots cancelled"
 			return m, nil
-		case msg.String() == "ctrl+r":
+		case msg.String() == "ctrl+r" || msg.String() == "r":
 			return m, m.startResourcePicker("", modePathsRoots)
 		case msg.Code == tea.KeyEnter || msg.String() == "enter":
 			return m.submitPathsRoots()
@@ -4927,6 +5577,12 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.mode == modeAddTask || m.mode == modeEditTask {
+		if len(m.formInputs) > 0 && m.formFocus >= 0 && m.formFocus < len(m.formInputs) && m.formFocus != taskFieldPriority {
+			if handled, status := applyClipboardShortcutToInput(msg, &m.formInputs[m.formFocus]); handled {
+				m.status = status
+				return m, nil
+			}
+		}
 		switch {
 		case msg.Code == tea.KeyEscape || msg.String() == "esc":
 			m.mode = modeNone
@@ -4948,11 +5604,13 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				return m, m.startLabelPicker()
 			}
 			return m, nil
-		case msg.String() == "ctrl+o":
+		case msg.String() == "ctrl+o" || (msg.String() == "o" && (m.formFocus == taskFieldDependsOn || m.formFocus == taskFieldBlockedBy)):
 			if m.formFocus == taskFieldDependsOn || m.formFocus == taskFieldBlockedBy {
 				return m, m.startDependencyInspectorFromForm(m.formFocus)
 			}
 			return m, nil
+		case msg.String() == "ctrl+s":
+			return m, m.startSubtaskFormFromTaskForm()
 		case isCtrlY(msg):
 			if m.formFocus == taskFieldLabels {
 				if m.acceptCurrentLabelSuggestion() {
@@ -4978,6 +5636,12 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, m.startResourcePicker(taskID, back)
 		case msg.Code == tea.KeyEnter || msg.String() == "enter":
+			if m.formFocus == taskFieldLabels {
+				return m, m.startLabelPicker()
+			}
+			if m.formFocus == taskFieldDependsOn || m.formFocus == taskFieldBlockedBy {
+				return m, m.startDependencyInspectorFromForm(m.formFocus)
+			}
 			return m.submitInputMode()
 		default:
 			if m.formFocus == taskFieldPriority {
@@ -4991,7 +5655,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
-			if m.formFocus == taskFieldDue && (msg.String() == "ctrl+d" || msg.String() == "D") {
+			if m.formFocus == taskFieldDue && (msg.String() == "d" || msg.String() == "ctrl+d" || msg.String() == "D") {
 				m.startDuePicker()
 				m.status = "due picker"
 				return m, nil
@@ -5006,6 +5670,12 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.mode == modeAddProject || m.mode == modeEditProject {
+		if len(m.projectFormInputs) > 0 && m.projectFormFocus >= 0 && m.projectFormFocus < len(m.projectFormInputs) {
+			if handled, status := applyClipboardShortcutToInput(msg, &m.projectFormInputs[m.projectFormFocus]); handled {
+				m.status = status
+				return m, nil
+			}
+		}
 		switch {
 		case msg.Code == tea.KeyEscape || msg.String() == "esc":
 			m.mode = modeNone
@@ -5014,11 +5684,8 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.editingProjectID = ""
 			m.status = "cancelled"
 			return m, nil
-		case msg.String() == "ctrl+r":
-			if m.projectFormFocus == projectFieldRootPath {
-				return m, m.startResourcePicker("", m.mode)
-			}
-			return m, nil
+		case (msg.String() == "ctrl+r" || msg.String() == "r") && m.projectFormFocus == projectFieldRootPath:
+			return m, m.startResourcePicker("", m.mode)
 		case msg.Code == tea.KeyTab || msg.String() == "tab" || msg.String() == "ctrl+i" || msg.String() == "down":
 			return m, m.focusProjectFormField(m.projectFormFocus + 1)
 		case msg.String() == "shift+tab" || msg.String() == "backtab" || msg.String() == "up":
@@ -5036,12 +5703,20 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.mode == modeLabelsConfig {
+		if len(m.labelsConfigInputs) > 0 && m.labelsConfigFocus >= 0 && m.labelsConfigFocus < len(m.labelsConfigInputs) {
+			if handled, status := applyClipboardShortcutToInput(msg, &m.labelsConfigInputs[m.labelsConfigFocus]); handled {
+				m.status = status
+				return m, nil
+			}
+		}
 		switch {
 		case msg.Code == tea.KeyEscape || msg.String() == "esc":
 			m.mode = modeNone
 			m.labelsConfigInputs = nil
 			m.labelsConfigFocus = 0
 			m.labelsConfigSlug = ""
+			m.labelsConfigBranchTaskID = ""
+			m.labelsConfigPhaseTaskID = ""
 			m.status = "cancelled"
 			return m, nil
 		case msg.Code == tea.KeyTab || msg.String() == "tab" || msg.String() == "ctrl+i" || msg.String() == "down":
@@ -5061,6 +5736,10 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.mode == modeHighlightColor {
+		if handled, status := applyClipboardShortcutToInput(msg, &m.highlightColorInput); handled {
+			m.status = status
+			return m, nil
+		}
 		switch {
 		case msg.Code == tea.KeyEscape || msg.String() == "esc":
 			m.mode = modeNone
@@ -5077,6 +5756,26 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg.String() {
+	case "ctrl+c", "meta+c", "super+c":
+		if err := copyTextToClipboard(m.input); err != nil {
+			m.status = "copy failed: " + err.Error()
+		} else {
+			m.status = "copied field value"
+		}
+		return m, nil
+	case "ctrl+v", "meta+v", "super+v":
+		text, err := pasteTextFromClipboard()
+		if err != nil {
+			m.status = "paste failed: " + err.Error()
+			return m, nil
+		}
+		if text == "" {
+			m.status = "clipboard is empty"
+			return m, nil
+		}
+		m.input += text
+		m.status = "pasted from clipboard"
+		return m, nil
 	case "esc":
 		m.mode = modeNone
 		m.input = ""
@@ -5111,6 +5810,75 @@ func isCtrlY(msg tea.KeyPressMsg) bool {
 		return true
 	}
 	return strings.EqualFold(msg.Text, "y")
+}
+
+// isClipboardCopyKey reports whether a keypress is a platform clipboard-copy shortcut.
+func isClipboardCopyKey(msg tea.KeyPressMsg) bool {
+	switch msg.String() {
+	case "ctrl+c", "meta+c", "super+c":
+		return true
+	default:
+		return false
+	}
+}
+
+// isClipboardPasteKey reports whether a keypress is a platform clipboard-paste shortcut.
+func isClipboardPasteKey(msg tea.KeyPressMsg) bool {
+	switch msg.String() {
+	case "ctrl+v", "meta+v", "super+v":
+		return true
+	default:
+		return false
+	}
+}
+
+// copyTextToClipboard writes plain text to the system clipboard.
+func copyTextToClipboard(text string) error {
+	return clipboard.WriteAll(text)
+}
+
+// pasteTextFromClipboard reads plain text from the system clipboard.
+func pasteTextFromClipboard() (string, error) {
+	return clipboard.ReadAll()
+}
+
+// applyClipboardShortcutToInput handles copy/paste shortcuts for one text input.
+func applyClipboardShortcutToInput(msg tea.KeyPressMsg, in *textinput.Model) (bool, string) {
+	if in == nil {
+		return false, ""
+	}
+	switch {
+	case isClipboardCopyKey(msg):
+		if err := copyTextToClipboard(in.Value()); err != nil {
+			return true, "copy failed: " + err.Error()
+		}
+		return true, "copied field value"
+	case isClipboardPasteKey(msg):
+		text, err := pasteTextFromClipboard()
+		if err != nil {
+			return true, "paste failed: " + err.Error()
+		}
+		if text == "" {
+			return true, "clipboard is empty"
+		}
+		value := in.Value()
+		pos := clamp(in.Position(), 0, utf8.RuneCountInString(value))
+		merged, nextPos := spliceRunes(value, pos, text)
+		in.SetValue(merged)
+		in.SetCursor(nextPos)
+		return true, "pasted from clipboard"
+	default:
+		return false, ""
+	}
+}
+
+// spliceRunes inserts text at one rune index and returns merged value + next cursor position.
+func spliceRunes(value string, runePos int, insert string) (string, int) {
+	valueRunes := []rune(value)
+	insertRunes := []rune(insert)
+	runePos = clamp(runePos, 0, len(valueRunes))
+	merged := string(valueRunes[:runePos]) + string(insertRunes) + string(valueRunes[runePos:])
+	return merged, runePos + len(insertRunes)
 }
 
 // submitInputMode submits input mode.
@@ -5291,7 +6059,7 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 			return actionMsg{status: "task updated", reload: true}
 		}
 	case modeLabelsConfig:
-		if len(m.labelsConfigInputs) < 2 {
+		if len(m.labelsConfigInputs) < 4 {
 			m.status = "labels config unavailable"
 			return m, nil
 		}
@@ -5306,6 +6074,10 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 		}
 		globalLabels := normalizeConfigLabels(parseLabelsInput(m.labelsConfigInputs[0].Value(), nil))
 		projectLabels := normalizeConfigLabels(parseLabelsInput(m.labelsConfigInputs[1].Value(), nil))
+		branchLabels := normalizeConfigLabels(parseLabelsInput(m.labelsConfigInputs[2].Value(), nil))
+		phaseLabels := normalizeConfigLabels(parseLabelsInput(m.labelsConfigInputs[3].Value(), nil))
+		branchTaskID := strings.TrimSpace(m.labelsConfigBranchTaskID)
+		phaseTaskID := strings.TrimSpace(m.labelsConfigPhaseTaskID)
 
 		m.allowedLabelGlobal = append([]string(nil), globalLabels...)
 		if len(projectLabels) == 0 {
@@ -5318,8 +6090,39 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 		m.labelsConfigInputs = nil
 		m.labelsConfigFocus = 0
 		m.labelsConfigSlug = ""
+		m.labelsConfigBranchTaskID = ""
+		m.labelsConfigPhaseTaskID = ""
 		return m, func() tea.Msg {
 			if err := m.saveLabels(slug, globalLabels, projectLabels); err != nil {
+				return actionMsg{err: err}
+			}
+			updateTaskLabels := func(taskID string, labels []string) error {
+				taskID = strings.TrimSpace(taskID)
+				if taskID == "" {
+					return nil
+				}
+				task, ok := m.taskByID(taskID)
+				if !ok {
+					return nil
+				}
+				if slices.Equal(normalizeConfigLabels(task.Labels), normalizeConfigLabels(labels)) {
+					return nil
+				}
+				_, err := m.svc.UpdateTask(context.Background(), app.UpdateTaskInput{
+					TaskID:      task.ID,
+					Title:       task.Title,
+					Description: task.Description,
+					Priority:    task.Priority,
+					DueAt:       task.DueAt,
+					Labels:      append([]string(nil), labels...),
+					Metadata:    &task.Metadata,
+				})
+				return err
+			}
+			if err := updateTaskLabels(branchTaskID, branchLabels); err != nil {
+				return actionMsg{err: err}
+			}
+			if err := updateTaskLabels(phaseTaskID, phaseLabels); err != nil {
 				return actionMsg{err: err}
 			}
 			return actionMsg{status: "labels config saved"}
@@ -5375,7 +6178,13 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 						return actionMsg{err: err}
 					}
 				}
-				return actionMsg{status: "project created", reload: true, projectID: project.ID}
+				return actionMsg{
+					status:          "project created",
+					reload:          true,
+					projectID:       project.ID,
+					projectRootSlug: project.Slug,
+					projectRootPath: rootPath,
+				}
 			}
 		}
 		return m, func() tea.Msg {
@@ -5393,7 +6202,13 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 					return actionMsg{err: err}
 				}
 			}
-			return actionMsg{status: "project updated", reload: true, projectID: project.ID}
+			return actionMsg{
+				status:          "project updated",
+				reload:          true,
+				projectID:       project.ID,
+				projectRootSlug: project.Slug,
+				projectRootPath: rootPath,
+			}
 		}
 	default:
 		return m, nil
@@ -5415,6 +6230,38 @@ func (m Model) executeCommandPalette(command string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.startSubtaskForm(task)
+	case "new-branch", "branch-new":
+		parent, ok := m.selectedBranchTask()
+		if ok {
+			return m, m.startBranchForm(&parent)
+		}
+		return m, m.startBranchForm(nil)
+	case "edit-branch", "branch-edit":
+		task, ok := m.selectedBranchTask()
+		if !ok {
+			m.status = "select a branch to edit"
+			return m, nil
+		}
+		return m, m.startTaskForm(&task)
+	case "archive-branch", "branch-archive":
+		if _, ok := m.selectedBranchTask(); !ok {
+			m.status = "select a branch to archive"
+			return m, nil
+		}
+		return m.confirmDeleteAction(app.DeleteModeArchive, m.confirmArchive, "archive branch")
+	case "delete-branch", "branch-delete":
+		if _, ok := m.selectedBranchTask(); !ok {
+			m.status = "select a branch to delete"
+			return m, nil
+		}
+		return m.confirmDeleteAction(app.DeleteModeHard, m.confirmHardDelete, "delete branch")
+	case "restore-branch", "branch-restore":
+		task, ok := m.selectedBranchTask()
+		if !ok || task.ArchivedAt == nil {
+			m.status = "select an archived branch to restore"
+			return m, nil
+		}
+		return m.confirmRestoreAction()
 	case "edit-task", "task-edit":
 		task, ok := m.selectedTaskInCurrentColumn()
 		if !ok {
@@ -5433,6 +6280,12 @@ func (m Model) executeCommandPalette(command string) (tea.Model, tea.Cmd) {
 		}
 		project := m.projects[clamp(m.selectedProject, 0, len(m.projects)-1)]
 		return m, m.startProjectForm(&project)
+	case "archive-project", "project-archive":
+		return m.archiveCurrentProject(m.confirmArchive)
+	case "restore-project", "project-restore":
+		return m.restoreCurrentProject(m.confirmRestore)
+	case "delete-project", "project-delete":
+		return m.deleteCurrentProject(m.confirmHardDelete)
 	case "thread-project", "project-thread":
 		return m.startProjectThread(modeNone)
 	case "search":
@@ -5457,6 +6310,14 @@ func (m Model) executeCommandPalette(command string) (tea.Model, tea.Cmd) {
 			m.status = "hiding archived tasks"
 		}
 		return m, m.loadData
+	case "toggle-selection-mode", "select-mode", "text-select":
+		m.mouseSelectionMode = !m.mouseSelectionMode
+		if m.mouseSelectionMode {
+			m.status = "text selection mode enabled"
+		} else {
+			m.status = "text selection mode disabled"
+		}
+		return m, nil
 	case "focus-subtree", "zoom-task":
 		task, ok := m.selectedTaskInCurrentColumn()
 		if !ok {
@@ -6039,6 +6900,121 @@ func (m Model) confirmRestoreAction() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// archiveCurrentProject archives the active project with optional confirmation.
+func (m Model) archiveCurrentProject(needsConfirm bool) (tea.Model, tea.Cmd) {
+	project, ok := m.currentProject()
+	if !ok {
+		m.status = "no project selected"
+		return m, nil
+	}
+	if project.ArchivedAt != nil {
+		m.status = "project already archived"
+		return m, nil
+	}
+	if needsConfirm {
+		m.mode = modeConfirmAction
+		m.pendingConfirm = confirmAction{
+			Kind:    "archive-project",
+			Project: project,
+			Label:   "archive project",
+		}
+		m.confirmChoice = 1
+		m.status = "confirm action"
+		return m, nil
+	}
+	projectID := project.ID
+	nextProjectID := ""
+	if !m.showArchived {
+		for _, candidate := range m.projects {
+			if candidate.ID == projectID || candidate.ArchivedAt != nil {
+				continue
+			}
+			nextProjectID = candidate.ID
+			break
+		}
+	}
+	return m, func() tea.Msg {
+		if _, err := m.svc.ArchiveProject(context.Background(), projectID); err != nil {
+			return actionMsg{err: err}
+		}
+		return actionMsg{status: "project archived", reload: true, projectID: nextProjectID}
+	}
+}
+
+// restoreCurrentProject restores the active archived project with optional confirmation.
+func (m Model) restoreCurrentProject(needsConfirm bool) (tea.Model, tea.Cmd) {
+	project, ok := m.currentProject()
+	if !ok {
+		m.status = "no project selected"
+		return m, nil
+	}
+	if project.ArchivedAt == nil {
+		m.status = "project is not archived"
+		return m, nil
+	}
+	if needsConfirm {
+		m.mode = modeConfirmAction
+		m.pendingConfirm = confirmAction{
+			Kind:    "restore-project",
+			Project: project,
+			Label:   "restore project",
+		}
+		m.confirmChoice = 1
+		m.status = "confirm action"
+		return m, nil
+	}
+	projectID := project.ID
+	return m, func() tea.Msg {
+		updated, err := m.svc.RestoreProject(context.Background(), projectID)
+		if err != nil {
+			return actionMsg{err: err}
+		}
+		return actionMsg{status: "project restored", reload: true, projectID: updated.ID}
+	}
+}
+
+// deleteCurrentProject hard-deletes the active project with optional confirmation.
+func (m Model) deleteCurrentProject(needsConfirm bool) (tea.Model, tea.Cmd) {
+	project, ok := m.currentProject()
+	if !ok {
+		m.status = "no project selected"
+		return m, nil
+	}
+	if needsConfirm {
+		m.mode = modeConfirmAction
+		m.pendingConfirm = confirmAction{
+			Kind:    "delete-project",
+			Project: project,
+			Label:   "delete project",
+		}
+		m.confirmChoice = 1
+		m.status = "confirm action"
+		return m, nil
+	}
+	projectID := project.ID
+	nextProjectID := ""
+	for _, candidate := range m.projects {
+		if candidate.ID == projectID {
+			continue
+		}
+		if !m.showArchived && candidate.ArchivedAt != nil {
+			continue
+		}
+		nextProjectID = candidate.ID
+		break
+	}
+	return m, func() tea.Msg {
+		if err := m.svc.DeleteProject(context.Background(), projectID); err != nil {
+			return actionMsg{err: err}
+		}
+		return actionMsg{
+			status:    "project deleted",
+			reload:    true,
+			projectID: nextProjectID,
+		}
+	}
+}
+
 // applyConfirmedAction executes a previously confirmed action.
 func (m Model) applyConfirmedAction(action confirmAction) (tea.Model, tea.Cmd) {
 	switch action.Kind {
@@ -6054,6 +7030,39 @@ func (m Model) applyConfirmedAction(action confirmAction) (tea.Model, tea.Cmd) {
 			taskIDs = []string{action.Task.ID}
 		}
 		return m.restoreTaskIDs(taskIDs, "task restored", "restore task")
+	case "archive-project":
+		if projectID := strings.TrimSpace(action.Project.ID); projectID != "" {
+			for idx, project := range m.projects {
+				if project.ID != projectID {
+					continue
+				}
+				m.selectedProject = idx
+				break
+			}
+		}
+		return m.archiveCurrentProject(false)
+	case "restore-project":
+		if projectID := strings.TrimSpace(action.Project.ID); projectID != "" {
+			for idx, project := range m.projects {
+				if project.ID != projectID {
+					continue
+				}
+				m.selectedProject = idx
+				break
+			}
+		}
+		return m.restoreCurrentProject(false)
+	case "delete-project":
+		if projectID := strings.TrimSpace(action.Project.ID); projectID != "" {
+			for idx, project := range m.projects {
+				if project.ID != projectID {
+					continue
+				}
+				m.selectedProject = idx
+				break
+			}
+		}
+		return m.deleteCurrentProject(false)
 	default:
 		m.status = "unknown confirm action"
 		return m, nil
@@ -6062,6 +7071,9 @@ func (m Model) applyConfirmedAction(action confirmAction) (tea.Model, tea.Cmd) {
 
 // handleMouseWheel handles mouse wheel.
 func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
+	if m.mouseSelectionMode {
+		return m, nil
+	}
 	if m.help.ShowAll {
 		return m, nil
 	}
@@ -6075,7 +7087,7 @@ func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.mode == modeBootstrapSettings {
-		if m.bootstrapFocus != 2 || len(m.bootstrapRoots) == 0 {
+		if m.bootstrapFocus != 1 || len(m.bootstrapRoots) == 0 {
 			return m, nil
 		}
 		switch msg.Button {
@@ -6127,6 +7139,9 @@ func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 
 // handleMouseClick handles mouse click.
 func (m Model) handleMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
+	if m.mouseSelectionMode {
+		return m, nil
+	}
 	if m.help.ShowAll {
 		return m, nil
 	}
@@ -7112,6 +8127,18 @@ func (m Model) selectedTaskInCurrentColumn() (domain.Task, bool) {
 	return tasks[idx], true
 }
 
+// selectedBranchTask returns the selected task when it is a branch-level work item.
+func (m Model) selectedBranchTask() (domain.Task, bool) {
+	task, ok := m.selectedTaskInCurrentColumn()
+	if !ok {
+		return domain.Task{}, false
+	}
+	if baseSearchLevelForTask(task) != "branch" {
+		return domain.Task{}, false
+	}
+	return task, true
+}
+
 // focusTaskByID focuses task by id.
 func (m *Model) focusTaskByID(taskID string) {
 	if strings.TrimSpace(taskID) == "" {
@@ -7232,6 +8259,9 @@ func (m Model) renderProjectTabs(accent, dim color.Color) string {
 	parts := make([]string, 0, len(m.projects))
 	for idx, p := range m.projects {
 		label := p.Name
+		if p.ArchivedAt != nil {
+			label += " (archived)"
+		}
 		if idx == m.selectedProject {
 			parts = append(parts, active.Render("["+label+"]"))
 		} else {
@@ -7339,6 +8369,9 @@ func (m Model) renderInfoLine(project domain.Project, muted color.Color) string 
 		fmt.Sprintf("project: %s", project.Name),
 		fmt.Sprintf("tasks: %d", len(m.tasks)),
 	}
+	if project.ArchivedAt != nil {
+		parts = append(parts, "project archived")
+	}
 	task, ok := m.selectedTaskInCurrentColumn()
 	if !ok {
 		parts = append(parts, "selected: none")
@@ -7390,8 +8423,9 @@ func (m Model) renderHelpOverlay(accent, muted, dim color.Color, _ lipgloss.Styl
 		"6. N new project  •  M edit project  •  p switch project",
 		"7. / search: query -> states -> levels -> scope -> archived -> apply",
 		"8. search hotkeys: ctrl+u clear query • ctrl+r reset filters",
-		"9. task form: h/l priority  •  ctrl+d due picker  •  ctrl+l labels  •  ctrl+o deps  •  ctrl+r resources",
+		"9. task form: h/l priority  •  d due picker  •  enter/ctrl+l labels  •  enter/o deps  •  ctrl+r resources",
 		"10. task info: b dependency inspector  •  r attach file/dir from project root",
+		"11. v toggle text-selection mode (disables mouse capture so terminal selection works)",
 	}
 	lines := []string{
 		title,
@@ -7966,7 +9000,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		}
 		inherited := m.labelSourcesForTask(task)
 		lines = append(lines, "")
-		lines = append(lines, hintStyle.Render("effective labels (global/project/phase fallback)"))
+		lines = append(lines, hintStyle.Render("effective labels (global/project/branch/phase fallback)"))
 		lines = append(lines, hintStyle.Render(formatLabelSource("global", inherited.Global)))
 		lines = append(lines, hintStyle.Render(formatLabelSource("project", inherited.Project)))
 		lines = append(lines, hintStyle.Render(formatLabelSource("phase", inherited.Phase)))
@@ -8037,7 +9071,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		titleStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
 		hintStyle := lipgloss.NewStyle().Foreground(muted)
 		focusStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
-		title := "Identity & Search Roots"
+		title := "Identity & Default Path"
 		if m.bootstrapMandatory {
 			title = "Startup Setup Required"
 		}
@@ -8047,61 +9081,34 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		if m.bootstrapFocus == 0 {
 			nameLabel = focusStyle
 		}
-		actorLabel := hintStyle
-		if m.bootstrapFocus == 1 {
-			actorLabel = focusStyle
-		}
 		rootsLabel := hintStyle
-		if m.bootstrapFocus == 2 {
+		if m.bootstrapFocus == 1 {
 			rootsLabel = focusStyle
 		}
 		saveLabel := hintStyle
-		if m.bootstrapFocus == 3 {
+		if m.bootstrapFocus == 2 {
 			saveLabel = focusStyle
-		}
-		actorParts := make([]string, 0, len(bootstrapActorTypes))
-		for idx, actor := range bootstrapActorTypes {
-			label := actor
-			if idx == clamp(m.bootstrapActorIndex, 0, len(bootstrapActorTypes)-1) {
-				label = "[" + label + "]"
-			}
-			actorParts = append(actorParts, label)
 		}
 		lines := []string{
 			titleStyle.Render(title),
-			nameLabel.Render("display name:") + " " + in.View(),
-			actorLabel.Render("default actor:") + " " + strings.Join(actorParts, "  "),
-			rootsLabel.Render(fmt.Sprintf("global search roots (%d):", len(m.bootstrapRoots))),
-		}
-		if m.bootstrapMandatory {
-			lines = append(lines, hintStyle.Render("startup onboarding locks default actor to user"))
+			nameLabel.Render("name:") + " " + in.View(),
+			rootsLabel.Render("default path:"),
 		}
 		if len(m.bootstrapRoots) == 0 {
 			lines = append(lines, hintStyle.Render("(none yet)"))
 		} else {
-			const rootWindowSize = 8
-			start, end := windowBounds(len(m.bootstrapRoots), m.bootstrapRootIndex, rootWindowSize)
-			for idx := start; idx < end; idx++ {
-				root := m.bootstrapRoots[idx]
-				cursor := "  "
-				if idx == m.bootstrapRootIndex {
-					cursor = "> "
-				}
-				line := cursor + truncate(root, 84)
-				if idx == m.bootstrapRootIndex && m.bootstrapFocus == 2 {
-					line = focusStyle.Render(line)
-				}
-				lines = append(lines, line)
+			root := m.bootstrapRoots[clamp(m.bootstrapRootIndex, 0, len(m.bootstrapRoots)-1)]
+			line := "> " + truncate(root, 84)
+			if m.bootstrapFocus == 1 {
+				line = focusStyle.Render(line)
 			}
-			if len(m.bootstrapRoots) > rootWindowSize {
-				lines = append(lines, hintStyle.Render(fmt.Sprintf("showing %d-%d of %d", start+1, end, len(m.bootstrapRoots))))
-			}
+			lines = append(lines, line)
 		}
 		lines = append(lines, saveLabel.Render("[ save settings ]"))
 		if m.bootstrapMandatory {
-			lines = append(lines, hintStyle.Render("tab focus • j/k move • a or ctrl+r browse + add root • d remove root • enter save"))
+			lines = append(lines, hintStyle.Render("tab focus • r open picker • enter choose/save • d clear path"))
 		} else {
-			lines = append(lines, hintStyle.Render("tab focus • j/k move • h/l actor • a or ctrl+r browse + add root • d remove root • enter save"))
+			lines = append(lines, hintStyle.Render("tab focus • r open picker • enter choose/save • d clear path"))
 		}
 		if m.bootstrapMandatory {
 			lines = append(lines, hintStyle.Render("esc disabled until required settings are saved"))
@@ -8145,7 +9152,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		items := m.visibleResourcePickerItems()
 		if len(items) == 0 {
 			lines = append(lines, hintStyle.Render("(empty directory)"))
-			lines = append(lines, hintStyle.Render("press a to choose current directory"))
+			lines = append(lines, hintStyle.Render("press enter or ctrl+a to choose current directory"))
 		} else {
 			for idx, entry := range items {
 				cursor := "  "
@@ -8164,7 +9171,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 			}
 		}
 		if m.resourcePickerBack == modeAddProject || m.resourcePickerBack == modeEditProject || m.resourcePickerBack == modePathsRoots || m.resourcePickerBack == modeBootstrapSettings {
-			lines = append(lines, hintStyle.Render("enter open dir (or choose file parent) • ctrl+a choose dir • arrows navigate • ctrl+u clear filter • esc close"))
+			lines = append(lines, hintStyle.Render("enter choose path (file picks parent dir) • right open dir • left parent • ctrl+a choose current dir • ctrl+u clear filter • esc close"))
 		} else {
 			lines = append(lines, hintStyle.Render("enter open dir/file attach • ctrl+a attach selected/current • arrows navigate • ctrl+u clear filter • esc close"))
 		}
@@ -8180,12 +9187,15 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		}
 		titleStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
 		hintStyle := lipgloss.NewStyle().Foreground(muted)
+		filterInput := m.labelPickerInput
+		filterInput.SetWidth(max(18, min(56, maxWidth-22)))
 		lines := []string{
-			titleStyle.Render("Inherited Labels"),
-			hintStyle.Render("global/project/phase fallback"),
+			titleStyle.Render("Label Picker"),
+			hintStyle.Render("filter: ") + filterInput.View(),
+			hintStyle.Render("sources: global/project/branch/phase/suggested/default"),
 		}
 		if len(m.labelPickerItems) == 0 {
-			lines = append(lines, hintStyle.Render("(no inherited labels)"))
+			lines = append(lines, hintStyle.Render("(no matching labels)"))
 		} else {
 			for idx, item := range m.labelPickerItems {
 				cursor := "  "
@@ -8199,7 +9209,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 				}
 			}
 		}
-		lines = append(lines, hintStyle.Render("j/k navigate • enter add label • esc close"))
+		lines = append(lines, hintStyle.Render("type to filter • j/k navigate • enter add label • ctrl+u clear • esc close"))
 		return style.Render(strings.Join(lines, "\n"))
 
 	case modeDuePicker:
@@ -8212,16 +9222,43 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		}
 		titleStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
 		hintStyle := lipgloss.NewStyle().Foreground(muted)
-		lines := []string{titleStyle.Render("Due Date")}
+		focusedStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
+		dateInput := m.duePickerDateInput
+		dateInput.SetWidth(max(18, min(42, maxWidth-20)))
+		timeInput := m.duePickerTimeInput
+		timeInput.SetWidth(max(12, min(22, maxWidth-20)))
+		includeTimeLine := "[ ] include time"
+		if m.duePickerIncludeTime {
+			includeTimeLine = "[x] include time"
+		}
+		if m.duePickerFocus == 0 {
+			includeTimeLine = focusedStyle.Render(includeTimeLine)
+		}
+		lines := []string{titleStyle.Render("Due Date"), includeTimeLine}
+		dateLine := "date: " + dateInput.View()
+		if m.duePickerFocus == 1 {
+			dateLine = focusedStyle.Render("date:") + " " + dateInput.View()
+		}
+		lines = append(lines, dateLine)
+		if m.duePickerIncludeTime {
+			timeLine := "time: " + timeInput.View()
+			if m.duePickerFocus == 2 {
+				timeLine = focusedStyle.Render("time:") + " " + timeInput.View()
+			}
+			lines = append(lines, timeLine)
+		}
+		lines = append(lines, "")
 		options := m.duePickerOptions()
-		for idx, option := range options {
+		start, end := windowBounds(len(options), m.duePicker, 10)
+		for idx := start; idx < end; idx++ {
+			option := options[idx]
 			cursor := "  "
 			if idx == m.duePicker {
 				cursor = "> "
 			}
 			lines = append(lines, cursor+option.Label)
 		}
-		lines = append(lines, hintStyle.Render("j/k choose • enter apply • esc cancel"))
+		lines = append(lines, hintStyle.Render("tab focus • j/k navigate list • enter apply • space toggle include time • esc cancel"))
 		return style.Render(strings.Join(lines, "\n"))
 
 	case modeProjectPicker:
@@ -8243,7 +9280,11 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 				if idx == m.projectPickerIndex {
 					cursor = "> "
 				}
-				lines = append(lines, cursor+p.Name)
+				label := p.Name
+				if p.ArchivedAt != nil {
+					label += " (archived)"
+				}
+				lines = append(lines, cursor+label)
 			}
 		}
 		lines = append(lines, helpStyle.Render("N new project"))
@@ -8497,7 +9538,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 			titleStyle.Render("Paths / Roots"),
 			hintStyle.Render("project: " + projectLabel),
 			in.View(),
-			hintStyle.Render("enter save • esc cancel • ctrl+r browse dirs • empty value clears mapping"),
+			hintStyle.Render("enter save • esc cancel • r browse dirs • empty value clears mapping"),
 		}
 		return style.Render(strings.Join(lines, "\n"))
 
@@ -8511,12 +9552,19 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		}
 		titleStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
 		hintStyle := lipgloss.NewStyle().Foreground(muted)
-		taskTitle := strings.TrimSpace(m.pendingConfirm.Task.Title)
+		targetTitle := strings.TrimSpace(m.pendingConfirm.Task.Title)
 		if len(m.pendingConfirm.TaskIDs) > 1 {
-			taskTitle = fmt.Sprintf("%d selected tasks", len(m.pendingConfirm.TaskIDs))
+			targetTitle = fmt.Sprintf("%d selected tasks", len(m.pendingConfirm.TaskIDs))
 		}
-		if taskTitle == "" {
-			taskTitle = "(unknown task)"
+		if strings.TrimSpace(m.pendingConfirm.Project.ID) != "" {
+			targetTitle = strings.TrimSpace(m.pendingConfirm.Project.Name)
+			if targetTitle == "" {
+				targetTitle = strings.TrimSpace(m.pendingConfirm.Project.ID)
+			}
+			targetTitle = "project " + targetTitle
+		}
+		if targetTitle == "" {
+			targetTitle = "(unknown target)"
 		}
 		confirmStyle := lipgloss.NewStyle().Foreground(muted)
 		cancelStyle := lipgloss.NewStyle().Foreground(muted)
@@ -8527,7 +9575,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		}
 		lines := []string{
 			titleStyle.Render("Confirm Action"),
-			fmt.Sprintf("%s: %s", m.pendingConfirm.Label, taskTitle),
+			fmt.Sprintf("%s: %s", m.pendingConfirm.Label, targetTitle),
 			confirmStyle.Render("[confirm]") + "  " + cancelStyle.Render("[cancel]"),
 			hintStyle.Render("enter apply • esc cancel • h/l switch • y confirm • n cancel"),
 		}
@@ -8594,7 +9642,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		switch m.mode {
 		case modeAddTask:
 			title = "New Task"
-			hint = "enter save • esc cancel • tab next field • ctrl+o deps picker • ctrl+r attach resource • ctrl+y label suggestion"
+			hint = "enter save • esc cancel • tab next field • enter/o deps picker • d due picker • ctrl+r attach resource • ctrl+y label suggestion"
 		case modeSearch:
 			title = "Search"
 			hint = "tab focus • space/enter toggle • ctrl+u clear query • ctrl+r reset filters"
@@ -8602,7 +9650,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 			title = "Rename Task"
 		case modeEditTask:
 			title = "Edit Task"
-			hint = "enter save • esc cancel • tab next field • ctrl+o deps picker • ctrl+r attach resource • ctrl+y label suggestion"
+			hint = "enter save • esc cancel • tab next field • enter/o deps picker • d due picker • ctrl+r attach resource • ctrl+y label suggestion"
 		case modeAddProject:
 			title = "New Project"
 		case modeEditProject:
@@ -8715,15 +9763,15 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 				lines = append(lines, labelStyle.Render(fmt.Sprintf("%-12s", label+":"))+" "+in.View())
 			}
 			if m.formFocus == taskFieldDue {
-				lines = append(lines, hintStyle.Render("ctrl+d or D open due-date picker (includes timed presets)"))
+				lines = append(lines, hintStyle.Render("d opens due-date picker (includes local-time presets)"))
 				lines = append(lines, hintStyle.Render("type: YYYY-MM-DD | YYYY-MM-DD HH:MM | YYYY-MM-DDTHH:MM | RFC3339 | -"))
-				lines = append(lines, hintStyle.Render("time without timezone is treated as UTC"))
+				lines = append(lines, hintStyle.Render("time without timezone is interpreted in local time"))
 			}
 			if m.formFocus == taskFieldLabels {
-				lines = append(lines, hintStyle.Render("ctrl+l inherited label picker • ctrl+y accept autocomplete"))
+				lines = append(lines, hintStyle.Render("enter or ctrl+l opens label picker • ctrl+y accept autocomplete"))
 			}
 			if m.formFocus == taskFieldDependsOn || m.formFocus == taskFieldBlockedBy {
-				lines = append(lines, hintStyle.Render("ctrl+o open dependency picker • csv task IDs still supported"))
+				lines = append(lines, hintStyle.Render("enter or o opens dependency picker • csv task IDs still supported"))
 			}
 			if len(m.taskFormResourceRefs) > 0 {
 				lines = append(lines, hintStyle.Render(fmt.Sprintf("staged resources: %d", len(m.taskFormResourceRefs))))
@@ -8735,6 +9783,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 			lines = append(lines, hintStyle.Render("inherited labels"))
 			lines = append(lines, hintStyle.Render(formatLabelSource("global", inherited.Global)))
 			lines = append(lines, hintStyle.Render(formatLabelSource("project", inherited.Project)))
+			lines = append(lines, hintStyle.Render(formatLabelSource("branch", inherited.Branch)))
 			lines = append(lines, hintStyle.Render(formatLabelSource("phase", inherited.Phase)))
 			if warning := dueWarning(m.formInputs[taskFieldDue].Value(), time.Now().UTC()); warning != "" {
 				lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Render(warning))
@@ -8757,11 +9806,11 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 				lines = append(lines, labelStyle.Render(fmt.Sprintf("%-12s", label+":"))+" "+in.View())
 			}
 			if m.projectFormFocus == projectFieldRootPath {
-				lines = append(lines, hintStyle.Render("ctrl+r browse and select a directory"))
+				lines = append(lines, hintStyle.Render("r browse and select a directory"))
 			}
 		case modeLabelsConfig:
 			fieldWidth := max(18, maxWidth-28)
-			labelFields := []string{"global", "project"}
+			labelFields := []string{"global", "project", "branch", "phase"}
 			for i, in := range m.labelsConfigInputs {
 				label := fmt.Sprintf("%d.", i+1)
 				if i < len(labelFields) {
@@ -8774,7 +9823,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 				in.SetWidth(fieldWidth)
 				lines = append(lines, labelStyle.Render(fmt.Sprintf("%-12s", label+":"))+" "+in.View())
 			}
-			lines = append(lines, hintStyle.Render("global applies across projects; project applies to current project only"))
+			lines = append(lines, hintStyle.Render("global/project saved to config • branch/phase saved to current hierarchy nodes"))
 		case modeHighlightColor:
 			in := m.highlightColorInput
 			in.SetWidth(max(18, maxWidth-24))
@@ -8955,7 +10004,7 @@ func (m Model) modePrompt() string {
 	case modeEditTask:
 		return "edit task: " + m.input + " (title | description | priority(low|medium|high) | due(YYYY-MM-DD | YYYY-MM-DD HH:MM | YYYY-MM-DDTHH:MM | RFC3339 | -) | labels(csv))"
 	case modeDuePicker:
-		return "due picker: j/k select, enter apply, esc cancel"
+		return "due picker: tab focus controls, type date/time to filter, j/k navigate list, enter apply, esc cancel"
 	case modeProjectPicker:
 		return "project picker: j/k select, enter choose, N new project, esc cancel"
 	case modeTaskInfo:
@@ -8975,17 +10024,17 @@ func (m Model) modePrompt() string {
 	case modeConfirmAction:
 		return "confirm action: enter confirm, esc cancel"
 	case modeResourcePicker:
-		return "resource picker: type fuzzy filter, arrows navigate, enter open/select, ctrl+a choose/attach, esc cancel"
+		return "resource picker: type fuzzy filter, arrows navigate, enter select, ctrl+a choose/attach current, esc cancel"
 	case modeLabelPicker:
-		return "label picker: j/k select, enter add label, esc cancel"
+		return "label picker: type fuzzy filter, j/k select, enter add label, ctrl+u clear, esc cancel"
 	case modePathsRoots:
-		return "paths/roots: enter save, ctrl+r browse dirs, esc cancel"
+		return "paths/roots: enter save, r browse dirs, esc cancel"
 	case modeLabelsConfig:
 		return "labels config: enter save, esc cancel"
 	case modeHighlightColor:
 		return "highlight color: enter save, esc cancel"
 	case modeBootstrapSettings:
-		return "bootstrap settings: tab focus, ctrl+r browse/add root, d remove root, enter save"
+		return "bootstrap settings: tab focus, r browse/add default path, d clear path, enter save"
 	case modeDependencyInspector:
 		return "deps inspector: tab focus, d/b toggle, x switch active, enter jump, a apply, esc cancel"
 	case modeThread:

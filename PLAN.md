@@ -1090,3 +1090,65 @@ Commands and outcomes:
 - `just test-golden` -> pass.
 - `just check` -> pass.
 - `just ci` -> pass.
+
+## Execution Log (2026-02-25: UX + Archive Management Remediation, In Progress)
+
+Objective:
+- Resolve reported TUI regressions across bootstrap roots, path picker behavior, due picker, label/dependency flows, and clipboard/selection ergonomics.
+- Add explicit branch/project management commands, including project archive/restore/delete.
+- Add archived project visibility support in the TUI data-load path.
+
+Commands and outcomes so far:
+- `just test-pkg ./internal/tui` -> fail (build):
+  - `internal/tui/model.go` unused `clipboard` import.
+  - `internal/tui/model.go` invalid `Blur()` assignment in `startDuePicker`.
+- Context7 re-checks executed after failure for Bubble Tea/Bubbles input/focus handling.
+
+Code edits in progress:
+- `internal/tui/model.go`
+  - fixed due-picker compile blocker and expanded due picker state model (focus slots, include-time toggle, local-time typed date/time parsing, dynamic fuzzy list).
+  - implemented label picker filtering input and source expansion (global/project/branch/phase/suggested/default).
+  - expanded inheritance merge path to include branch labels.
+  - extended labels-config modal from 2 fields to 4 fields (global/project/branch/phase) with branch/phase task-label persistence via `UpdateTask`.
+  - added clipboard helper functions and text-input copy/paste handling in modal/input modes.
+  - added text-selection mode support (mouse disabled while enabled) and wired mouse handling/view mode gates.
+  - updated help/hints/prompts for single-key path picker + due/label/dependency ergonomics.
+  - added branch/project command-palette actions (new/edit/archive/delete/restore where applicable) and project confirm-action pathways.
+  - switched project loading to `ListProjects(..., m.showArchived)` so archived projects can be viewed when archived visibility is enabled.
+  - included project-root sync fields in add/edit project action messages for in-memory path persistence.
+- `internal/tui/keymap.go`
+  - added `v` keybinding for text-selection mode toggle.
+- `internal/tui/thread_mode.go`
+  - aligned thread view mouse mode with selection-mode toggle.
+- `internal/app/ports.go`
+  - added `DeleteProject` repository contract.
+- `internal/adapters/storage/sqlite/repo.go`
+  - added `DeleteProject` implementation.
+- `internal/app/service.go`
+  - added `ArchiveProject`, `RestoreProject`, `DeleteProject` service methods.
+- `internal/adapters/storage/sqlite/repo_test.go`
+  - added not-found assertion and delete-cascade coverage for `DeleteProject`.
+- `internal/app/service_test.go`
+  - added `fakeRepo.DeleteProject` and project archive/restore/delete service test coverage.
+- `internal/tui/model_test.go`
+  - added new project service methods to fake service.
+
+Reconciliation and closeout evidence:
+- `just ci` -> fail:
+  - `TestModelProjectLifecycleConfirmBranches` assertion mismatch (`restore-project` confirm path not activated in test fixture state).
+  - coverage still below floor (`internal/tui` at 69.5% in that failing run).
+- Context7 re-check executed after failure (Bubble Tea update/key handling docs).
+- `internal/tui/model_test.go` edits:
+  - fixed `TestModelProjectLifecycleConfirmBranches` fixture sync (`m.projects[0]` archived + pending confirm reset).
+  - added `TestModelProjectLifecycleGuardsAndSelection` to cover guard branches and project next-visible selection behavior.
+  - added `TestModelCommandPaletteBranchLifecycleGuards` to cover no-branch selection guard statuses.
+- `just test-pkg ./internal/tui` -> fail (test assertion), then Context7 re-check executed, test assertions corrected.
+- `just test-pkg ./internal/tui` -> pass.
+- `just check` -> pass.
+- `just ci` -> fail once on coverage floor (`internal/tui` 69.8%), then after added guard tests:
+  - `just test-pkg ./internal/tui` -> pass.
+  - `just check` -> pass.
+  - `just ci` -> pass (`internal/tui` coverage 70.1%).
+
+Status:
+- Remediation slice complete for this request scope; repo gates are passing (`just check`, `just ci`).

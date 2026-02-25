@@ -497,6 +497,18 @@ func (r *Repository) UpdateProject(ctx context.Context, p domain.Project) error 
 	return translateNoRows(res)
 }
 
+// DeleteProject deletes project and all dependent rows through foreign-key cascades.
+func (r *Repository) DeleteProject(ctx context.Context, id string) error {
+	res, err := r.db.ExecContext(ctx, `
+		DELETE FROM projects
+		WHERE id = ?
+	`, id)
+	if err != nil {
+		return err
+	}
+	return translateNoRows(res)
+}
+
 // GetProject returns project.
 func (r *Repository) GetProject(ctx context.Context, id string) (domain.Project, error) {
 	row := r.db.QueryRowContext(ctx, `

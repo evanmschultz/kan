@@ -227,6 +227,62 @@ func (s *Service) UpdateProject(ctx context.Context, in UpdateProjectInput) (dom
 	return project, nil
 }
 
+// ArchiveProject archives one project.
+func (s *Service) ArchiveProject(ctx context.Context, projectID string) (domain.Project, error) {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return domain.Project{}, domain.ErrInvalidID
+	}
+	project, err := s.repo.GetProject(ctx, projectID)
+	if err != nil {
+		return domain.Project{}, err
+	}
+	if err := s.enforceMutationGuard(ctx, project.ID, domain.ActorTypeUser, domain.CapabilityScopeProject, project.ID); err != nil {
+		return domain.Project{}, err
+	}
+	project.Archive(s.clock())
+	if err := s.repo.UpdateProject(ctx, project); err != nil {
+		return domain.Project{}, err
+	}
+	return project, nil
+}
+
+// RestoreProject restores one archived project.
+func (s *Service) RestoreProject(ctx context.Context, projectID string) (domain.Project, error) {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return domain.Project{}, domain.ErrInvalidID
+	}
+	project, err := s.repo.GetProject(ctx, projectID)
+	if err != nil {
+		return domain.Project{}, err
+	}
+	if err := s.enforceMutationGuard(ctx, project.ID, domain.ActorTypeUser, domain.CapabilityScopeProject, project.ID); err != nil {
+		return domain.Project{}, err
+	}
+	project.Restore(s.clock())
+	if err := s.repo.UpdateProject(ctx, project); err != nil {
+		return domain.Project{}, err
+	}
+	return project, nil
+}
+
+// DeleteProject deletes one project and all associated rows.
+func (s *Service) DeleteProject(ctx context.Context, projectID string) error {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return domain.ErrInvalidID
+	}
+	project, err := s.repo.GetProject(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	if err := s.enforceMutationGuard(ctx, project.ID, domain.ActorTypeUser, domain.CapabilityScopeProject, project.ID); err != nil {
+		return err
+	}
+	return s.repo.DeleteProject(ctx, project.ID)
+}
+
 // CreateColumn creates column.
 func (s *Service) CreateColumn(ctx context.Context, projectID, name string, position, wipLimit int) (domain.Column, error) {
 	column, err := domain.NewColumn(s.idGen(), projectID, name, position, wipLimit, s.clock())

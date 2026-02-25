@@ -11,6 +11,7 @@ import (
 type Repository interface {
 	CreateProject(context.Context, domain.Project) error
 	UpdateProject(context.Context, domain.Project) error
+	DeleteProject(context.Context, string) error
 	GetProject(context.Context, string) (domain.Project, error)
 	ListProjects(context.Context, bool) ([]domain.Project, error)
 	SetProjectAllowedKinds(context.Context, string, []domain.KindID) error

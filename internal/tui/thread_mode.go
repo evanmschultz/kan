@@ -75,7 +75,7 @@ func (m Model) renderThreadModeView() tea.View {
 	}
 
 	v := tea.NewView(content)
-	v.MouseMode = tea.MouseModeCellMotion
+	v.MouseMode = m.activeMouseMode()
 	v.AltScreen = true
 	return v
 }

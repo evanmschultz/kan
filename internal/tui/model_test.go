@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/evanschultz/kan/internal/app"
@@ -299,6 +300,50 @@ func (f *fakeService) UpdateProject(_ context.Context, in app.UpdateProjectInput
 		return f.projects[idx], nil
 	}
 	return domain.Project{}, app.ErrNotFound
+}
+
+// ArchiveProject archives one project.
+func (f *fakeService) ArchiveProject(_ context.Context, projectID string) (domain.Project, error) {
+	for idx := range f.projects {
+		if f.projects[idx].ID != projectID {
+			continue
+		}
+		f.projects[idx].Archive(time.Now().UTC())
+		return f.projects[idx], nil
+	}
+	return domain.Project{}, app.ErrNotFound
+}
+
+// RestoreProject restores one project.
+func (f *fakeService) RestoreProject(_ context.Context, projectID string) (domain.Project, error) {
+	for idx := range f.projects {
+		if f.projects[idx].ID != projectID {
+			continue
+		}
+		f.projects[idx].Restore(time.Now().UTC())
+		return f.projects[idx], nil
+	}
+	return domain.Project{}, app.ErrNotFound
+}
+
+// DeleteProject hard-deletes one project and associated in-memory fixtures.
+func (f *fakeService) DeleteProject(_ context.Context, projectID string) error {
+	next := make([]domain.Project, 0, len(f.projects))
+	found := false
+	for _, project := range f.projects {
+		if project.ID == projectID {
+			found = true
+			continue
+		}
+		next = append(next, project)
+	}
+	if !found {
+		return app.ErrNotFound
+	}
+	f.projects = next
+	delete(f.columns, projectID)
+	delete(f.tasks, projectID)
+	return nil
 }
 
 // CreateTask creates task.
@@ -1142,6 +1187,390 @@ func TestModelLabelsConfigCommandSave(t *testing.T) {
 	}
 }
 
+// TestModelLabelsConfigCommandSaveScopedBranchPhase verifies branch/phase labels persist through scoped labels-config saves.
+func TestModelLabelsConfigCommandSaveScopedBranchPhase(t *testing.T) {
+	now := time.Date(2026, 2, 23, 9, 30, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	branch, _ := domain.NewTask(domain.TaskInput{
+		ID:        "b1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		ParentID:  "",
+		Kind:      domain.WorkKind("branch"),
+		Scope:     domain.KindAppliesToBranch,
+		Title:     "Branch",
+		Priority:  domain.PriorityMedium,
+		Labels:    []string{"branch-old"},
+	}, now)
+	phase, _ := domain.NewTask(domain.TaskInput{
+		ID:        "ph1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  1,
+		ParentID:  branch.ID,
+		Kind:      domain.WorkKindPhase,
+		Scope:     domain.KindAppliesToPhase,
+		Title:     "Phase",
+		Priority:  domain.PriorityMedium,
+		Labels:    []string{"phase-old"},
+	}, now)
+	leaf, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  2,
+		ParentID:  phase.ID,
+		Kind:      domain.WorkKindTask,
+		Scope:     domain.KindAppliesToTask,
+		Title:     "Leaf",
+		Priority:  domain.PriorityMedium,
+	}, now)
+
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{branch, phase, leaf})
+	m := loadReadyModel(t, NewModel(
+		svc,
+		WithLabelConfig(LabelConfig{
+			Global:   []string{"bug"},
+			Projects: map[string][]string{"inbox": {"roadmap"}},
+		}),
+		WithSaveLabelsConfigCallback(func(_ string, _ []string, _ []string) error { return nil }),
+	))
+	m.projectionRootTaskID = branch.ID
+	m.selectedColumn = 0
+	m.selectedTask = 0
+
+	updated, cmd := m.executeCommandPalette("labels-config")
+	m = applyResult(t, updated, cmd)
+	if m.mode != modeLabelsConfig {
+		t.Fatalf("expected labels config mode, got %v", m.mode)
+	}
+	if len(m.labelsConfigInputs) != 4 {
+		t.Fatalf("expected 4 labels config inputs, got %d", len(m.labelsConfigInputs))
+	}
+	if m.labelsConfigBranchTaskID != branch.ID || m.labelsConfigPhaseTaskID != phase.ID {
+		t.Fatalf("expected branch/phase context IDs, got branch=%q phase=%q", m.labelsConfigBranchTaskID, m.labelsConfigPhaseTaskID)
+	}
+	if got := strings.TrimSpace(m.labelsConfigInputs[2].Value()); got != "branch-old" {
+		t.Fatalf("expected branch labels prefill, got %q", got)
+	}
+	if got := strings.TrimSpace(m.labelsConfigInputs[3].Value()); got != "phase-old" {
+		t.Fatalf("expected phase labels prefill, got %q", got)
+	}
+
+	m.labelsConfigInputs[2].SetValue("branch-new")
+	m.labelsConfigInputs[3].SetValue("phase-new,phase-two")
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	findTask := func(taskID string) (domain.Task, bool) {
+		for _, task := range svc.tasks[p.ID] {
+			if task.ID == taskID {
+				return task, true
+			}
+		}
+		return domain.Task{}, false
+	}
+	updatedBranch, ok := findTask(branch.ID)
+	if !ok {
+		t.Fatalf("expected branch task %q to exist", branch.ID)
+	}
+	if len(updatedBranch.Labels) != 1 || updatedBranch.Labels[0] != "branch-new" {
+		t.Fatalf("expected branch labels updated, got %#v", updatedBranch.Labels)
+	}
+	updatedPhase, ok := findTask(phase.ID)
+	if !ok {
+		t.Fatalf("expected phase task %q to exist", phase.ID)
+	}
+	if len(updatedPhase.Labels) != 2 || updatedPhase.Labels[0] != "phase-new" || updatedPhase.Labels[1] != "phase-two" {
+		t.Fatalf("expected phase labels updated, got %#v", updatedPhase.Labels)
+	}
+}
+
+// TestModelCommandPaletteProjectLifecycleActions verifies archive/restore/delete project command flows.
+func TestModelCommandPaletteProjectLifecycleActions(t *testing.T) {
+	now := time.Date(2026, 2, 23, 9, 30, 0, 0, time.UTC)
+	p1, _ := domain.NewProject("p1", "Inbox", "", now)
+	p2, _ := domain.NewProject("p2", "Roadmap", "", now)
+	c1, _ := domain.NewColumn("c1", p1.ID, "To Do", 0, 0, now)
+	c2, _ := domain.NewColumn("c2", p2.ID, "To Do", 0, 0, now)
+	svc := newFakeService([]domain.Project{p1, p2}, []domain.Column{c1, c2}, nil)
+	m := loadReadyModel(t, NewModel(
+		svc,
+		WithConfirmConfig(ConfirmConfig{
+			Archive:    false,
+			HardDelete: false,
+			Restore:    false,
+		}),
+	))
+	m.showArchived = true
+
+	updated, cmd := m.executeCommandPalette("toggle-selection-mode")
+	m = applyResult(t, updated, cmd)
+	if !m.mouseSelectionMode {
+		t.Fatal("expected selection mode enabled")
+	}
+
+	updated, cmd = m.executeCommandPalette("archive-project")
+	m = applyResult(t, updated, cmd)
+	if svc.projects[0].ArchivedAt == nil {
+		t.Fatalf("expected archived project state, got %#v", svc.projects[0])
+	}
+
+	updated, cmd = m.executeCommandPalette("restore-project")
+	m = applyResult(t, updated, cmd)
+	if svc.projects[0].ArchivedAt != nil {
+		t.Fatalf("expected restored project state, got %#v", svc.projects[0])
+	}
+
+	updated, cmd = m.executeCommandPalette("delete-project")
+	m = applyResult(t, updated, cmd)
+	if len(svc.projects) != 1 {
+		t.Fatalf("expected one project after delete, got %d", len(svc.projects))
+	}
+	if svc.projects[0].ID != p2.ID {
+		t.Fatalf("expected remaining project %q, got %#v", p2.ID, svc.projects)
+	}
+}
+
+// TestModelProjectLifecycleConfirmBranches verifies confirm-mode branches for project lifecycle actions.
+func TestModelProjectLifecycleConfirmBranches(t *testing.T) {
+	now := time.Date(2026, 2, 23, 9, 30, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, nil)
+	m := loadReadyModel(t, NewModel(svc))
+
+	updated, cmd := m.archiveCurrentProject(true)
+	m = applyResult(t, updated, cmd)
+	if m.mode != modeConfirmAction || m.pendingConfirm.Kind != "archive-project" {
+		t.Fatalf("expected archive-project confirm mode, got mode=%v confirm=%#v", m.mode, m.pendingConfirm)
+	}
+	m.mode = modeNone
+	m.pendingConfirm = confirmAction{}
+
+	archived, err := svc.ArchiveProject(context.Background(), p.ID)
+	if err != nil {
+		t.Fatalf("ArchiveProject() setup error = %v", err)
+	}
+	svc.projects[0] = archived
+	m.projects[0] = archived
+	m.showArchived = true
+
+	updated, cmd = m.restoreCurrentProject(true)
+	m = applyResult(t, updated, cmd)
+	if m.mode != modeConfirmAction || m.pendingConfirm.Kind != "restore-project" {
+		t.Fatalf("expected restore-project confirm mode, got mode=%v confirm=%#v", m.mode, m.pendingConfirm)
+	}
+	m.mode = modeNone
+
+	updated, cmd = m.deleteCurrentProject(true)
+	m = applyResult(t, updated, cmd)
+	if m.mode != modeConfirmAction || m.pendingConfirm.Kind != "delete-project" {
+		t.Fatalf("expected delete-project confirm mode, got mode=%v confirm=%#v", m.mode, m.pendingConfirm)
+	}
+}
+
+// TestModelProjectLifecycleGuardsAndSelection verifies project lifecycle guard statuses and next-visible selection.
+func TestModelProjectLifecycleGuardsAndSelection(t *testing.T) {
+	now := time.Date(2026, 2, 23, 9, 30, 0, 0, time.UTC)
+
+	empty := loadReadyModel(t, NewModel(newFakeService(nil, nil, nil)))
+	updated, cmd := empty.archiveCurrentProject(true)
+	empty = applyResult(t, updated, cmd)
+	if empty.status != "no project selected" {
+		t.Fatalf("expected no-project archive status, got %q", empty.status)
+	}
+	updated, cmd = empty.restoreCurrentProject(true)
+	empty = applyResult(t, updated, cmd)
+	if empty.status != "no project selected" {
+		t.Fatalf("expected no-project restore status, got %q", empty.status)
+	}
+	updated, cmd = empty.deleteCurrentProject(true)
+	empty = applyResult(t, updated, cmd)
+	if empty.status != "no project selected" {
+		t.Fatalf("expected no-project delete status, got %q", empty.status)
+	}
+
+	p1, _ := domain.NewProject("p1", "Inbox", "", now)
+	p2, _ := domain.NewProject("p2", "Roadmap", "", now)
+	p3, _ := domain.NewProject("p3", "Ops", "", now)
+	p2.Archive(now.Add(time.Minute))
+
+	c1, _ := domain.NewColumn("c1", p1.ID, "To Do", 0, 0, now)
+	c2, _ := domain.NewColumn("c2", p2.ID, "To Do", 0, 0, now)
+	c3, _ := domain.NewColumn("c3", p3.ID, "To Do", 0, 0, now)
+
+	svc := newFakeService([]domain.Project{p1, p2, p3}, []domain.Column{c1, c2, c3}, nil)
+	m := loadReadyModel(t, NewModel(svc))
+	m.projects[1] = p2
+	m.showArchived = false
+
+	updated, cmd = m.restoreCurrentProject(true)
+	m = applyResult(t, updated, cmd)
+	if m.status != "project is not archived" {
+		t.Fatalf("expected non-archived restore guard status, got %q", m.status)
+	}
+	if m.mode == modeConfirmAction {
+		t.Fatalf("expected no confirm mode for non-archived restore, got %v", m.mode)
+	}
+
+	updated, cmd = m.archiveCurrentProject(false)
+	m = applyResult(t, updated, cmd)
+	if got := m.projects[m.selectedProject].ID; got != p3.ID {
+		t.Fatalf("expected next visible project %q after archive, got %q", p3.ID, got)
+	}
+	m.selectedProject = 1
+	updated, cmd = m.archiveCurrentProject(true)
+	m = applyResult(t, updated, cmd)
+	if m.status != "project already archived" {
+		t.Fatalf("expected already-archived guard status, got %q", m.status)
+	}
+
+	updated, cmd = m.deleteCurrentProject(false)
+	m = applyResult(t, updated, cmd)
+	if got := m.projects[m.selectedProject].ID; got != p3.ID {
+		t.Fatalf("expected delete to skip archived candidates and keep visible project %q, got %q", p3.ID, got)
+	}
+
+	updated, cmd = m.applyConfirmedAction(confirmAction{Kind: "mystery"})
+	m = applyResult(t, updated, cmd)
+	if m.status != "unknown confirm action" {
+		t.Fatalf("expected unknown confirm action status, got %q", m.status)
+	}
+}
+
+// TestModelCommandPaletteBranchLifecycleGuards verifies branch lifecycle commands require a selected branch.
+func TestModelCommandPaletteBranchLifecycleGuards(t *testing.T) {
+	now := time.Date(2026, 2, 23, 9, 30, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Kind:      domain.WorkKindTask,
+		Scope:     domain.KindAppliesToTask,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})))
+
+	updated, cmd := m.executeCommandPalette("edit-branch")
+	m = applyResult(t, updated, cmd)
+	if m.status != "select a branch to edit" {
+		t.Fatalf("expected edit-branch guard status, got %q", m.status)
+	}
+
+	updated, cmd = m.executeCommandPalette("archive-branch")
+	m = applyResult(t, updated, cmd)
+	if m.status != "select a branch to archive" {
+		t.Fatalf("expected archive-branch guard status, got %q", m.status)
+	}
+
+	updated, cmd = m.executeCommandPalette("delete-branch")
+	m = applyResult(t, updated, cmd)
+	if m.status != "select a branch to delete" {
+		t.Fatalf("expected delete-branch guard status, got %q", m.status)
+	}
+
+	updated, cmd = m.executeCommandPalette("restore-branch")
+	m = applyResult(t, updated, cmd)
+	if m.status != "select an archived branch to restore" {
+		t.Fatalf("expected restore-branch guard status, got %q", m.status)
+	}
+}
+
+// TestModelCommandPaletteBranchLifecycleActions verifies branch command palette flows.
+func TestModelCommandPaletteBranchLifecycleActions(t *testing.T) {
+	now := time.Date(2026, 2, 23, 9, 30, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	branch, _ := domain.NewTask(domain.TaskInput{
+		ID:        "b1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Kind:      domain.WorkKind("branch"),
+		Scope:     domain.KindAppliesToBranch,
+		Title:     "Branch",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{branch})
+	m := loadReadyModel(t, NewModel(
+		svc,
+		WithConfirmConfig(ConfirmConfig{
+			Archive:    false,
+			HardDelete: false,
+			Restore:    false,
+		}),
+	))
+	m.showArchived = true
+
+	updated, cmd := m.executeCommandPalette("new-branch")
+	m = applyResult(t, updated, cmd)
+	if m.mode != modeAddTask || m.taskFormKind != domain.WorkKind("branch") || m.taskFormScope != domain.KindAppliesToBranch {
+		t.Fatalf("expected new branch task form defaults, got mode=%v kind=%q scope=%q", m.mode, m.taskFormKind, m.taskFormScope)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+
+	updated, cmd = m.executeCommandPalette("edit-branch")
+	m = applyResult(t, updated, cmd)
+	if m.mode != modeEditTask || strings.TrimSpace(m.editingTaskID) != branch.ID {
+		t.Fatalf("expected branch edit form, got mode=%v task=%q", m.mode, m.editingTaskID)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+
+	updated, cmd = m.executeCommandPalette("archive-branch")
+	m = applyResult(t, updated, cmd)
+	if len(svc.tasks[p.ID]) != 1 || svc.tasks[p.ID][0].ArchivedAt == nil {
+		t.Fatalf("expected archived branch task, got %#v", svc.tasks[p.ID])
+	}
+
+	updated, cmd = m.executeCommandPalette("restore-branch")
+	m = applyResult(t, updated, cmd)
+	if len(svc.tasks[p.ID]) != 1 || svc.tasks[p.ID][0].ArchivedAt != nil {
+		t.Fatalf("expected restored branch task, got %#v", svc.tasks[p.ID])
+	}
+
+	updated, cmd = m.executeCommandPalette("delete-branch")
+	m = applyResult(t, updated, cmd)
+	if len(svc.tasks[p.ID]) != 0 {
+		t.Fatalf("expected branch hard delete, got %#v", svc.tasks[p.ID])
+	}
+}
+
+// TestClipboardShortcutHelpers verifies key-detection and input-splice helper behavior for clipboard shortcuts.
+func TestClipboardShortcutHelpers(t *testing.T) {
+	if !isClipboardCopyKey(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}) {
+		t.Fatal("expected ctrl+c to be recognized as copy")
+	}
+	if !isClipboardPasteKey(tea.KeyPressMsg{Code: 'v', Mod: tea.ModCtrl}) {
+		t.Fatal("expected ctrl+v to be recognized as paste")
+	}
+
+	merged, next := spliceRunes("abcd", 2, "XYZ")
+	if merged != "abXYZcd" || next != 5 {
+		t.Fatalf("unexpected splice result merged=%q next=%d", merged, next)
+	}
+
+	in := textinput.New()
+	in.SetValue("alpha")
+	in.SetCursor(2)
+
+	if handled, _ := applyClipboardShortcutToInput(tea.KeyPressMsg{Code: 'x', Text: "x"}, &in); handled {
+		t.Fatal("expected non-clipboard key to bypass clipboard helper")
+	}
+	if handled, status := applyClipboardShortcutToInput(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}, &in); !handled || status == "" {
+		t.Fatalf("expected copy shortcut handled with status, handled=%t status=%q", handled, status)
+	}
+	if handled, status := applyClipboardShortcutToInput(tea.KeyPressMsg{Code: 'v', Mod: tea.ModCtrl}, &in); !handled || status == "" {
+		t.Fatalf("expected paste shortcut handled with status, handled=%t status=%q", handled, status)
+	}
+}
+
 // TestModelCommandPaletteWindowedRendering verifies command selection stays visible past the first page.
 func TestModelCommandPaletteWindowedRendering(t *testing.T) {
 	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
@@ -1284,7 +1713,7 @@ func TestModelCommandPaletteReloadConfigAppliesRuntimeSettings(t *testing.T) {
 	if !m.searchCrossProject || !m.searchDefaultCrossProject || !m.showArchived || !m.searchDefaultIncludeArchive {
 		t.Fatalf("unexpected search scope flags after reload %#v", m)
 	}
-	if got := strings.Join(m.searchStates, ","); got != "todo" {
+	if got := strings.Join(m.searchStates, ","); got != "todo,archived" {
 		t.Fatalf("unexpected search states after reload %#v", m.searchStates)
 	}
 	if m.boardGroupBy != "priority" || m.showWIPWarnings {
@@ -2054,7 +2483,7 @@ func TestModelStartupBootstrapPrecedesLaunchPicker(t *testing.T) {
 	ready.bootstrapDisplayInput.SetValue("Lane User")
 	ready.bootstrapActorIndex = bootstrapActorTypeIndex("agent")
 	ready.bootstrapRoots = []string{root}
-	ready.bootstrapFocus = 3
+	ready.bootstrapFocus = 2
 	ready = applyMsg(t, ready, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if saveCalls != 1 {
 		t.Fatalf("expected one bootstrap save call, got %d", saveCalls)
@@ -2115,7 +2544,7 @@ func TestModelBootstrapSettingsCommandPaletteRootsEditing(t *testing.T) {
 		t.Fatalf("expected root prefill %q, got %#v", filepath.Clean(rootA), m.bootstrapRoots)
 	}
 
-	m = applyCmd(t, m, m.focusBootstrapField(2))
+	m = applyCmd(t, m, m.focusBootstrapField(1))
 	m = applyMsg(t, m, keyRune('d'))
 	if len(m.bootstrapRoots) != 0 {
 		t.Fatalf("expected root removal from bootstrap modal, got %#v", m.bootstrapRoots)
@@ -2132,23 +2561,23 @@ func TestModelBootstrapSettingsCommandPaletteRootsEditing(t *testing.T) {
 	if len(m.bootstrapRoots) != 1 || m.bootstrapRoots[0] != filepath.Clean(rootB) {
 		t.Fatalf("expected root picker add %q, got %#v", filepath.Clean(rootB), m.bootstrapRoots)
 	}
-	m = applyCmd(t, m, m.focusBootstrapField(2))
+	m = applyCmd(t, m, m.focusBootstrapField(1))
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
-	if m.bootstrapFocus != 3 {
+	if m.bootstrapFocus != 2 {
 		t.Fatalf("expected down arrow on roots to continue focus navigation, got %d", m.bootstrapFocus)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyUp})
-	if m.bootstrapFocus != 2 {
+	if m.bootstrapFocus != 1 {
 		t.Fatalf("expected up arrow to return focus to roots, got %d", m.bootstrapFocus)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyUp})
-	if m.bootstrapFocus != 1 {
+	if m.bootstrapFocus != 0 {
 		t.Fatalf("expected up arrow on first root row to move focus backward, got %d", m.bootstrapFocus)
 	}
 
 	m.bootstrapDisplayInput.SetValue("Lane Agent")
 	m.bootstrapActorIndex = bootstrapActorTypeIndex("system")
-	m = applyCmd(t, m, m.focusBootstrapField(3))
+	m = applyCmd(t, m, m.focusBootstrapField(2))
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if saveCalls != 1 {
 		t.Fatalf("expected one bootstrap save call, got %d", saveCalls)
@@ -2569,7 +2998,7 @@ func TestParseDueAndLabelsInput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseDueInput datetime unexpected error: %v", err)
 	}
-	if gotDue == nil || gotDue.UTC().Hour() != 15 || gotDue.UTC().Minute() != 4 {
+	if gotDue == nil || gotDue.In(time.Local).Hour() != 15 || gotDue.In(time.Local).Minute() != 4 {
 		t.Fatalf("expected parsed due datetime, got %#v", gotDue)
 	}
 
@@ -2588,13 +3017,13 @@ func TestParseDueAndLabelsInput(t *testing.T) {
 		t.Fatalf("expected parsed labels, got %#v", got)
 	}
 
-	if got := canonicalSearchStates([]string{}); len(got) != 3 || got[0] != "todo" {
+	if got := canonicalSearchStates([]string{}); len(got) != 4 || got[0] != "todo" {
 		t.Fatalf("expected state fallback, got %#v", got)
 	}
 	if got := canonicalSearchStates([]string{"todo", "progress", "todo"}); len(got) != 2 || got[1] != "progress" {
 		t.Fatalf("expected deduped state filters, got %#v", got)
 	}
-	if got := canonicalSearchStates([]string{"unknown"}); len(got) != 3 || got[0] != "todo" {
+	if got := canonicalSearchStates([]string{"unknown"}); len(got) != 4 || got[0] != "todo" {
 		t.Fatalf("expected canonical fallback for unknown states, got %#v", got)
 	}
 }
@@ -2838,7 +3267,7 @@ func TestTaskFormDuePickerFlow(t *testing.T) {
 		t.Fatalf("expected due field focus, got %d", m.formFocus)
 	}
 	dueOverlay := m.renderModeOverlay(lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), lipgloss.NewStyle(), 96)
-	if !strings.Contains(dueOverlay, "YYYY-MM-DD HH:MM") || !strings.Contains(dueOverlay, "RFC3339") || !strings.Contains(dueOverlay, "UTC") {
+	if !strings.Contains(dueOverlay, "YYYY-MM-DD HH:MM") || !strings.Contains(dueOverlay, "RFC3339") || !strings.Contains(dueOverlay, "local time") {
 		t.Fatalf("expected explicit due datetime format hints, got %q", dueOverlay)
 	}
 
@@ -2861,6 +3290,51 @@ func TestTaskFormDuePickerFlow(t *testing.T) {
 	due := strings.TrimSpace(m.formInputs[3].Value())
 	if len(due) != 10 || strings.Count(due, "-") != 2 {
 		t.Fatalf("expected YYYY-MM-DD due value, got %q", due)
+	}
+}
+
+// TestDuePickerTypedInputAndFocusControls verifies typed date/time options and focus transitions.
+func TestDuePickerTypedInputAndFocusControls(t *testing.T) {
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, nil)))
+
+	m = applyMsg(t, m, keyRune('n'))
+	if m.mode != modeAddTask {
+		t.Fatalf("expected add task mode, got %v", m.mode)
+	}
+	m.formFocus = taskFieldDue
+	m.startDuePicker()
+	if m.mode != modeDuePicker {
+		t.Fatalf("expected due picker mode, got %v", m.mode)
+	}
+
+	m.duePickerIncludeTime = true
+	m.duePickerDateInput.SetValue(time.Now().In(time.Local).Format("2006-01-02"))
+	m.duePickerTimeInput.SetValue("17:45")
+	options := m.duePickerOptions()
+	if len(options) == 0 || !strings.Contains(strings.ToLower(options[0].Label), "use typed datetime") {
+		t.Fatalf("expected typed datetime option at top, got %#v", options)
+	}
+	if !strings.HasSuffix(options[0].Value, "17:45") {
+		t.Fatalf("expected typed datetime value to include 17:45, got %q", options[0].Value)
+	}
+
+	m.duePickerFocus = 2
+	_ = m.setDuePickerIncludeTime(false)
+	if m.duePickerFocus != 3 {
+		t.Fatalf("expected focus to move from time input to list when time disabled, got %d", m.duePickerFocus)
+	}
+	if got := m.duePickerFocusSlots(); len(got) != 3 {
+		t.Fatalf("expected three focus slots without time input, got %#v", got)
+	}
+
+	if _, ok := resolveDuePickerDateToken("today", time.Now().In(time.Local)); !ok {
+		t.Fatal("expected today token to parse")
+	}
+	if hour, minute, ok := parseDuePickerTimeToken("5:30pm"); !ok || hour != 17 || minute != 30 {
+		t.Fatalf("expected 5:30pm parse to 17:30, got %d:%d ok=%t", hour, minute, ok)
 	}
 }
 
@@ -3052,12 +3526,53 @@ func TestDueHelpers(t *testing.T) {
 		t.Fatalf("expected no warning for future datetime, got %q", got)
 	}
 
-	if got := formatDueValue(&soon); !strings.Contains(got, "12:30") {
+	if got := formatDueValue(&soon); !strings.Contains(got, soon.In(time.Local).Format("15:04")) {
 		t.Fatalf("expected due value with time, got %q", got)
 	}
-	dateOnly := time.Date(2026, 2, 22, 0, 0, 0, 0, time.UTC)
-	if got := formatDueValue(&dateOnly); got != "2026-02-22" {
+	dateOnly := time.Date(2026, 2, 22, 0, 0, 0, 0, time.Local)
+	if got := formatDueValue(&dateOnly); got != dateOnly.Format("2006-01-02") {
 		t.Fatalf("expected date-only due format, got %q", got)
+	}
+}
+
+// TestModelMouseSelectionModeDisablesMouseCapture verifies selection mode disables TUI mouse handling.
+func TestModelMouseSelectionModeDisablesMouseCapture(t *testing.T) {
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	t1, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "One",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	t2, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t2",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  1,
+		Title:     "Two",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{t1, t2})))
+	m.mouseSelectionMode = true
+
+	before := m.selectedTask
+	m = applyMsg(t, m, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	if m.selectedTask != before {
+		t.Fatalf("expected mouse wheel ignored in selection mode, selected=%d before=%d", m.selectedTask, before)
+	}
+	view := m.View()
+	if view.MouseMode != tea.MouseModeNone {
+		t.Fatalf("expected mouse mode none in selection mode, got %v", view.MouseMode)
+	}
+
+	m.mouseSelectionMode = false
+	view = m.View()
+	if view.MouseMode != tea.MouseModeCellMotion {
+		t.Fatalf("expected cell-motion mouse mode when selection mode disabled, got %v", view.MouseMode)
 	}
 }
 

@@ -226,6 +226,9 @@ func TestRepository_NotFoundCases(t *testing.T) {
 	if err := repo.DeleteTask(ctx, "missing"); err != app.ErrNotFound {
 		t.Fatalf("expected app.ErrNotFound for delete, got %v", err)
 	}
+	if err := repo.DeleteProject(ctx, "missing"); err != app.ErrNotFound {
+		t.Fatalf("expected app.ErrNotFound for project delete, got %v", err)
+	}
 }
 
 // TestRepository_ProjectAndColumnUpdates verifies behavior for the covered scenario.
@@ -327,6 +330,49 @@ func TestRepository_ProjectAndColumnUpdates(t *testing.T) {
 	}
 	if len(allCols) != 1 || allCols[0].ArchivedAt == nil {
 		t.Fatalf("expected archived column in all list, got %#v", allCols)
+	}
+}
+
+// TestRepository_DeleteProjectCascades verifies project hard-delete cascades to child rows.
+func TestRepository_DeleteProjectCascades(t *testing.T) {
+	ctx := context.Background()
+	repo, err := Open(filepath.Join(t.TempDir(), "cascade.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Alpha", "", now)
+	if err := repo.CreateProject(ctx, project); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	if err := repo.CreateColumn(ctx, column); err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	if err := repo.CreateTask(ctx, task); err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+
+	if err := repo.DeleteProject(ctx, project.ID); err != nil {
+		t.Fatalf("DeleteProject() error = %v", err)
+	}
+	if _, err := repo.GetProject(ctx, project.ID); err != app.ErrNotFound {
+		t.Fatalf("expected app.ErrNotFound for project, got %v", err)
+	}
+	if _, err := repo.GetTask(ctx, task.ID); err != app.ErrNotFound {
+		t.Fatalf("expected app.ErrNotFound for task cascade, got %v", err)
 	}
 }
 
