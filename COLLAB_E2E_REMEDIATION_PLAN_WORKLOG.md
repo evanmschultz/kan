@@ -15,9 +15,11 @@ Evidence root: `.tmp/collab-e2e-20260225_080750/`
 5. Finalization order is locked:
    1. all code/test changes integrated,
    2. `just check`, `just ci`, `just test-golden` passing,
-   3. update `README.md` + other docs/templates,
-   4. clean up outdated files,
-   5. commit.
+   3. create/update and execute a post-fix collaborative validation worksheet,
+   4. commit implementation + test + validation record (record-preserving commit),
+   5. update `README.md` + other docs/templates,
+   6. clean up old/outdated markdown/worklog files,
+   7. commit docs/cleanup pass.
 
 ## 2) Locked Expectation Inventory (Complete)
 
@@ -192,15 +194,29 @@ Acceptance:
 3. Manual rerun focus:
    1. C4, C6, C9, C10, C11, C12, C13
    2. gatekeeping spoof/cross-scope checks from Section E evidence.
+4. After gates pass, run post-fix collaborative validation worksheet:
+   - `COLLABORATIVE_POST_FIX_VALIDATION_WORKSHEET.md`
+   - record PASS/FAIL/BLOCKED per step with evidence paths.
 
 ## 6) Finalization Sequence (Locked by user request)
 
-After tests pass and before commit:
+## Phase A: Record-preserving commit (after tests + post-fix worksheet)
+
+1. Integrate implementation changes.
+2. Run:
+   - `just check`
+   - `just ci`
+   - `just test-golden`
+3. Execute and complete:
+   - `COLLABORATIVE_POST_FIX_VALIDATION_WORKSHEET.md`
+4. Commit implementation + test + validation record so there is a durable pre-cleanup snapshot.
+
+## Phase B: Docs/MD cleanup pass (after record commit)
 
 1. Update `README.md` and other affected docs/templates with final behavior and keymaps.
-2. Clean up old/outdated files that are superseded by this remediation work.
-3. Confirm working tree only contains intended changes.
-4. Commit.
+2. Clean up old/outdated markdown/worklog files that are superseded.
+3. Validate references and doc integrity after cleanup.
+4. Commit docs/cleanup changes as a separate follow-up commit.
 
 ## 7) Worklog
 
@@ -210,8 +226,9 @@ After tests pass and before commit:
 2. Imported complete expectation inventory from collaborative worksheet + C13 final findings.
 3. Defined parallel lane setup and locked finalization order:
    - tests first (`just` gates),
-   - then docs update + outdated-file cleanup,
-   - then commit.
+   - then post-fix collaborative validation worksheet,
+   - then record-preserving commit,
+   - then docs update + outdated-file cleanup as a second commit.
 
 Next checkpoint:
 1. spawn worker lanes `L1-GATEKEEP`, `L2-LOGGING`, `L3-TUI-HOTSPOT` with lock scopes and acceptance criteria.

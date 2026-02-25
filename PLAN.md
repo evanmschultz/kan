@@ -4,6 +4,7 @@ Created: 2026-02-21
 Status: In progress (Phase 0-6 baseline + active Phase 11 Wave 1 execution tracked in `MCP_DESIGN_AND_PLAN.md`)  
 Execution gate: Planning update only in this step (no code changes)
 Temporary split-worklog (user-directed, 2026-02-25): collaborative remediation wave tracked in `COLLAB_E2E_REMEDIATION_PLAN_WORKLOG.md`.
+Closeout sequencing override (user-directed, 2026-02-25): after `just` gates, run `COLLABORATIVE_POST_FIX_VALIDATION_WORKSHEET.md`, commit record snapshot, then perform docs/markdown cleanup in a separate commit.
 
 ## 1) Product Goal
 
