@@ -1542,6 +1542,194 @@ func TestModelCommandPaletteBranchLifecycleActions(t *testing.T) {
 	}
 }
 
+// TestModelCommandPaletteNewBranchWarnsWhenFocused verifies branch creation is blocked while subtree focus is active.
+func TestModelCommandPaletteNewBranchWarnsWhenFocused(t *testing.T) {
+	now := time.Date(2026, 2, 23, 9, 35, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	branch, _ := domain.NewTask(domain.TaskInput{
+		ID:        "b1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Kind:      domain.WorkKind("branch"),
+		Scope:     domain.KindAppliesToBranch,
+		Title:     "Branch",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{branch})))
+
+	m.focusTaskByID(branch.ID)
+	m = applyMsg(t, m, keyRune('f'))
+	if m.projectionRootTaskID != branch.ID {
+		t.Fatalf("expected focused branch root %q, got %q", branch.ID, m.projectionRootTaskID)
+	}
+
+	updated, cmd := m.executeCommandPalette("new-branch")
+	m = applyResult(t, updated, cmd)
+	if m.mode != modeWarning {
+		t.Fatalf("expected warning modal mode, got %v", m.mode)
+	}
+	if m.status != "clear focus before creating a branch" {
+		t.Fatalf("expected focused-branch warning status, got %q", m.status)
+	}
+	warning := m.renderModeOverlay(lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), lipgloss.NewStyle(), 96)
+	if !strings.Contains(warning, "Branch Creation Blocked") {
+		t.Fatalf("expected warning title in modal, got %q", warning)
+	}
+	if !strings.Contains(warning, "project-level items") {
+		t.Fatalf("expected warning guidance in modal, got %q", warning)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeNone {
+		t.Fatalf("expected enter to dismiss warning modal, got %v", m.mode)
+	}
+	if m.projectionRootTaskID != branch.ID {
+		t.Fatalf("expected subtree focus to stay active after dismissing warning, got %q", m.projectionRootTaskID)
+	}
+}
+
+// TestModelCommandPalettePhaseCreationGuards verifies phase creation commands require valid hierarchy parents.
+func TestModelCommandPalettePhaseCreationGuards(t *testing.T) {
+	now := time.Date(2026, 2, 23, 9, 45, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Kind:      domain.WorkKindTask,
+		Scope:     domain.KindAppliesToTask,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})))
+
+	updated, cmd := m.executeCommandPalette("new-phase")
+	m = applyResult(t, updated, cmd)
+	if m.status != "select a branch for new phase" {
+		t.Fatalf("expected new-phase guard status, got %q", m.status)
+	}
+
+	updated, cmd = m.executeCommandPalette("new-subphase")
+	m = applyResult(t, updated, cmd)
+	if m.status != "select a phase/subphase for new subphase" {
+		t.Fatalf("expected new-subphase guard status, got %q", m.status)
+	}
+}
+
+// TestModelCommandPalettePhaseCreationActions verifies phase/subphase commands support selected and focused-empty scopes.
+func TestModelCommandPalettePhaseCreationActions(t *testing.T) {
+	now := time.Date(2026, 2, 23, 10, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Roadmap", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	branch, _ := domain.NewTask(domain.TaskInput{
+		ID:        "b1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Kind:      domain.WorkKind("branch"),
+		Scope:     domain.KindAppliesToBranch,
+		Title:     "Branch",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	phase, _ := domain.NewTask(domain.TaskInput{
+		ID:        "ph1",
+		ProjectID: p.ID,
+		ParentID:  branch.ID,
+		ColumnID:  c.ID,
+		Position:  1,
+		Kind:      domain.WorkKindPhase,
+		Scope:     domain.KindAppliesToPhase,
+		Title:     "Phase",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	phaseLeaf, _ := domain.NewTask(domain.TaskInput{
+		ID:        "ph-empty",
+		ProjectID: p.ID,
+		ParentID:  branch.ID,
+		ColumnID:  c.ID,
+		Position:  2,
+		Kind:      domain.WorkKindPhase,
+		Scope:     domain.KindAppliesToPhase,
+		Title:     "Phase Leaf",
+		Priority:  domain.PriorityLow,
+	}, now)
+	branchLeaf, _ := domain.NewTask(domain.TaskInput{
+		ID:        "b-empty",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  3,
+		Kind:      domain.WorkKind("branch"),
+		Scope:     domain.KindAppliesToBranch,
+		Title:     "Branch Leaf",
+		Priority:  domain.PriorityLow,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{branch, phase, phaseLeaf, branchLeaf})
+	m := loadReadyModel(t, NewModel(svc))
+
+	m.focusTaskByID(branch.ID)
+	updated, cmd := m.executeCommandPalette("new-phase")
+	m = applyResult(t, updated, cmd)
+	if m.mode != modeAddTask {
+		t.Fatalf("expected add-task mode for new phase, got %v", m.mode)
+	}
+	if m.taskFormParentID != branch.ID || m.taskFormKind != domain.WorkKindPhase || m.taskFormScope != domain.KindAppliesToPhase {
+		t.Fatalf("expected selected-branch phase defaults, got parent=%q kind=%q scope=%q", m.taskFormParentID, m.taskFormKind, m.taskFormScope)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+
+	m.focusTaskByID(branchLeaf.ID)
+	m = applyMsg(t, m, keyRune('f'))
+	if m.projectionRootTaskID != branchLeaf.ID {
+		t.Fatalf("expected empty branch focus root %q, got %q", branchLeaf.ID, m.projectionRootTaskID)
+	}
+	updated, cmd = m.executeCommandPalette("new-phase")
+	m = applyResult(t, updated, cmd)
+	if m.mode != modeAddTask {
+		t.Fatalf("expected add-task mode for focused-empty new phase, got %v", m.mode)
+	}
+	if m.taskFormParentID != branchLeaf.ID || m.taskFormKind != domain.WorkKindPhase || m.taskFormScope != domain.KindAppliesToPhase {
+		t.Fatalf("expected focused-empty-branch phase defaults, got parent=%q kind=%q scope=%q", m.taskFormParentID, m.taskFormKind, m.taskFormScope)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if !m.clearSubtreeFocus() {
+		t.Fatal("expected to clear focused subtree after branch-leaf phase test")
+	}
+
+	m.focusTaskByID(branch.ID)
+	m = applyMsg(t, m, keyRune('f'))
+	if m.projectionRootTaskID != branch.ID {
+		t.Fatalf("expected focused branch root %q for subphase creation, got %q", branch.ID, m.projectionRootTaskID)
+	}
+	m.focusTaskByID(phase.ID)
+	updated, cmd = m.executeCommandPalette("new-subphase")
+	m = applyResult(t, updated, cmd)
+	if m.mode != modeAddTask {
+		t.Fatalf("expected add-task mode for new subphase, got mode=%v status=%q", m.mode, m.status)
+	}
+	if m.taskFormParentID != phase.ID || m.taskFormKind != domain.WorkKindPhase || m.taskFormScope != domain.KindAppliesToSubphase {
+		t.Fatalf("expected selected-phase subphase defaults, got parent=%q kind=%q scope=%q", m.taskFormParentID, m.taskFormKind, m.taskFormScope)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+
+	m.focusTaskByID(phaseLeaf.ID)
+	m = applyMsg(t, m, keyRune('f'))
+	if m.projectionRootTaskID != phaseLeaf.ID {
+		t.Fatalf("expected empty phase focus root %q, got %q", phaseLeaf.ID, m.projectionRootTaskID)
+	}
+	updated, cmd = m.executeCommandPalette("new-subphase")
+	m = applyResult(t, updated, cmd)
+	if m.mode != modeAddTask {
+		t.Fatalf("expected add-task mode for focused-empty new subphase, got %v", m.mode)
+	}
+	if m.taskFormParentID != phaseLeaf.ID || m.taskFormKind != domain.WorkKindPhase || m.taskFormScope != domain.KindAppliesToSubphase {
+		t.Fatalf("expected focused-empty-phase subphase defaults, got parent=%q kind=%q scope=%q", m.taskFormParentID, m.taskFormKind, m.taskFormScope)
+	}
+}
+
 // TestClipboardShortcutHelpers verifies key-detection and input-splice helper behavior for clipboard shortcuts.
 func TestClipboardShortcutHelpers(t *testing.T) {
 	if !isClipboardCopyKey(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}) {
@@ -1661,6 +1849,7 @@ func TestHelpOverlayScreenTitleAndLinesCoverage(t *testing.T) {
 		modeCommandPalette,
 		modeQuickActions,
 		modeConfirmAction,
+		modeWarning,
 		modeActivityLog,
 		modeResourcePicker,
 		modeLabelPicker,
@@ -4924,6 +5113,56 @@ func TestModelFocusTaskScopeShowsSubtasks(t *testing.T) {
 	}
 }
 
+// TestModelFocusScopeShowsDirectSubtaskChildrenForLegacyParentKinds verifies focus works when direct children are subtasks.
+func TestModelFocusScopeShowsDirectSubtaskChildrenForLegacyParentKinds(t *testing.T) {
+	now := time.Date(2026, 2, 25, 13, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	todo, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	branch, _ := domain.NewTask(domain.TaskInput{
+		ID:        "b1",
+		ProjectID: p.ID,
+		ColumnID:  todo.ID,
+		Position:  0,
+		Title:     "Branch Parent",
+		Priority:  domain.PriorityMedium,
+		Kind:      domain.WorkKind("branch"),
+		Scope:     domain.KindAppliesToBranch,
+	}, now)
+	legacySubtask, _ := domain.NewTask(domain.TaskInput{
+		ID:        "st1",
+		ProjectID: p.ID,
+		ParentID:  branch.ID,
+		ColumnID:  todo.ID,
+		Position:  1,
+		Title:     "Legacy Subtask Child",
+		Priority:  domain.PriorityLow,
+		Kind:      domain.WorkKindSubtask,
+		Scope:     domain.KindAppliesToSubtask,
+	}, now)
+
+	m := loadReadyModel(t, NewModel(newFakeService(
+		[]domain.Project{p},
+		[]domain.Column{todo},
+		[]domain.Task{branch, legacySubtask},
+	)))
+	if got := len(m.currentColumnTasks()); got != 1 {
+		t.Fatalf("expected project scope to hide top-level subtask rows, got %d visible", got)
+	}
+
+	m.focusTaskByID(branch.ID)
+	m = applyMsg(t, m, keyRune('f'))
+	if m.projectionRootTaskID != branch.ID {
+		t.Fatalf("expected subtree focus root %q, got %q", branch.ID, m.projectionRootTaskID)
+	}
+	if got := len(m.currentColumnTasks()); got != 1 {
+		t.Fatalf("expected focused scope to render direct subtask child, got %d visible", got)
+	}
+	child, ok := m.selectedTaskInCurrentColumn()
+	if !ok || child.ID != legacySubtask.ID {
+		t.Fatalf("expected focused child %q, got task=%#v ok=%t", legacySubtask.ID, child, ok)
+	}
+}
+
 // TestModelNewTaskFormDefaultsFollowFocusedScope verifies add-task defaults follow active focus scope.
 func TestModelNewTaskFormDefaultsFollowFocusedScope(t *testing.T) {
 	now := time.Date(2026, 2, 25, 14, 0, 0, 0, time.UTC)
@@ -5130,8 +5369,8 @@ func TestModelViewShowsSubtreeDiscoverabilityHint(t *testing.T) {
 	}
 }
 
-// TestModelFocusSubtreeNoChildrenNoOp verifies pressing f on leaf nodes does not enter empty focus mode.
-func TestModelFocusSubtreeNoChildrenNoOp(t *testing.T) {
+// TestModelFocusSubtreeAllowsEmptyScope verifies pressing f on leaf nodes still enters focus mode.
+func TestModelFocusSubtreeAllowsEmptyScope(t *testing.T) {
 	now := time.Date(2026, 2, 25, 13, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Roadmap", "", now)
 	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
@@ -5150,17 +5389,16 @@ func TestModelFocusSubtreeNoChildrenNoOp(t *testing.T) {
 		[]domain.Column{c},
 		[]domain.Task{task},
 	)))
-	beforeStatus := m.status
 	m = applyMsg(t, m, keyRune('f'))
-	if m.projectionRootTaskID != "" {
-		t.Fatalf("expected focus root unchanged when selected task has no children, got %q", m.projectionRootTaskID)
+	if m.projectionRootTaskID != task.ID {
+		t.Fatalf("expected focus root %q for empty scope, got %q", task.ID, m.projectionRootTaskID)
 	}
-	if m.status != beforeStatus {
-		t.Fatalf("expected status unchanged when f is no-op, before=%q after=%q", beforeStatus, m.status)
+	if m.status != "focused subtree" {
+		t.Fatalf("expected focused-subtree status, got %q", m.status)
 	}
 	rendered := stripANSI(fmt.Sprint(m.View().Content))
-	if strings.Contains(rendered, "subtree focus active") {
-		t.Fatalf("expected no subtree-focus banner for no-op focus, got\n%s", rendered)
+	if !strings.Contains(rendered, "subtree focus active") {
+		t.Fatalf("expected subtree-focus banner for empty scope, got\n%s", rendered)
 	}
 }
 

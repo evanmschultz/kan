@@ -147,9 +147,12 @@ Launch TUI against the same DB:
 - Result: __________
 - Evidence: ______________________________________________
 
-### C8. Focus no-op on leaf
+### C8. Focus works on empty leaf scopes
 - On a task/subtask with no children, press `f`.
-- Expected: no navigation change and no empty focused board.
+- Expected:
+  - focused scope activates (path/focus banner visible),
+  - board may be empty if no children yet,
+  - `n` from this focused scope creates the first child in that scope.
 - Result: __________
 - Evidence: ______________________________________________
 
@@ -193,6 +196,42 @@ Launch TUI against the same DB:
   - help title identifies active screen context,
   - key guidance is specific to that screen (no unrelated workflows from other modes),
   - `esc` closes help first without closing the underlying modal.
+- Result: __________
+- Evidence: ______________________________________________
+
+### C12. Phase/Subphase creation tools
+- Open command palette (`:`) and run `new-phase` from:
+  - a selected branch row,
+  - an empty focused branch scope (`f` on branch with no children).
+- Expected:
+  - task form opens with phase defaults,
+  - parent is that branch,
+  - created item is phase-scoped.
+- Run `new-subphase` from:
+  - a selected phase/subphase row,
+  - an empty focused phase scope (`f` on phase with no children).
+- Expected:
+  - task form opens with subphase defaults,
+  - parent is that phase/subphase,
+  - created item is subphase-scoped.
+- While focused in any subtree (`f` active), run `new-branch`.
+- Expected:
+  - creation is blocked,
+  - warning modal appears with guidance to clear focus first,
+- no project-level branch is created accidentally.
+- Result: __________
+- Evidence: ______________________________________________
+
+### C13. Branch/Project lifecycle + archived visibility
+- Use command palette (`:`) for branch lifecycle:
+  - `new-branch`, `edit-branch`, `archive-branch`, `restore-branch`, `delete-branch`.
+- Use command palette (`:`) for project lifecycle:
+  - `new-project`, `edit-project`, `archive-project`, `restore-project`, `delete-project`.
+- Expected:
+  - archive/restore/delete actions persist after reload,
+  - archived items are hidden when archived visibility is off,
+  - archived items are visible when archived visibility is enabled (`t`),
+  - search supports archived state filtering and returns archived nodes when requested.
 - Result: __________
 - Evidence: ______________________________________________
 

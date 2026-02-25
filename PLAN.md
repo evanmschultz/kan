@@ -1213,3 +1213,119 @@ Code/doc changes:
 
 Status:
 - Completed for requested scope; gates passing (`just check`, `just ci`) with coverage floor satisfied.
+
+## Execution Log (2026-02-25: Subtree Focus `f` Regression Check/Fix)
+
+Objective:
+- Investigate report that `f` subtree focus was not working and ship a resilient fix.
+
+Context + root cause:
+- Focus logic itself was wired correctly, but focused board rendering hid direct `subtask` children unless the focus root was a `task/subtask`.
+- In legacy/irregular data shapes (for example, subtask-kind children attached under non-task roots), focus would no-op because the focused scope appeared empty after filtering.
+
+Code changes:
+- `internal/tui/model.go`
+  - updated `focusedScopeShowsSubtasks` to render direct subtask children for any active focused scope (`projectionRootTaskID != ""`), improving resilience for existing data.
+- `internal/tui/model_test.go`
+  - added `TestModelFocusScopeShowsDirectSubtaskChildrenForLegacyParentKinds` regression test.
+
+Command/test evidence:
+- Context7 consulted before edit (Bubble Tea key handling/update branch guidance).
+- `just fmt` -> pass.
+- `just test-pkg ./internal/tui` -> pass.
+- `just check` -> pass.
+- `just ci` -> pass (`internal/tui` coverage 70.3%).
+
+Status:
+- Subtree focus fix complete and validated.
+
+## Execution Log (2026-02-25: Empty Focus + Phase Tooling + Focused-Branch Guard Modal)
+
+Objective:
+- Allow subtree focus (`f`) even when the selected scope has zero children (branch/phase/subphase/task/subtask).
+- Add explicit phase/subphase creation tools in command palette.
+- Prevent accidental project-level branch creation while focused in a subtree by showing a warning modal.
+
+Context and failure analysis:
+- User clarified that empty focused scopes are required for first-child creation workflows.
+- User then asked for a "new phase tool"; code inspection confirmed only `new-task`, `new-subtask`, and `new-branch` existed.
+- User reported additional constraint: creating a branch while focused in a branch should fail with warning modal.
+
+Context7 compliance:
+- Context7 consulted before code edits (Bubble Tea update/key-routing patterns).
+- After each `just test-pkg` failure, Context7 was re-consulted before next edit.
+
+Code/doc changes:
+- `internal/tui/model.go`
+  - changed `activateSubtreeFocus` to:
+    - accept valid root IDs even with no direct children,
+    - retain focused scope when no board-visible rows exist,
+    - return success for empty scopes so `f` enters focus mode.
+  - added command palette items:
+    - `new-phase` (`phase-new`),
+    - `new-subphase` (`subphase-new`).
+  - added `startPhaseForm` helper to preconfigure kind/scope/parent for phase and subphase creation.
+  - added hierarchy selection helpers (`selectedTaskAtLevel(s)`, `focusedScopeTaskAtLevel(s)`, `taskMatchesHierarchyLevel`).
+  - wired `executeCommandPalette` for new phase/subphase flows:
+    - supports selected rows and focused-scope roots (including empty focused scopes).
+  - added focused-scope guard for `new-branch`:
+    - when subtree focus is active, branch creation is blocked,
+    - opens a warning modal instructing user to clear focus (`F`) first.
+  - introduced `modeWarning` + warning modal state/handlers/render/help-label support:
+    - dismiss-only modal (`enter`/`esc`),
+    - mode-scoped help text and prompt/label wiring.
+- `internal/tui/model_test.go`
+  - replaced leaf no-op assertion with empty-focus success assertion:
+    - `TestModelFocusSubtreeAllowsEmptyScope`.
+  - added phase command coverage:
+    - `TestModelCommandPalettePhaseCreationGuards`,
+    - `TestModelCommandPalettePhaseCreationActions` (selected + focused-empty paths).
+  - added focused-branch warning-modal regression:
+    - `TestModelCommandPaletteNewBranchWarnsWhenFocused`.
+  - updated mode-help coverage list to include `modeWarning`.
+- `COLLABORATIVE_FULL_E2E_TEST_WORKSHEET.md`
+  - updated C8 expectation to require empty-scope focus activation.
+  - added C12 checks for:
+    - `new-phase` / `new-subphase` behavior,
+    - focused-subtree `new-branch` warning-modal block.
+
+Command/test evidence:
+- `just fmt` -> pass.
+- `just test-pkg ./internal/tui` -> fail (`TestModelCommandPalettePhaseCreationActions` subphase path).
+- Context7 re-check executed after failure.
+- test flow adjusted to create subphase from focused branch hierarchy (full-board only exposes top-level rows).
+- `just fmt` -> pass.
+- `just test-pkg ./internal/tui` -> fail again (same test path).
+- Context7 re-check executed after failure.
+- additional test-state instrumentation and sequence fix applied.
+- `just fmt` -> pass.
+- `just test-pkg ./internal/tui` -> pass (`ok ... internal/tui`, ~81s).
+- `just check` -> pass.
+- `just ci` -> pass (`internal/tui` coverage 70.5%, repo gate green).
+
+Status:
+- Requested behavior implemented and validated:
+  - `f` focus works on empty scopes,
+  - phase/subphase creation tools exist,
+  - focused-branch new-branch path now fails with warning modal instead of creating project-level branch.
+
+## Execution Log (2026-02-25: README + Collaborative Worksheet Sync Before Commit)
+
+Objective:
+- Ensure README and `COLLABORATIVE_FULL_E2E_TEST_WORKSHEET.md` reflect current shipped behavior before commit.
+
+Documentation updates:
+- `README.md`
+  - updated startup/default-path wording to single active default path behavior.
+  - updated key controls (`d` due picker in task form, `f`/`F` focus controls, `v` selection mode).
+  - added command-palette highlights for branch/project lifecycle and phase/subphase tools.
+  - documented focused-subtree `new-branch` warning-modal block.
+- `COLLABORATIVE_FULL_E2E_TEST_WORKSHEET.md`
+  - verified C8/C12 remain aligned with empty-focus + phase/subphase + focused-branch warning behavior.
+  - added C13 checks for branch/project lifecycle and archived visibility/search behavior.
+
+Command/test evidence:
+- `just check` -> pass.
+
+Status:
+- Docs synchronized with current behavior; ready to commit all pending files.

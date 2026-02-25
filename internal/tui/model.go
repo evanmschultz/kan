@@ -64,6 +64,7 @@ const (
 	modeCommandPalette
 	modeQuickActions
 	modeConfirmAction
+	modeWarning
 	modeActivityLog
 	modeResourcePicker
 	modeLabelPicker
@@ -377,6 +378,8 @@ type Model struct {
 	confirmRestore    bool
 	pendingConfirm    confirmAction
 	confirmChoice     int
+	warningTitle      string
+	warningBody       string
 
 	boardGroupBy    string
 	showWIPWarnings bool
@@ -1798,6 +1801,28 @@ func (m *Model) startBranchForm(parent *domain.Task) tea.Cmd {
 	return cmd
 }
 
+// startPhaseForm opens the task form preconfigured for a phase/subphase work item.
+func (m *Model) startPhaseForm(parent domain.Task, subphase bool) tea.Cmd {
+	cmd := m.startTaskForm(nil)
+	m.taskFormKind = domain.WorkKindPhase
+	m.taskFormParentID = parent.ID
+	if subphase {
+		m.taskFormScope = domain.KindAppliesToSubphase
+		if len(m.formInputs) > taskFieldTitle {
+			m.formInputs[taskFieldTitle].Placeholder = "subphase title (required)"
+		}
+		m.status = "new subphase"
+	} else {
+		m.taskFormScope = domain.KindAppliesToPhase
+		if len(m.formInputs) > taskFieldTitle {
+			m.formInputs[taskFieldTitle].Placeholder = "phase title (required)"
+		}
+		m.status = "new phase"
+	}
+	m.refreshTaskFormLabelSuggestions()
+	return cmd
+}
+
 // startSubtaskFormFromTaskForm opens a subtask form from create/edit task modal context.
 func (m *Model) startSubtaskFormFromTaskForm() tea.Cmd {
 	if m.mode == modeEditTask {
@@ -2484,6 +2509,8 @@ func commandPaletteItems() []commandPaletteItem {
 		{Command: "new-task", Aliases: []string{"task-new"}, Description: "create a new task"},
 		{Command: "new-subtask", Aliases: []string{"task-subtask"}, Description: "create subtask for selected item"},
 		{Command: "new-branch", Aliases: []string{"branch-new"}, Description: "create a new branch"},
+		{Command: "new-phase", Aliases: []string{"phase-new"}, Description: "create a new phase"},
+		{Command: "new-subphase", Aliases: []string{"subphase-new"}, Description: "create a new subphase"},
 		{Command: "edit-branch", Aliases: []string{"branch-edit"}, Description: "edit selected branch"},
 		{Command: "archive-branch", Aliases: []string{"branch-archive"}, Description: "archive selected branch"},
 		{Command: "delete-branch", Aliases: []string{"branch-delete"}, Description: "hard delete selected branch"},
@@ -4322,6 +4349,24 @@ func (m *Model) toggleMouseSelectionMode() {
 	m.status = "text selection mode disabled"
 }
 
+// startWarningModal opens a dismiss-only warning modal with short guidance text.
+func (m *Model) startWarningModal(title, body string) {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		title = "Warning"
+	}
+	m.warningTitle = title
+	m.warningBody = strings.TrimSpace(body)
+	m.mode = modeWarning
+}
+
+// closeWarningModal dismisses the warning modal and clears staged text.
+func (m *Model) closeWarningModal() {
+	m.warningTitle = ""
+	m.warningBody = ""
+	m.mode = modeNone
+}
+
 // handleNormalModeKey handles normal mode key.
 func (m Model) handleNormalModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
@@ -5282,6 +5327,16 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.pendingConfirm = confirmAction{}
 			m.status = "applying action..."
 			return m.applyConfirmedAction(action)
+		default:
+			return m, nil
+		}
+	}
+
+	if m.mode == modeWarning {
+		switch msg.String() {
+		case "esc", "enter":
+			m.closeWarningModal()
+			return m, nil
 		default:
 			return m, nil
 		}
@@ -6257,11 +6312,39 @@ func (m Model) executeCommandPalette(command string) (tea.Model, tea.Cmd) {
 		}
 		return m, m.startSubtaskForm(task)
 	case "new-branch", "branch-new":
+		if strings.TrimSpace(m.projectionRootTaskID) != "" {
+			m.status = "clear focus before creating a branch"
+			m.startWarningModal(
+				"Branch Creation Blocked",
+				fmt.Sprintf("New branches are project-level items. Press %s to return to full board, then create the branch.", m.keys.clearFocus.Help().Key),
+			)
+			return m, nil
+		}
 		parent, ok := m.selectedBranchTask()
 		if ok {
 			return m, m.startBranchForm(&parent)
 		}
 		return m, m.startBranchForm(nil)
+	case "new-phase", "phase-new":
+		parent, ok := m.focusedScopeTaskAtLevel("branch")
+		if !ok {
+			parent, ok = m.selectedTaskAtLevel("branch")
+		}
+		if !ok {
+			m.status = "select a branch for new phase"
+			return m, nil
+		}
+		return m, m.startPhaseForm(parent, false)
+	case "new-subphase", "subphase-new":
+		parent, ok := m.focusedScopeTaskAtLevels("phase", "subphase")
+		if !ok {
+			parent, ok = m.selectedTaskAtLevels("phase", "subphase")
+		}
+		if !ok {
+			m.status = "select a phase/subphase for new subphase"
+			return m, nil
+		}
+		return m, m.startPhaseForm(parent, true)
 	case "edit-branch", "branch-edit":
 		task, ok := m.selectedBranchTask()
 		if !ok {
@@ -7672,15 +7755,10 @@ func (m Model) boardTasksForColumn(columnID string) []domain.Task {
 // focusedScopeShowsSubtasks reports whether the current focused scope should render subtask rows.
 func (m Model) focusedScopeShowsSubtasks() bool {
 	rootID := strings.TrimSpace(m.projectionRootTaskID)
-	if rootID == "" {
-		return false
-	}
-	root, ok := m.taskByID(rootID)
-	if !ok {
-		return false
-	}
-	level := baseSearchLevelForTask(root)
-	return level == "task" || level == "subtask"
+	// Once focused, show all direct children regardless of kind. This keeps
+	// focus navigation resilient for older/irregular data where subtasks were
+	// attached outside task/subtask roots.
+	return rootID != ""
 }
 
 // tasksForColumn handles tasks for column.
@@ -8155,14 +8233,59 @@ func (m Model) selectedTaskInCurrentColumn() (domain.Task, bool) {
 
 // selectedBranchTask returns the selected task when it is a branch-level work item.
 func (m Model) selectedBranchTask() (domain.Task, bool) {
+	return m.selectedTaskAtLevel("branch")
+}
+
+// selectedTaskAtLevel returns the selected task when it matches one hierarchy level.
+func (m Model) selectedTaskAtLevel(level string) (domain.Task, bool) {
+	return m.selectedTaskAtLevels(level)
+}
+
+// selectedTaskAtLevels returns the selected task when it matches one of the provided hierarchy levels.
+func (m Model) selectedTaskAtLevels(levels ...string) (domain.Task, bool) {
 	task, ok := m.selectedTaskInCurrentColumn()
 	if !ok {
 		return domain.Task{}, false
 	}
-	if baseSearchLevelForTask(task) != "branch" {
+	if !taskMatchesHierarchyLevel(task, levels...) {
 		return domain.Task{}, false
 	}
 	return task, true
+}
+
+// focusedScopeTaskAtLevel returns the active focus root task when it matches one hierarchy level.
+func (m Model) focusedScopeTaskAtLevel(level string) (domain.Task, bool) {
+	return m.focusedScopeTaskAtLevels(level)
+}
+
+// focusedScopeTaskAtLevels returns the active focus root task when it matches one provided hierarchy level.
+func (m Model) focusedScopeTaskAtLevels(levels ...string) (domain.Task, bool) {
+	rootID := strings.TrimSpace(m.projectionRootTaskID)
+	if rootID == "" {
+		return domain.Task{}, false
+	}
+	task, ok := m.taskByID(rootID)
+	if !ok {
+		return domain.Task{}, false
+	}
+	if !taskMatchesHierarchyLevel(task, levels...) {
+		return domain.Task{}, false
+	}
+	return task, true
+}
+
+// taskMatchesHierarchyLevel reports whether a task matches any provided hierarchy levels.
+func taskMatchesHierarchyLevel(task domain.Task, levels ...string) bool {
+	if len(levels) == 0 {
+		return false
+	}
+	level := strings.TrimSpace(strings.ToLower(baseSearchLevelForTask(task)))
+	for _, candidate := range levels {
+		if strings.TrimSpace(strings.ToLower(candidate)) == level {
+			return true
+		}
+	}
+	return false
 }
 
 // focusTaskByID focuses task by id.
@@ -8190,29 +8313,15 @@ func (m *Model) focusTaskByID(taskID string) {
 	}
 }
 
-// activateSubtreeFocus enters focused scope mode and selects the first visible child task.
+// activateSubtreeFocus enters focused scope mode and selects the first visible child when present.
 func (m *Model) activateSubtreeFocus(rootTaskID string) bool {
 	rootTaskID = strings.TrimSpace(rootTaskID)
 	if rootTaskID == "" {
 		return false
 	}
-	hasChild := false
-	for _, task := range m.tasks {
-		if strings.TrimSpace(task.ParentID) != rootTaskID {
-			continue
-		}
-		if !m.showArchived && task.ArchivedAt != nil {
-			continue
-		}
-		hasChild = true
-		break
-	}
-	if !hasChild {
+	if _, ok := m.taskByID(rootTaskID); !ok {
 		return false
 	}
-	prevRoot := m.projectionRootTaskID
-	prevCol := m.selectedColumn
-	prevTask := m.selectedTask
 	m.projectionRootTaskID = rootTaskID
 	m.selectedTask = 0
 	for idx, column := range m.columns {
@@ -8225,12 +8334,9 @@ func (m *Model) activateSubtreeFocus(rootTaskID string) bool {
 		m.clampSelections()
 		return true
 	}
-	// If the focused scope has no board-visible rows, keep current scope unchanged.
-	m.projectionRootTaskID = prevRoot
-	m.selectedColumn = prevCol
-	m.selectedTask = prevTask
+	// Empty focused scopes are still valid so users can create the first child in place.
 	m.clampSelections()
-	return false
+	return true
 }
 
 // clearSubtreeFocus exits focused scope mode and reselects the prior focus root when available.
@@ -8577,6 +8683,11 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 			"h/l switches confirm vs cancel",
 			"enter applies highlighted choice",
 			"y confirms immediately; n cancels; esc cancels",
+		}
+	case modeWarning:
+		return "warning", []string{
+			"warning modal blocks accidental context mistakes",
+			"enter or esc closes the warning",
 		}
 	case modeActivityLog:
 		return "activity log", []string{
@@ -9789,6 +9900,31 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		}
 		return style.Render(strings.Join(lines, "\n"))
 
+	case modeWarning:
+		style := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("203")).
+			Padding(0, 1)
+		if maxWidth > 0 {
+			style = style.Width(clamp(maxWidth, 36, 96))
+		}
+		titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("203"))
+		hintStyle := lipgloss.NewStyle().Foreground(muted)
+		title := strings.TrimSpace(m.warningTitle)
+		if title == "" {
+			title = "Warning"
+		}
+		body := strings.TrimSpace(m.warningBody)
+		if body == "" {
+			body = "This action is not allowed in the current context."
+		}
+		lines := []string{
+			titleStyle.Render(title),
+			body,
+			hintStyle.Render("enter close • esc close"),
+		}
+		return style.Render(strings.Join(lines, "\n"))
+
 	case modeQuickActions:
 		style := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
@@ -10182,6 +10318,8 @@ func (m Model) modeLabel() string {
 		return "activity"
 	case modeConfirmAction:
 		return "confirm"
+	case modeWarning:
+		return "warning"
 	case modeResourcePicker:
 		return "resources"
 	case modeLabelPicker:
@@ -10234,6 +10372,8 @@ func (m Model) modePrompt() string {
 		return "activity log: esc close"
 	case modeConfirmAction:
 		return "confirm action: enter confirm, esc cancel"
+	case modeWarning:
+		return "warning: enter close, esc close"
 	case modeResourcePicker:
 		return "resource picker: type fuzzy filter, arrows navigate, enter select, ctrl+a choose/attach current, esc cancel"
 	case modeLabelPicker:

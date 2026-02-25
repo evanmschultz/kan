@@ -91,7 +91,7 @@ just build
 - If no projects exist yet, the picker stays open and supports `N` to create the first project.
 - On TUI startup, missing required bootstrap fields are prompted and persisted:
   - `identity.display_name`
-  - at least one `paths.search_roots` entry
+  - one default path (stored as the single active entry in `paths.search_roots`)
 
 ## CLI Commands
 Export current data:
@@ -129,7 +129,7 @@ Path resolution controls:
 - `--dev` / `KAN_DEV_MODE` to use `<app>-dev` path roots
 - `kan paths` prints the resolved config/data/db paths for the current environment
 - `identity.default_actor_type` (`user|agent|system`) + `identity.display_name` are defaults for new thread comment ownership
-- `paths.search_roots` seed browse roots for root-selection pickers (bootstrap + paths/roots forms)
+- `paths.search_roots` stores one active default path used by bootstrap and path-pickers
 - task resource attachments require a configured per-project root mapping (`project_roots`)
 - dev mode logging writes to workspace-local `.kan/log/` when `logging.dev_file.enabled = true`
   - relative dev log dirs are anchored to the nearest workspace root marker (`go.mod` or `.git`)
@@ -163,7 +163,7 @@ display_name = "" # required at TUI startup bootstrap
 default_actor_type = "user" # user | agent | system
 
 [paths]
-search_roots = [] # required at TUI startup bootstrap
+search_roots = [] # bootstrap writes one active default path entry
 
 [logging]
 level = "info"
@@ -182,7 +182,9 @@ Full template: `config.example.toml`
 - `e`: edit task
 - `i` or `enter`: task info modal
 - `c` (in task info): open thread for the selected work item
-- `ctrl+d` or `D` (in task form due field): open due-date picker
+- `d` (in task form due field): open due-date picker
+- `f`: focus selected subtree (including empty scopes)
+- `F`: return to full board
 - `p`: project picker
 - `N` (in project picker): new project
 - `:`: command palette
@@ -192,8 +194,15 @@ Full template: `config.example.toml`
 - `D`: hard delete task
 - `u`: restore task
 - `t`: toggle archived visibility
+- `v`: toggle text-selection mode (copy-friendly mouse selection)
 - `?`: toggle expanded help
 - `q`: quit
+
+Command palette highlights:
+- `new-branch`, `edit-branch`, `archive-branch`, `restore-branch`, `delete-branch`
+- `new-phase`, `new-subphase`
+- `new-project`, `edit-project`, `archive-project`, `restore-project`, `delete-project`
+- while subtree focus is active, `new-branch` is blocked and shows a warning modal; clear focus (`F`) first
 
 ## Thread Mode
 - Open project thread from command palette with `thread-project` (`project-thread` alias).
