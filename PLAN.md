@@ -1030,3 +1030,63 @@ Goal: make troubleshooting and runtime diagnostics reliable during current local
 - CI passes on macOS/Linux/Windows.
 - TUI behavior covered by teatest.
 - `just ci` is the single local/CI quality gate.
+
+## Execution Log (2026-02-25: TUI Scope Drilldown + Collaborative E2E Worksheet)
+
+Objective:
+- Fix hierarchy board rendering semantics and drill-down UX gaps for branch/phase/subphase/task focus.
+- Ensure focused task scope renders subtasks in board mode.
+- Add a new user+agent collaborative full E2E worksheet for fresh-DB validation.
+
+Code/doc changes:
+- `internal/tui/model.go`
+  - switched board scope projection to immediate-children rendering by active scope.
+  - made path line always visible above board.
+  - added right-side notices panel (attention summary + selection context + activity hints).
+  - added hierarchy metadata markers (`branch`/`phase`) in card meta.
+  - updated focus enter/exit helpers to keep scope transitions deterministic.
+  - enabled subtask row rendering when focused scope root is a task/subtask.
+  - updated board width/header math for side panel and path row.
+- `internal/tui/model_test.go`
+  - updated focus/projection expectations for immediate-children scope semantics.
+  - added tests for hierarchy markers, notices panel, and task-focus subtask rendering.
+- `README.md`
+  - documented level-scoped rendering, always-visible path line, hierarchy markers, notices panel, and task-focused subtask board behavior.
+- `COLLABORATIVE_FULL_E2E_TEST_WORKSHEET.md` (new)
+  - added section-by-section user+agent worksheet for full fresh-DB E2E validation.
+
+Commands and outcomes:
+- `just fmt` -> pass.
+- `just test-pkg ./internal/tui` -> pass (after test expectation/golden updates).
+- `just test-golden-update` -> pass.
+- `just test-golden` -> pass.
+- pending final closeout in this slice: `just check`, `just ci`, `just test-golden` re-run before commit/handoff.
+
+Notes:
+- A transient sandbox cache permission error occurred for `just test-golden-update`; reran outside sandbox with explicit approval and captured pass.
+
+## Execution Log (2026-02-25: Focus-Scoped `n` Create Fix)
+
+Objective:
+- Fix create-task behavior so `n` uses active focus scope (`f` drill-down) instead of always creating at project root.
+- Keep `f` leaf no-op behavior intact and regression-covered.
+
+Code/doc changes:
+- `internal/tui/model.go`
+  - added focus-aware task-form default inference (`parent_id`, `kind`, `scope`) for add-task.
+  - wired add-task submit path to pass explicit `scope` to service calls.
+  - set focused task/subtask scope default to create direct subtasks.
+- `internal/tui/model_test.go`
+  - expanded fake service create-task capture (`lastCreateTask`, call count) and preserved parent/kind/scope in test-created rows.
+  - added focused-scope add-task defaults test across project/branch/phase/subphase/task.
+  - added submit-path assertion test to ensure scoped parent/scope reach service create input.
+- `README.md`
+  - documented focused-scope `n` behavior.
+- `COLLABORATIVE_FULL_E2E_TEST_WORKSHEET.md`
+  - added explicit section checks for scoped create behavior and `f` leaf no-op verification.
+
+Commands and outcomes:
+- `just test-pkg ./internal/tui` -> pass.
+- `just test-golden` -> pass.
+- `just check` -> pass.
+- `just ci` -> pass.

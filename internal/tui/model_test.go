@@ -22,6 +22,8 @@ type fakeService struct {
 	projects         []domain.Project
 	columns          map[string][]domain.Column
 	tasks            map[string][]domain.Task
+	lastCreateTask   app.CreateTaskInput
+	createTaskCalls  int
 	comments         map[string][]domain.Comment
 	err              error
 	rollups          map[string]domain.DependencyRollup
@@ -301,6 +303,8 @@ func (f *fakeService) UpdateProject(_ context.Context, in app.UpdateProjectInput
 
 // CreateTask creates task.
 func (f *fakeService) CreateTask(_ context.Context, in app.CreateTaskInput) (domain.Task, error) {
+	f.lastCreateTask = in
+	f.createTaskCalls++
 	pos := 0
 	for _, t := range f.tasks[in.ProjectID] {
 		if t.ColumnID == in.ColumnID && t.Position >= pos {
@@ -310,6 +314,9 @@ func (f *fakeService) CreateTask(_ context.Context, in app.CreateTaskInput) (dom
 	task, err := domain.NewTask(domain.TaskInput{
 		ID:          "t-new",
 		ProjectID:   in.ProjectID,
+		ParentID:    in.ParentID,
+		Kind:        in.Kind,
+		Scope:       in.Scope,
 		ColumnID:    in.ColumnID,
 		Position:    pos,
 		Title:       in.Title,
@@ -317,6 +324,7 @@ func (f *fakeService) CreateTask(_ context.Context, in app.CreateTaskInput) (dom
 		Priority:    in.Priority,
 		DueAt:       in.DueAt,
 		Labels:      in.Labels,
+		Metadata:    in.Metadata,
 	}, time.Now().UTC())
 	if err != nil {
 		return domain.Task{}, err
@@ -2700,13 +2708,13 @@ func TestRenderModeOverlayAndIndexHelpers(t *testing.T) {
 		t.Fatalf("expected large row => last task, got %d", idx)
 	}
 
-	panelWithSelection := m.renderOverviewPanel(p, accent, muted, dim)
+	panelWithSelection := m.renderOverviewPanel(p, accent, muted, dim, 30, 0, 0, 0, nil)
 	if !strings.Contains(panelWithSelection, "Selection") {
 		t.Fatalf("expected overview panel selection section, got %q", panelWithSelection)
 	}
 	noneSelected := m
 	noneSelected.selectedColumn = 1
-	panelWithoutSelection := noneSelected.renderOverviewPanel(p, accent, muted, dim)
+	panelWithoutSelection := noneSelected.renderOverviewPanel(p, accent, muted, dim, 30, 0, 0, 0, nil)
 	if !strings.Contains(panelWithoutSelection, "no task selected") {
 		t.Fatalf("expected overview panel no-selection hint, got %q", panelWithoutSelection)
 	}
@@ -3648,16 +3656,19 @@ func TestProjectionAndRollupHelpers(t *testing.T) {
 	}
 	m.projectionRootTaskID = phase.ID
 	set := m.projectedTaskSet()
-	if len(set) != 2 {
-		t.Fatalf("expected projected set with phase+child, got %#v", set)
+	if len(set) != 1 {
+		t.Fatalf("expected projected set with direct children only, got %#v", set)
+	}
+	if _, ok := set[child.ID]; !ok {
+		t.Fatalf("expected child task in projected set, got %#v", set)
 	}
 	if _, ok := set[unrelated.ID]; ok {
 		t.Fatalf("did not expect unrelated task in projected set")
 	}
 
 	col1 := m.tasksForColumn(c1.ID)
-	if len(col1) != 1 || col1[0].ID != phase.ID {
-		t.Fatalf("expected column to show focused subtree root only, got %#v", col1)
+	if len(col1) != 0 {
+		t.Fatalf("expected focused scope column without direct children to be empty, got %#v", col1)
 	}
 	if breadcrumb := m.projectionBreadcrumb(); breadcrumb != "Phase" {
 		t.Fatalf("unexpected projection breadcrumb %q", breadcrumb)
@@ -4016,14 +4027,15 @@ func TestModelProjectionFocusBreadcrumbMode(t *testing.T) {
 	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{parent, child, grandchild, other})
 	m := loadReadyModel(t, NewModel(svc))
 
-	m = applyMsg(t, m, keyRune('j')) // select child
-	m = applyMsg(t, m, keyRune('f'))
+	m.focusTaskByID(parent.ID)
+	m = applyMsg(t, m, keyRune('f')) // enter parent scope (child becomes selected)
+	m = applyMsg(t, m, keyRune('f')) // enter child scope
 	if m.projectionRootTaskID != child.ID {
 		t.Fatalf("expected projection root %q, got %q", child.ID, m.projectionRootTaskID)
 	}
 	tasks := m.currentColumnTasks()
-	if len(tasks) != 2 || tasks[0].ID != child.ID || tasks[1].ID != grandchild.ID {
-		t.Fatalf("expected projected child subtree only, got %#v", tasks)
+	if len(tasks) != 1 || tasks[0].ID != grandchild.ID {
+		t.Fatalf("expected projected child scope to show direct children only, got %#v", tasks)
 	}
 	if got := m.projectionBreadcrumb(); got != "Parent / Child" {
 		t.Fatalf("expected breadcrumb Parent / Child, got %q", got)
@@ -4031,9 +4043,6 @@ func TestModelProjectionFocusBreadcrumbMode(t *testing.T) {
 	focusedView := stripANSI(fmt.Sprint(m.View().Content))
 	if !strings.Contains(focusedView, "path: Inbox -> Parent -> Child") {
 		t.Fatalf("expected explicit focus path line in view, got\n%s", focusedView)
-	}
-	if !strings.Contains(focusedView, "parent: Parent") {
-		t.Fatalf("expected explicit focus parent line in view, got\n%s", focusedView)
 	}
 	if m.modePrompt() != "" {
 		t.Fatalf("expected normal-mode prompt while projected, got %q", m.modePrompt())
@@ -4043,12 +4052,12 @@ func TestModelProjectionFocusBreadcrumbMode(t *testing.T) {
 	if m.projectionRootTaskID != "" {
 		t.Fatalf("expected focus cleared after F, got %q", m.projectionRootTaskID)
 	}
-	if len(m.currentColumnTasks()) != 4 {
+	if len(m.currentColumnTasks()) != 2 {
 		t.Fatalf("expected full board tasks after clearing focus, got %d", len(m.currentColumnTasks()))
 	}
 	fullBoardView := stripANSI(fmt.Sprint(m.View().Content))
-	if strings.Contains(fullBoardView, "path: Inbox -> Parent -> Child") {
-		t.Fatalf("expected focus path hidden after clearing focus, got\n%s", fullBoardView)
+	if !strings.Contains(fullBoardView, "path: Inbox") {
+		t.Fatalf("expected project path while not focused, got\n%s", fullBoardView)
 	}
 }
 
@@ -4142,19 +4151,248 @@ func TestModelFocusSubtreeRendersBoardForHierarchyLevels(t *testing.T) {
 		}
 	}
 
+	assertVisible(m, []string{branch.ID, unrelated.ID})
+
 	m.focusTaskByID(branch.ID)
 	m = applyMsg(t, m, keyRune('f'))
-	assertVisible(m, []string{branch.ID, phase.ID, subphase.ID, leafTask.ID})
+	assertVisible(m, []string{phase.ID})
 
-	m = applyMsg(t, m, keyRune('F'))
-	m.focusTaskByID(phase.ID)
 	m = applyMsg(t, m, keyRune('f'))
-	assertVisible(m, []string{phase.ID, subphase.ID, leafTask.ID})
+	assertVisible(m, []string{subphase.ID})
 
-	m = applyMsg(t, m, keyRune('F'))
-	m.focusTaskByID(subphase.ID)
 	m = applyMsg(t, m, keyRune('f'))
-	assertVisible(m, []string{subphase.ID, leafTask.ID})
+	assertVisible(m, []string{leafTask.ID})
+}
+
+// TestModelFocusTaskScopeShowsSubtasks verifies task-focused scope rendering includes direct subtasks.
+func TestModelFocusTaskScopeShowsSubtasks(t *testing.T) {
+	now := time.Date(2026, 2, 25, 12, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	todo, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	done, _ := domain.NewColumn("c2", p.ID, "Done", 1, 0, now)
+	parent, _ := domain.NewTask(domain.TaskInput{
+		ID:        "task-root",
+		ProjectID: p.ID,
+		ColumnID:  todo.ID,
+		Position:  0,
+		Title:     "Parent Task",
+		Priority:  domain.PriorityMedium,
+		Kind:      domain.WorkKindTask,
+		Scope:     domain.KindAppliesToTask,
+	}, now)
+	subA, _ := domain.NewTask(domain.TaskInput{
+		ID:        "sub-a",
+		ProjectID: p.ID,
+		ParentID:  parent.ID,
+		ColumnID:  todo.ID,
+		Position:  1,
+		Title:     "Subtask A",
+		Priority:  domain.PriorityLow,
+		Kind:      domain.WorkKindSubtask,
+		Scope:     domain.KindAppliesToSubtask,
+	}, now)
+	subB, _ := domain.NewTask(domain.TaskInput{
+		ID:        "sub-b",
+		ProjectID: p.ID,
+		ParentID:  parent.ID,
+		ColumnID:  done.ID,
+		Position:  0,
+		Title:     "Subtask B",
+		Priority:  domain.PriorityLow,
+		Kind:      domain.WorkKindSubtask,
+		Scope:     domain.KindAppliesToSubtask,
+	}, now)
+	other, _ := domain.NewTask(domain.TaskInput{
+		ID:        "task-other",
+		ProjectID: p.ID,
+		ColumnID:  todo.ID,
+		Position:  2,
+		Title:     "Other Top Task",
+		Priority:  domain.PriorityLow,
+		Kind:      domain.WorkKindTask,
+		Scope:     domain.KindAppliesToTask,
+	}, now)
+
+	m := loadReadyModel(t, NewModel(newFakeService(
+		[]domain.Project{p},
+		[]domain.Column{todo, done},
+		[]domain.Task{parent, subA, subB, other},
+	)))
+
+	projectScope := stripANSI(fmt.Sprint(m.View().Content))
+	if strings.Contains(projectScope, "Subtask A") || strings.Contains(projectScope, "Subtask B") {
+		t.Fatalf("expected project scope board to hide subtasks, got\n%s", projectScope)
+	}
+
+	m.focusTaskByID(parent.ID)
+	m = applyMsg(t, m, keyRune('f'))
+	visible := []string{}
+	for _, column := range m.columns {
+		for _, task := range m.boardTasksForColumn(column.ID) {
+			visible = append(visible, task.ID)
+		}
+	}
+	got := strings.Join(visible, ",")
+	if got != "sub-a,sub-b" {
+		t.Fatalf("expected task-focused scope to show direct subtasks, got %s", got)
+	}
+	focused := stripANSI(fmt.Sprint(m.View().Content))
+	if !strings.Contains(focused, "path: Inbox -> Parent Task") {
+		t.Fatalf("expected focused task path in board view, got\n%s", focused)
+	}
+}
+
+// TestModelNewTaskFormDefaultsFollowFocusedScope verifies add-task defaults follow active focus scope.
+func TestModelNewTaskFormDefaultsFollowFocusedScope(t *testing.T) {
+	now := time.Date(2026, 2, 25, 14, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Roadmap", "", now)
+	todo, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	branch, _ := domain.NewTask(domain.TaskInput{
+		ID:        "b1",
+		ProjectID: p.ID,
+		ColumnID:  todo.ID,
+		Position:  0,
+		Title:     "Branch",
+		Priority:  domain.PriorityMedium,
+		Kind:      domain.WorkKind("branch"),
+		Scope:     domain.KindAppliesToBranch,
+	}, now)
+	phase, _ := domain.NewTask(domain.TaskInput{
+		ID:        "ph1",
+		ProjectID: p.ID,
+		ParentID:  branch.ID,
+		ColumnID:  todo.ID,
+		Position:  1,
+		Title:     "Phase",
+		Priority:  domain.PriorityMedium,
+		Kind:      domain.WorkKindPhase,
+		Scope:     domain.KindAppliesToPhase,
+	}, now)
+	subphase, _ := domain.NewTask(domain.TaskInput{
+		ID:        "sph1",
+		ProjectID: p.ID,
+		ParentID:  phase.ID,
+		ColumnID:  todo.ID,
+		Position:  2,
+		Title:     "Subphase",
+		Priority:  domain.PriorityMedium,
+		Kind:      domain.WorkKindPhase,
+		Scope:     domain.KindAppliesToSubphase,
+	}, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ParentID:  subphase.ID,
+		ColumnID:  todo.ID,
+		Position:  3,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+		Kind:      domain.WorkKindTask,
+		Scope:     domain.KindAppliesToTask,
+	}, now)
+	subtask, _ := domain.NewTask(domain.TaskInput{
+		ID:        "st1",
+		ProjectID: p.ID,
+		ParentID:  task.ID,
+		ColumnID:  todo.ID,
+		Position:  4,
+		Title:     "Subtask",
+		Priority:  domain.PriorityLow,
+		Kind:      domain.WorkKindSubtask,
+		Scope:     domain.KindAppliesToSubtask,
+	}, now)
+	m := loadReadyModel(t, NewModel(newFakeService(
+		[]domain.Project{p},
+		[]domain.Column{todo},
+		[]domain.Task{branch, phase, subphase, task, subtask},
+	)))
+
+	assertDefaults := func(parentID string, kind domain.WorkKind, scope domain.KindAppliesTo) {
+		t.Helper()
+		if got := m.taskFormParentID; got != parentID {
+			t.Fatalf("task form parent = %q, want %q", got, parentID)
+		}
+		if got := m.taskFormKind; got != kind {
+			t.Fatalf("task form kind = %q, want %q", got, kind)
+		}
+		if got := m.taskFormScope; got != scope {
+			t.Fatalf("task form scope = %q, want %q", got, scope)
+		}
+	}
+
+	m = applyMsg(t, m, keyRune('n'))
+	assertDefaults("", domain.WorkKindTask, domain.KindAppliesToTask)
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+
+	m.focusTaskByID(branch.ID)
+	m = applyMsg(t, m, keyRune('f'))
+	m = applyMsg(t, m, keyRune('n'))
+	assertDefaults(branch.ID, domain.WorkKindTask, domain.KindAppliesToTask)
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+
+	m = applyMsg(t, m, keyRune('f'))
+	m = applyMsg(t, m, keyRune('n'))
+	assertDefaults(phase.ID, domain.WorkKindTask, domain.KindAppliesToTask)
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+
+	m = applyMsg(t, m, keyRune('f'))
+	m = applyMsg(t, m, keyRune('n'))
+	assertDefaults(subphase.ID, domain.WorkKindTask, domain.KindAppliesToTask)
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+
+	m = applyMsg(t, m, keyRune('f'))
+	m = applyMsg(t, m, keyRune('n'))
+	assertDefaults(task.ID, domain.WorkKindSubtask, domain.KindAppliesToSubtask)
+}
+
+// TestModelCreateTaskFromFocusedScopeUsesScopedParent verifies submitted create-task calls carry focused defaults.
+func TestModelCreateTaskFromFocusedScopeUsesScopedParent(t *testing.T) {
+	now := time.Date(2026, 2, 25, 14, 30, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Roadmap", "", now)
+	todo, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	branch, _ := domain.NewTask(domain.TaskInput{
+		ID:        "b1",
+		ProjectID: p.ID,
+		ColumnID:  todo.ID,
+		Position:  0,
+		Title:     "Branch",
+		Priority:  domain.PriorityMedium,
+		Kind:      domain.WorkKind("branch"),
+		Scope:     domain.KindAppliesToBranch,
+	}, now)
+	phase, _ := domain.NewTask(domain.TaskInput{
+		ID:        "ph1",
+		ProjectID: p.ID,
+		ParentID:  branch.ID,
+		ColumnID:  todo.ID,
+		Position:  1,
+		Title:     "Phase",
+		Priority:  domain.PriorityMedium,
+		Kind:      domain.WorkKindPhase,
+		Scope:     domain.KindAppliesToPhase,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{todo}, []domain.Task{branch, phase})
+	m := loadReadyModel(t, NewModel(svc))
+	m.focusTaskByID(branch.ID)
+	m = applyMsg(t, m, keyRune('f'))
+	m = applyMsg(t, m, keyRune('n'))
+	if m.mode != modeAddTask {
+		t.Fatalf("expected add-task mode, got %v", m.mode)
+	}
+	m.formInputs[taskFieldTitle].SetValue("Focused child")
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if svc.createTaskCalls != 1 {
+		t.Fatalf("expected one create-task call, got %d", svc.createTaskCalls)
+	}
+	if got := svc.lastCreateTask.ParentID; got != branch.ID {
+		t.Fatalf("create parent_id = %q, want %q", got, branch.ID)
+	}
+	if got := svc.lastCreateTask.Kind; got != domain.WorkKindTask {
+		t.Fatalf("create kind = %q, want %q", got, domain.WorkKindTask)
+	}
+	if got := svc.lastCreateTask.Scope; got != domain.KindAppliesToTask {
+		t.Fatalf("create scope = %q, want %q", got, domain.KindAppliesToTask)
+	}
 }
 
 // TestModelViewShowsSubtreeDiscoverabilityHint verifies hierarchy focus guidance in the board info line.
@@ -4207,6 +4445,116 @@ func TestModelViewShowsSubtreeDiscoverabilityHint(t *testing.T) {
 	}
 	if !strings.Contains(focused, "path: Roadmap -> Branch") {
 		t.Fatalf("expected focused path line while subtree focus is active, got\n%s", focused)
+	}
+}
+
+// TestModelFocusSubtreeNoChildrenNoOp verifies pressing f on leaf nodes does not enter empty focus mode.
+func TestModelFocusSubtreeNoChildrenNoOp(t *testing.T) {
+	now := time.Date(2026, 2, 25, 13, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Roadmap", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "leaf-task",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Leaf Task",
+		Priority:  domain.PriorityMedium,
+		Kind:      domain.WorkKindTask,
+		Scope:     domain.KindAppliesToTask,
+	}, now)
+	m := loadReadyModel(t, NewModel(newFakeService(
+		[]domain.Project{p},
+		[]domain.Column{c},
+		[]domain.Task{task},
+	)))
+	beforeStatus := m.status
+	m = applyMsg(t, m, keyRune('f'))
+	if m.projectionRootTaskID != "" {
+		t.Fatalf("expected focus root unchanged when selected task has no children, got %q", m.projectionRootTaskID)
+	}
+	if m.status != beforeStatus {
+		t.Fatalf("expected status unchanged when f is no-op, before=%q after=%q", beforeStatus, m.status)
+	}
+	rendered := stripANSI(fmt.Sprint(m.View().Content))
+	if strings.Contains(rendered, "subtree focus active") {
+		t.Fatalf("expected no subtree-focus banner for no-op focus, got\n%s", rendered)
+	}
+}
+
+// TestModelViewShowsHierarchyMarkers verifies branch/phase markers in card metadata rows.
+func TestModelViewShowsHierarchyMarkers(t *testing.T) {
+	now := time.Date(2026, 2, 25, 10, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Roadmap", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	branch, _ := domain.NewTask(domain.TaskInput{
+		ID:        "b1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Branch",
+		Priority:  domain.PriorityMedium,
+		Kind:      domain.WorkKind("branch"),
+		Scope:     domain.KindAppliesToBranch,
+	}, now)
+	phase, _ := domain.NewTask(domain.TaskInput{
+		ID:        "p2",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  1,
+		Title:     "Phase",
+		Priority:  domain.PriorityMedium,
+		Kind:      domain.WorkKindPhase,
+		Scope:     domain.KindAppliesToPhase,
+	}, now)
+
+	m := loadReadyModel(t, NewModel(newFakeService(
+		[]domain.Project{p},
+		[]domain.Column{c},
+		[]domain.Task{branch, phase},
+	)))
+	view := stripANSI(fmt.Sprint(m.View().Content))
+	if !strings.Contains(view, "[branch|medium]") {
+		t.Fatalf("expected branch marker in card metadata, got\n%s", view)
+	}
+	if !strings.Contains(view, "[phase|medium]") {
+		t.Fatalf("expected phase marker in card metadata, got\n%s", view)
+	}
+}
+
+// TestModelViewShowsNoticesPanel verifies right-side notices panel rendering on wide layouts.
+func TestModelViewShowsNoticesPanel(t *testing.T) {
+	now := time.Date(2026, 2, 25, 11, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	todo, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	progress, _ := domain.NewColumn("c2", p.ID, "In Progress", 1, 0, now)
+	done, _ := domain.NewColumn("c3", p.ID, "Done", 2, 0, now)
+	blocked, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-blocked",
+		ProjectID: p.ID,
+		ColumnID:  todo.ID,
+		Position:  0,
+		Title:     "Blocked",
+		Priority:  domain.PriorityHigh,
+		Metadata: domain.TaskMetadata{
+			BlockedReason: "waiting on approval",
+			DependsOn:     []string{"missing"},
+		},
+	}, now)
+	m := loadReadyModel(t, NewModel(newFakeService(
+		[]domain.Project{p},
+		[]domain.Column{todo, progress, done},
+		[]domain.Task{blocked},
+	)))
+	rendered := stripANSI(fmt.Sprint(m.View().Content))
+	if !strings.Contains(rendered, "Notices") {
+		t.Fatalf("expected notices panel title, got\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "Agent/User Action") {
+		t.Fatalf("expected notices panel attention section, got\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "g opens full activity log") {
+		t.Fatalf("expected activity-log hint in notices panel, got\n%s", rendered)
 	}
 }
 

@@ -349,6 +349,7 @@ type Model struct {
 	taskInfoSubtaskIdx int
 	taskFormParentID   string
 	taskFormKind       domain.WorkKind
+	taskFormScope      domain.KindAppliesTo
 	pendingProjectID   string
 	pendingFocusTaskID string
 
@@ -574,6 +575,7 @@ func NewModel(svc Service, opts ...Option) Model {
 		confirmHardDelete:        true,
 		confirmRestore:           false,
 		taskFormKind:             domain.WorkKindTask,
+		taskFormScope:            domain.KindAppliesToTask,
 		allowedLabelProject:      map[string][]string{},
 		searchRoots:              []string{},
 		projectRoots:             map[string]string{},
@@ -974,7 +976,8 @@ func (m Model) View() tea.View {
 		header += statusStyle.Render(fmt.Sprintf("  selected: %d", count))
 	}
 	tabs := m.renderProjectTabs(accent, dim)
-	boardWidth := m.width
+	noticesWidth := m.noticesPanelWidth(m.width)
+	boardWidth := m.boardWidthFor(m.width)
 
 	columnViews := make([]string, 0, len(m.columns))
 	colWidth := m.columnWidthFor(boardWidth)
@@ -1133,15 +1136,28 @@ func (m Model) View() tea.View {
 	}
 
 	mainArea := body
+	if noticesWidth > 0 {
+		overviewPanel := m.renderOverviewPanel(
+			project,
+			accent,
+			muted,
+			dim,
+			noticesWidth,
+			attentionItems,
+			attentionTotal,
+			attentionBlocked,
+			attentionTop,
+		)
+		mainArea = lipgloss.JoinHorizontal(lipgloss.Top, body, overviewPanel)
+	}
 	infoLine := m.renderInfoLine(project, muted)
 
 	sections := []string{header}
 	if tabs != "" {
 		sections = append(sections, tabs)
 	}
-	if path, parent := m.projectionPathWithProject(project.Name); path != "" {
+	if path, _ := m.projectionPathWithProject(project.Name); path != "" {
 		sections = append(sections, statusStyle.Render("path: "+truncate(path, max(24, m.width-6))))
-		sections = append(sections, statusStyle.Render("parent: "+truncate(parent, max(24, m.width-10))))
 	}
 	sections = append(sections, "", mainArea)
 	if infoLine != "" {
@@ -1603,6 +1619,7 @@ func (m *Model) startTaskForm(task *domain.Task) tea.Cmd {
 	m.input = ""
 	m.taskFormParentID = ""
 	m.taskFormKind = domain.WorkKindTask
+	m.taskFormScope = domain.KindAppliesToTask
 	m.taskFormResourceRefs = nil
 	m.formInputs = []textinput.Model{
 		newModalInput("", "task title (required)", "", 120),
@@ -1620,6 +1637,7 @@ func (m *Model) startTaskForm(task *domain.Task) tea.Cmd {
 	if task != nil {
 		m.taskFormParentID = task.ParentID
 		m.taskFormKind = task.Kind
+		m.taskFormScope = task.Scope
 		m.formInputs[taskFieldTitle].SetValue(task.Title)
 		m.formInputs[taskFieldDescription].SetValue(task.Description)
 		m.priorityIdx = priorityIndex(task.Priority)
@@ -1650,9 +1668,33 @@ func (m *Model) startTaskForm(task *domain.Task) tea.Cmd {
 		m.mode = modeAddTask
 		m.editingTaskID = ""
 		m.status = "new task"
+		m.taskFormParentID, m.taskFormKind, m.taskFormScope = m.newTaskDefaultsForActiveBoardScope()
 	}
 	m.refreshTaskFormLabelSuggestions()
 	return m.focusTaskFormField(0)
+}
+
+// newTaskDefaultsForActiveBoardScope infers parent/kind/scope defaults from active focused scope.
+func (m Model) newTaskDefaultsForActiveBoardScope() (string, domain.WorkKind, domain.KindAppliesTo) {
+	rootID := strings.TrimSpace(m.projectionRootTaskID)
+	if rootID == "" {
+		return "", domain.WorkKindTask, domain.KindAppliesToTask
+	}
+	root, ok := m.taskByID(rootID)
+	if !ok {
+		return "", domain.WorkKindTask, domain.KindAppliesToTask
+	}
+	levelByTaskID := m.searchLevelByTaskID([]domain.Task{root})
+	level := strings.TrimSpace(levelByTaskID[root.ID])
+	if level == "" {
+		level = baseSearchLevelForTask(root)
+	}
+	switch level {
+	case "task", "subtask":
+		return root.ID, domain.WorkKindSubtask, domain.KindAppliesToSubtask
+	default:
+		return root.ID, domain.WorkKindTask, domain.KindAppliesToTask
+	}
 }
 
 // startSubtaskForm opens the task form preconfigured for a child item.
@@ -1660,6 +1702,7 @@ func (m *Model) startSubtaskForm(parent domain.Task) tea.Cmd {
 	cmd := m.startTaskForm(nil)
 	m.taskFormParentID = parent.ID
 	m.taskFormKind = domain.WorkKindSubtask
+	m.taskFormScope = domain.KindAppliesToSubtask
 	m.refreshTaskFormLabelSuggestions()
 	m.status = "new subtask for " + parent.Title
 	return cmd
@@ -3800,7 +3843,7 @@ func (m Model) handleNormalModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if strings.TrimSpace(m.projectionRootTaskID) != "" {
-			m.projectionRootTaskID = ""
+			m.clearSubtreeFocus()
 			m.status = "full board view"
 			return m, nil
 		}
@@ -3926,16 +3969,16 @@ func (m Model) handleNormalModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.status = "no task selected"
 			return m, nil
 		}
-		m.projectionRootTaskID = task.ID
-		m.focusTaskByID(task.ID)
+		if !m.activateSubtreeFocus(task.ID) {
+			return m, nil
+		}
 		m.status = "focused subtree"
 		return m, nil
 	case key.Matches(msg, m.keys.clearFocus):
-		if m.projectionRootTaskID == "" {
+		if !m.clearSubtreeFocus() {
 			m.status = "full board already visible"
 			return m, nil
 		}
-		m.projectionRootTaskID = ""
 		m.status = "full board view"
 		return m, nil
 	case key.Matches(msg, m.keys.moveTaskLeft):
@@ -4108,7 +4151,9 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case "]":
 			return m.moveTaskIDs([]string{task.ID}, 1, "move task", task.Title, false)
 		case "f":
-			m.projectionRootTaskID = task.ID
+			if !m.activateSubtreeFocus(task.ID) {
+				return m, nil
+			}
 			m.mode = modeNone
 			m.taskInfoTaskID = ""
 			m.taskInfoSubtaskIdx = 0
@@ -4890,6 +4935,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.editingTaskID = ""
 			m.taskFormParentID = ""
 			m.taskFormKind = domain.WorkKindTask
+			m.taskFormScope = domain.KindAppliesToTask
 			m.taskFormResourceRefs = nil
 			m.status = "cancelled"
 			return m, nil
@@ -5109,15 +5155,18 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 		metadata := m.buildTaskMetadataFromForm(vals, domain.TaskMetadata{})
 		parentID := m.taskFormParentID
 		kind := m.taskFormKind
+		scope := m.taskFormScope
 
 		m.mode = modeNone
 		m.formInputs = nil
 		m.taskFormParentID = ""
 		m.taskFormKind = domain.WorkKindTask
+		m.taskFormScope = domain.KindAppliesToTask
 		m.taskFormResourceRefs = nil
 		return m.createTask(app.CreateTaskInput{
 			ParentID:    parentID,
 			Kind:        kind,
+			Scope:       scope,
 			Title:       title,
 			Description: vals["description"],
 			Priority:    priority,
@@ -5223,6 +5272,7 @@ func (m Model) submitInputMode() (tea.Model, tea.Cmd) {
 		m.editingTaskID = ""
 		m.taskFormParentID = ""
 		m.taskFormKind = domain.WorkKindTask
+		m.taskFormScope = domain.KindAppliesToTask
 		m.taskFormResourceRefs = nil
 		in := app.UpdateTaskInput{
 			TaskID:      taskID,
@@ -5413,16 +5463,16 @@ func (m Model) executeCommandPalette(command string) (tea.Model, tea.Cmd) {
 			m.status = "no task selected"
 			return m, nil
 		}
-		m.projectionRootTaskID = task.ID
-		m.focusTaskByID(task.ID)
+		if !m.activateSubtreeFocus(task.ID) {
+			return m, nil
+		}
 		m.status = "focused subtree"
 		return m, nil
 	case "focus-clear", "zoom-reset":
-		if m.projectionRootTaskID == "" {
+		if !m.clearSubtreeFocus() {
 			m.status = "full board already visible"
 			return m, nil
 		}
-		m.projectionRootTaskID = ""
 		m.status = "full board view"
 		return m, nil
 	case "toggle-select", "select-task":
@@ -6081,7 +6131,11 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.mode == modeProjectPicker {
-		overlayTop := m.boardTop()
+		// Project picker overlay is centered independently from path/header variations.
+		overlayTop := 3
+		if len(m.projects) > 1 {
+			overlayTop++
+		}
 		relative := msg.Y - overlayTop - 1 // inside border, first row is title
 		if relative >= 1 {
 			idx := relative - 1
@@ -6563,14 +6617,29 @@ func (m Model) boardTasksForColumn(columnID string) []domain.Task {
 	if len(columnTasks) == 0 {
 		return nil
 	}
+	includeSubtasks := m.focusedScopeShowsSubtasks()
 	out := make([]domain.Task, 0, len(columnTasks))
 	for _, task := range columnTasks {
-		if task.Kind == domain.WorkKindSubtask {
+		if task.Kind == domain.WorkKindSubtask && !includeSubtasks {
 			continue
 		}
 		out = append(out, task)
 	}
 	return out
+}
+
+// focusedScopeShowsSubtasks reports whether the current focused scope should render subtask rows.
+func (m Model) focusedScopeShowsSubtasks() bool {
+	rootID := strings.TrimSpace(m.projectionRootTaskID)
+	if rootID == "" {
+		return false
+	}
+	root, ok := m.taskByID(rootID)
+	if !ok {
+		return false
+	}
+	level := baseSearchLevelForTask(root)
+	return level == "task" || level == "subtask"
 }
 
 // tasksForColumn handles tasks for column.
@@ -6581,10 +6650,8 @@ func (m Model) tasksForColumn(columnID string) []domain.Task {
 		if task.ColumnID != columnID {
 			continue
 		}
-		if len(projected) > 0 {
-			if _, ok := projected[task.ID]; !ok {
-				continue
-			}
+		if _, ok := projected[task.ID]; !ok {
+			continue
 		}
 		out = append(out, task)
 	}
@@ -6608,6 +6675,8 @@ func baseSearchLevelForTask(task domain.Task) string {
 	switch domain.NormalizeKindAppliesTo(task.Scope) {
 	case domain.KindAppliesToBranch:
 		return "branch"
+	case domain.KindAppliesToSubphase:
+		return "subphase"
 	case domain.KindAppliesToPhase:
 		return "phase"
 	case domain.KindAppliesToTask:
@@ -6728,36 +6797,31 @@ func (m Model) tasksByID() map[string]domain.Task {
 	return out
 }
 
-// projectedTaskSet returns every task ID visible in focused subtree mode.
+// projectedTaskSet returns every task ID visible in the current board scope.
 func (m Model) projectedTaskSet() map[string]struct{} {
+	visible := map[string]struct{}{}
 	rootID := strings.TrimSpace(m.projectionRootTaskID)
 	if rootID == "" {
-		return nil
+		known := m.tasksByID()
+		for _, task := range m.tasks {
+			parentID := strings.TrimSpace(task.ParentID)
+			if parentID == "" {
+				visible[task.ID] = struct{}{}
+				continue
+			}
+			// Preserve orphaned tasks in project scope so they remain recoverable in UI.
+			if _, ok := known[parentID]; !ok {
+				visible[task.ID] = struct{}{}
+			}
+		}
+		return visible
 	}
 	if _, ok := m.taskByID(rootID); !ok {
-		return nil
+		return visible
 	}
-	childrenByParent := map[string][]string{}
 	for _, task := range m.tasks {
-		parentID := strings.TrimSpace(task.ParentID)
-		if parentID == "" {
-			continue
-		}
-		childrenByParent[parentID] = append(childrenByParent[parentID], task.ID)
-	}
-	visible := map[string]struct{}{}
-	stack := []string{rootID}
-	for len(stack) > 0 {
-		last := len(stack) - 1
-		current := stack[last]
-		stack = stack[:last]
-		if _, seen := visible[current]; seen {
-			continue
-		}
-		visible[current] = struct{}{}
-		// Depth-first traversal keeps the projection bounded to the selected root descendants.
-		for _, childID := range childrenByParent[current] {
-			stack = append(stack, childID)
+		if strings.TrimSpace(task.ParentID) == rootID {
+			visible[task.ID] = struct{}{}
 		}
 	}
 	return visible
@@ -6795,16 +6859,23 @@ func (m Model) projectionBreadcrumb() string {
 // projectionPathWithProject returns focus path and direct parent labels for the active subtree root.
 func (m Model) projectionPathWithProject(projectName string) (string, string) {
 	rootID := strings.TrimSpace(m.projectionRootTaskID)
+	projectName = strings.TrimSpace(projectName)
 	if rootID == "" {
-		return "", ""
+		if projectName == "" {
+			return "(project)", "(project)"
+		}
+		return projectName, projectName
 	}
 	root, ok := m.taskByID(rootID)
 	if !ok {
-		return "", ""
+		if projectName == "" {
+			return "(project)", "(project)"
+		}
+		return projectName, projectName
 	}
 	chain := []string{root.Title}
 	visited := map[string]struct{}{root.ID: {}}
-	parentLabel := strings.TrimSpace(projectName)
+	parentLabel := projectName
 	parentID := strings.TrimSpace(root.ParentID)
 	if parentID == "" && parentLabel == "" {
 		parentLabel = "(project)"
@@ -6825,7 +6896,6 @@ func (m Model) projectionPathWithProject(projectName string) (string, string) {
 		parentID = strings.TrimSpace(parent.ParentID)
 	}
 	slices.Reverse(chain)
-	projectName = strings.TrimSpace(projectName)
 	if projectName != "" {
 		chain = append([]string{projectName}, chain...)
 		if parentLabel == "" {
@@ -7027,7 +7097,7 @@ func taskDepth(taskID string, parentByID map[string]string, depth int) int {
 		return depth
 	}
 	if _, exists := parentByID[parentID]; !exists {
-		return depth + 1
+		return depth
 	}
 	return taskDepth(parentID, parentByID, depth+1)
 }
@@ -7065,6 +7135,61 @@ func (m *Model) focusTaskByID(taskID string) {
 	if targetColIdx >= 0 {
 		m.clampSelections()
 	}
+}
+
+// activateSubtreeFocus enters focused scope mode and selects the first visible child task.
+func (m *Model) activateSubtreeFocus(rootTaskID string) bool {
+	rootTaskID = strings.TrimSpace(rootTaskID)
+	if rootTaskID == "" {
+		return false
+	}
+	hasChild := false
+	for _, task := range m.tasks {
+		if strings.TrimSpace(task.ParentID) != rootTaskID {
+			continue
+		}
+		if !m.showArchived && task.ArchivedAt != nil {
+			continue
+		}
+		hasChild = true
+		break
+	}
+	if !hasChild {
+		return false
+	}
+	prevRoot := m.projectionRootTaskID
+	prevCol := m.selectedColumn
+	prevTask := m.selectedTask
+	m.projectionRootTaskID = rootTaskID
+	m.selectedTask = 0
+	for idx, column := range m.columns {
+		tasks := m.boardTasksForColumn(column.ID)
+		if len(tasks) == 0 {
+			continue
+		}
+		m.selectedColumn = idx
+		m.selectedTask = 0
+		m.clampSelections()
+		return true
+	}
+	// If the focused scope has no board-visible rows, keep current scope unchanged.
+	m.projectionRootTaskID = prevRoot
+	m.selectedColumn = prevCol
+	m.selectedTask = prevTask
+	m.clampSelections()
+	return false
+}
+
+// clearSubtreeFocus exits focused scope mode and reselects the prior focus root when available.
+func (m *Model) clearSubtreeFocus() bool {
+	rootID := strings.TrimSpace(m.projectionRootTaskID)
+	if rootID == "" {
+		return false
+	}
+	m.projectionRootTaskID = ""
+	m.focusTaskByID(rootID)
+	m.clampSelections()
+	return true
 }
 
 // taskByID returns task by id.
@@ -7134,19 +7259,42 @@ func (m Model) selectedTaskHighlightColor() color.Color {
 	return lipgloss.Color(value)
 }
 
-// renderOverviewPanel renders output for the current model state.
-func (m Model) renderOverviewPanel(project domain.Project, accent, muted, dim color.Color) string {
+// renderOverviewPanel renders the right-side notices panel for board scope context.
+func (m Model) renderOverviewPanel(
+	project domain.Project,
+	accent, muted, dim color.Color,
+	width int,
+	attentionItems, attentionTotal, attentionBlocked int,
+	attentionTop []string,
+) string {
+	panelWidth := max(24, width)
+	contentWidth := max(12, panelWidth-6)
 	lines := []string{
-		lipgloss.NewStyle().Bold(true).Foreground(accent).Render("Overview"),
-		lipgloss.NewStyle().Foreground(muted).Render("project: " + project.Name),
-		lipgloss.NewStyle().Foreground(muted).Render(fmt.Sprintf("tasks: %d", len(m.tasks))),
+		lipgloss.NewStyle().Bold(true).Foreground(accent).Render("Notices"),
+		lipgloss.NewStyle().Foreground(muted).Render("project: " + truncate(project.Name, contentWidth)),
+	}
+	if path, _ := m.projectionPathWithProject(project.Name); path != "" {
+		lines = append(lines, lipgloss.NewStyle().Foreground(muted).Render("path: "+truncate(path, contentWidth)))
+	}
+
+	lines = append(lines, "")
+	lines = append(lines, lipgloss.NewStyle().Bold(true).Foreground(accent).Render("Agent/User Action"))
+	if attentionTotal <= 0 {
+		lines = append(lines, lipgloss.NewStyle().Foreground(muted).Render("no unresolved notices"))
+	} else {
+		lines = append(lines, lipgloss.NewStyle().Foreground(muted).Render(fmt.Sprintf("scope items: %d", attentionItems)))
+		lines = append(lines, lipgloss.NewStyle().Foreground(muted).Render(fmt.Sprintf("unresolved: %d", attentionTotal)))
+		lines = append(lines, lipgloss.NewStyle().Foreground(muted).Render(fmt.Sprintf("blocked: %d", attentionBlocked)))
+		for _, item := range attentionTop {
+			lines = append(lines, "• "+truncate(item, contentWidth-2))
+		}
 	}
 
 	task, ok := m.selectedTaskInCurrentColumn()
+	lines = append(lines, "")
+	lines = append(lines, lipgloss.NewStyle().Bold(true).Foreground(accent).Render("Selection"))
 	if ok {
-		lines = append(lines, "")
-		lines = append(lines, lipgloss.NewStyle().Bold(true).Foreground(accent).Render("Selection"))
-		lines = append(lines, task.Title)
+		lines = append(lines, truncate(task.Title, contentWidth))
 		if meta := m.cardMeta(task); meta != "" {
 			lines = append(lines, lipgloss.NewStyle().Foreground(muted).Render(meta))
 		}
@@ -7155,18 +7303,33 @@ func (m Model) renderOverviewPanel(project domain.Project, accent, muted, dim co
 			if desc == "" {
 				desc = "-"
 			}
-			lines = append(lines, lipgloss.NewStyle().Foreground(muted).Render("description: "+desc))
+			lines = append(lines, lipgloss.NewStyle().Foreground(muted).Render("description: "+truncate(desc, contentWidth-13)))
 		}
 	} else {
-		lines = append(lines, "")
 		lines = append(lines, lipgloss.NewStyle().Foreground(muted).Render("no task selected"))
-		lines = append(lines, lipgloss.NewStyle().Foreground(muted).Render("tip: press n to add a task"))
+		lines = append(lines, lipgloss.NewStyle().Foreground(muted).Render("tip: use f to drill into scope"))
 	}
 
+	lines = append(lines, "")
+	lines = append(lines, lipgloss.NewStyle().Bold(true).Foreground(accent).Render("Recent Activity"))
+	if len(m.activityLog) == 0 {
+		lines = append(lines, lipgloss.NewStyle().Foreground(muted).Render("(no activity yet)"))
+	} else {
+		rendered := 0
+		for idx := len(m.activityLog) - 1; idx >= 0 && rendered < 4; idx-- {
+			entry := m.activityLog[idx]
+			row := fmt.Sprintf("%s %s", formatActivityTimestamp(entry.At), entry.Summary)
+			lines = append(lines, lipgloss.NewStyle().Foreground(muted).Render(truncate(row, contentWidth)))
+			rendered++
+		}
+	}
+	lines = append(lines, "", lipgloss.NewStyle().Foreground(muted).Render("g opens full activity log"))
+
 	style := lipgloss.NewStyle().
-		Border(lipgloss.HiddenBorder()).
+		Border(lipgloss.RoundedBorder()).
 		BorderForeground(dim).
-		Padding(0, 2)
+		Padding(1, 1).
+		Width(panelWidth)
 	return style.Render(strings.Join(lines, "\n"))
 }
 
@@ -7179,6 +7342,9 @@ func (m Model) renderInfoLine(project domain.Project, muted color.Color) string 
 	task, ok := m.selectedTaskInCurrentColumn()
 	if !ok {
 		parts = append(parts, "selected: none")
+		if strings.TrimSpace(m.projectionRootTaskID) != "" {
+			parts = append(parts, fmt.Sprintf("%s full board", m.keys.clearFocus.Help().Key))
+		}
 		return lipgloss.NewStyle().Foreground(muted).Render(strings.Join(parts, " • "))
 	}
 	parts = append(parts, fmt.Sprintf("selected: %s", truncate(task.Title, 36)))
@@ -7219,7 +7385,7 @@ func (m Model) renderHelpOverlay(accent, muted, dim color.Color, _ lipgloss.Styl
 		"1. n add task  •  s add subtask  •  i/enter view task  •  e edit task",
 		"2. space toggle select  •  . quick actions / : command palette for bulk actions",
 		"3. [ / ] move task across states  •  d/a/D/u actions use confirmations",
-		"4. f focus selected subtree  •  F return full board  •  breadcrumb shows active focus",
+		"4. f focus selected subtree  •  F return full board  •  path line shows active scope",
 		"5. z undo  •  Z redo  •  g activity log",
 		"6. N new project  •  M edit project  •  p switch project",
 		"7. / search: query -> states -> levels -> scope -> archived -> apply",
@@ -7289,6 +7455,9 @@ func (m Model) taskIndexAtRow(tasks []domain.Task, row int) int {
 // cardMeta handles card meta.
 func (m Model) cardMeta(task domain.Task) string {
 	parts := make([]string, 0, 4)
+	if marker := taskHierarchyMarker(task); marker != "" {
+		parts = append(parts, marker)
+	}
 	if m.taskFields.ShowPriority {
 		parts = append(parts, string(task.Priority))
 	}
@@ -7312,6 +7481,19 @@ func (m Model) cardMeta(task domain.Task) string {
 		return ""
 	}
 	return "[" + strings.Join(parts, "|") + "]"
+}
+
+// taskHierarchyMarker returns a compact level marker for hierarchy-scoped work items.
+func taskHierarchyMarker(task domain.Task) string {
+	switch baseSearchLevelForTask(task) {
+	case "branch":
+		return "branch"
+	case "phase", "subphase":
+		// Subphases are phase-level nodes for board labeling and drill-down workflows.
+		return "phase"
+	default:
+		return ""
+	}
 }
 
 // taskDueWarning reports due warning text for one task in board/info contexts.
@@ -8840,7 +9022,7 @@ func formatActivityTimestamp(at time.Time) string {
 
 // columnWidth returns column width.
 func (m Model) columnWidth() int {
-	return m.columnWidthFor(m.width)
+	return m.columnWidthFor(m.boardWidthFor(m.width))
 }
 
 // columnWidthFor returns column width for.
@@ -8867,9 +9049,40 @@ func (m Model) columnWidthFor(boardWidth int) int {
 	return w
 }
 
+// noticesPanelWidth returns the right-panel width when the viewport can support it.
+func (m Model) noticesPanelWidth(totalWidth int) int {
+	if totalWidth <= 0 || len(m.columns) == 0 {
+		return 0
+	}
+	// Preserve minimum readable column widths before rendering the side panel.
+	minBoardWidth := len(m.columns) * (24 + 7)
+	if totalWidth < minBoardWidth+24 {
+		return 0
+	}
+	width := totalWidth / 4
+	if width < 26 {
+		width = 26
+	}
+	if width > 38 {
+		width = 38
+	}
+	return width
+}
+
+// boardWidthFor returns the board-body width after reserving optional side panel space.
+func (m Model) boardWidthFor(totalWidth int) int {
+	panelWidth := m.noticesPanelWidth(totalWidth)
+	if panelWidth <= 0 {
+		return totalWidth
+	}
+	// Leave one spacer column between board and notices panel.
+	return max(24, totalWidth-panelWidth-1)
+}
+
 // columnHeight returns column height.
 func (m Model) columnHeight() int {
-	headerLines := 3
+	// Header rows: title + path + spacer, plus optional project tabs row.
+	headerLines := 4
 	if len(m.projects) > 1 {
 		headerLines++
 	}
@@ -8884,8 +9097,8 @@ func (m Model) columnHeight() int {
 // boardTop handles board top.
 func (m Model) boardTop() int {
 	// mouse coordinates from tea are 1-based
-	// header + optional tabs + spacer
-	top := 3
+	// title + optional tabs + path + spacer
+	top := 4
 	if len(m.projects) > 1 {
 		top++
 	}

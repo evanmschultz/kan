@@ -34,6 +34,12 @@ Implemented now:
 - Keep manual QA notes in `TUI_MANUAL_TEST_WORKSHEET.md` with sectioned anchors for precise replay.
 - Local-only TUI + SQLite workflows (including startup bootstrap, project picker, threads/comments, and import/export snapshots).
 - Board info line includes hierarchy-aware focus guidance (`f` focus subtree, `F` return full board) with selected level and child counts for branch/phase/subphase navigation.
+- Board scope rendering is level-scoped: project shows immediate project children, and focused branch/phase/subphase views show immediate children for that level (not full descendant dumps).
+- Task-focused scope renders direct subtasks in the board so `f` on a task opens subtask-level board context.
+- Board path context is always visible above columns (`path: project -> ...`) and updates on each `f` drill-down.
+- Board cards now include hierarchy markers in metadata (`[branch|...]` / `[phase|...]`) so branch/phase rows are visually distinct from task rows.
+- Wide layouts render a right-side notices panel with unresolved attention summary, selected-item context, and recent activity hints.
+- `n` now respects active focus scope: in focused branch/phase/subphase it creates a child in that scope, and in focused task scope it creates a subtask.
 - Kind-catalog bootstrap + project `allowed_kinds` enforcement is active for project/task write paths.
 - Project-level `kind` and task-level `scope` persistence are active (`project|branch|phase|subphase|task|subtask` semantics enforced by kind rules).
 - Kind template system actions can auto-append checklist items and auto-create child work items during task creation.

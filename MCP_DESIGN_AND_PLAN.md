@@ -1097,3 +1097,54 @@ After those are locked, move to Section 13.2 (specific contracts).
   - `mcp-go` streamable HTTP + tool registration docs
   - MCP 2025-11-25 specification (tools capability/list_changed)
   - Go standard library context references
+
+## 17) Checkpoint O-11 (2026-02-25): TUI Hierarchy Scope Rendering + Collaborative E2E Worksheet
+
+- objective:
+  - close remaining TUI hierarchy UX gaps: level-scoped board rendering, persistent path context, right-side notices panel, and task-focus subtask board rendering.
+  - produce a new user+agent collaborative full E2E worksheet for fresh-DB validation.
+- files edited:
+  - `internal/tui/model.go`
+  - `internal/tui/model_test.go`
+  - `README.md`
+  - `PLAN.md`
+  - `COLLABORATIVE_FULL_E2E_TEST_WORKSHEET.md` (new)
+- key decisions:
+  - board scope now shows immediate children for active scope root (project/branch/phase/subphase/task) rather than full descendant flattening.
+  - focused task scope includes direct subtasks in board mode.
+  - path line is always shown above the board to anchor current scope context.
+  - wide-layout right panel is reserved for notices/selection/activity context.
+- command/test evidence:
+  - `just fmt` -> pass
+  - `just test-pkg ./internal/tui` -> pass
+  - `just test-golden-update` -> pass
+  - `just test-golden` -> pass
+- blockers:
+  - none
+- next step:
+  - run final integrator gates (`just check`, `just ci`, `just test-golden`), commit, and hand off the new tester-agent prompt.
+
+## 18) Checkpoint O-12 (2026-02-25): Focus-Scoped Create Behavior (`n`) Remediation
+
+- objective:
+  - fix scoped create semantics so `n` in focused branch/phase/subphase/task scopes creates under the active focus root (not project root).
+  - preserve `f` no-op semantics on leaf nodes and add regression coverage.
+- files edited:
+  - `internal/tui/model.go`
+  - `internal/tui/model_test.go`
+  - `README.md`
+  - `PLAN.md`
+  - `COLLABORATIVE_FULL_E2E_TEST_WORKSHEET.md`
+- key decisions:
+  - add-task defaults now infer explicit `parent_id`, `kind`, and `scope` from `projectionRootTaskID`.
+  - focused task/subtask scope defaults to `subtask`; focused branch/phase/subphase defaults to `task`.
+  - add-task submit path must pass explicit `scope` to avoid parent+kind defaulting back to project/subtask ambiguities.
+- command/test evidence:
+  - `just test-pkg ./internal/tui` -> pass
+  - `just test-golden` -> pass
+  - `just check` -> pass
+  - `just ci` -> pass
+- blockers:
+  - none
+- next step:
+  - commit and start collaborative user+agent full E2E worksheet execution on a fresh DB.
