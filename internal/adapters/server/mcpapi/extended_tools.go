@@ -234,22 +234,22 @@ func registerTaskTools(
 			),
 			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 				var args struct {
-					ProjectID       string               `json:"project_id"`
-					ParentID        string               `json:"parent_id"`
-					Kind            string               `json:"kind"`
-					Scope           string               `json:"scope"`
-					ColumnID        string               `json:"column_id"`
-					Title           string               `json:"title"`
-					Description     string               `json:"description"`
-					Priority        string               `json:"priority"`
-					DueAt           string               `json:"due_at"`
-					Labels          []string             `json:"labels"`
-					Metadata        domain.TaskMetadata  `json:"metadata"`
-					ActorType       string               `json:"actor_type"`
-					AgentName       string               `json:"agent_name"`
-					AgentInstanceID string               `json:"agent_instance_id"`
-					LeaseToken      string               `json:"lease_token"`
-					OverrideToken   string               `json:"override_token"`
+					ProjectID       string              `json:"project_id"`
+					ParentID        string              `json:"parent_id"`
+					Kind            string              `json:"kind"`
+					Scope           string              `json:"scope"`
+					ColumnID        string              `json:"column_id"`
+					Title           string              `json:"title"`
+					Description     string              `json:"description"`
+					Priority        string              `json:"priority"`
+					DueAt           string              `json:"due_at"`
+					Labels          []string            `json:"labels"`
+					Metadata        domain.TaskMetadata `json:"metadata"`
+					ActorType       string              `json:"actor_type"`
+					AgentName       string              `json:"agent_name"`
+					AgentInstanceID string              `json:"agent_instance_id"`
+					LeaseToken      string              `json:"lease_token"`
+					OverrideToken   string              `json:"override_token"`
 				}
 				if err := req.BindArguments(&args); err != nil {
 					return invalidRequestToolResult(err), nil
