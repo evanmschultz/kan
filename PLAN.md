@@ -1152,3 +1152,64 @@ Reconciliation and closeout evidence:
 
 Status:
 - Remediation slice complete for this request scope; repo gates are passing (`just check`, `just ci`).
+
+## Execution Log (2026-02-25: Modal-Wide Selection + Mode-Specific Help + Project Icon UX)
+
+Objective:
+- Commit the prior remediation baseline, then implement:
+  - text-selection mode usability across all screens/modals,
+  - screen-specific `?` help overlay content per active mode/modal,
+  - visible and emoji-capable project icon behavior,
+  - worksheet updates for collaborative validation.
+
+Command/test evidence:
+- `git add ... && git commit -m "tui: fix root/path UX, lifecycle flows, labels/dependencies, and archive management"` -> pass (`524e30d`).
+- `just fmt` -> pass.
+- `just test-pkg ./internal/tui` -> fail (`TestModelGoldenHelpExpandedOutput` snapshot mismatch after help redesign).
+- Context7 re-check executed after failure (Bubble Tea view/update guidance).
+- `just test-golden-update` -> pass.
+- `just test-pkg ./internal/tui` -> pass.
+- `just check` -> pass.
+- `just ci` -> fail once on coverage floor (`internal/tui` 69.9%).
+- Context7 re-check executed after failure (Bubble Tea table-driven mode branch testing guidance).
+- Added coverage test for full help-mode switch coverage.
+- `just fmt` -> pass.
+- `just test-pkg ./internal/tui` -> pass.
+- `just check` -> pass.
+- `just ci` -> pass (`internal/tui` coverage 70.3%).
+
+Code/doc changes:
+- `internal/tui/model.go`
+  - project-form icon field placeholder/limit updated (`icon / emoji`, larger limit).
+  - added `projectDisplayName`/`projectDisplayLabel` helpers and wired icon rendering into:
+    - board header,
+    - project tabs,
+    - project picker rows,
+    - notices panel project line,
+    - info-line project label,
+    - paths/roots modal project label.
+  - added `toggleHelpOverlay` + `toggleMouseSelectionMode` helpers.
+  - wired modal/global key handling in `handleInputModeKey`:
+    - `v` toggles text-selection mode from any modal/screen,
+    - `?` toggles help from any modal/screen,
+    - `esc` closes help overlay first when expanded.
+  - replaced generic expanded help with mode-scoped `helpOverlayScreenTitleAndLines` content for every `inputMode`.
+  - project form modal now shows icon-purpose hint when icon field is focused.
+- `internal/tui/thread_mode.go`
+  - thread view hint line includes `? help`.
+  - thread view now overlays expanded help (`renderHelpOverlay`) when `help.ShowAll` is enabled.
+- `internal/tui/model_test.go`
+  - added modal-global toggle coverage (`?` and `v` in add-project modal).
+  - added mode-specific help overlay assertions.
+  - added project icon/emoji render + persistence test.
+  - added mode-switch help coverage test over all `inputMode` values.
+- `internal/tui/testdata/TestModelGoldenHelpExpandedOutput.golden`
+  - refreshed to match mode-specific help overlay output.
+- `COLLABORATIVE_FULL_E2E_TEST_WORKSHEET.md`
+  - added C9/C10/C11 checks for:
+    - modal-wide text selection mode behavior,
+    - project icon emoji persistence/visibility,
+    - screen-specific help overlays and close behavior.
+
+Status:
+- Completed for requested scope; gates passing (`just check`, `just ci`) with coverage floor satisfied.

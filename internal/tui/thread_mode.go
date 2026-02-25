@@ -39,7 +39,7 @@ func (m Model) renderThreadModeView() tea.View {
 	in := m.threadInput
 	in.SetWidth(max(20, m.width-18))
 	composerLine := "comment: " + in.View()
-	hints := hintStyle.Render("enter post • pgup/pgdown scroll • mouse wheel scroll • ctrl+r reload • esc back")
+	hints := hintStyle.Render("enter post • pgup/pgdown scroll • mouse wheel scroll • ctrl+r reload • ? help • esc back")
 
 	statusLine := ""
 	statusText := strings.TrimSpace(m.status)
@@ -72,6 +72,16 @@ func (m Model) renderThreadModeView() tea.View {
 	content := strings.Join([]string{beforeBody, strings.Join(visible, "\n"), afterBody}, "\n")
 	if m.height > 0 {
 		content = fitLines(content, m.height)
+	}
+	if m.help.ShowAll {
+		overlay := m.renderHelpOverlay(accent, muted, dim, hintStyle, m.width-8)
+		if overlay != "" {
+			overlayHeight := lipgloss.Height(content)
+			if m.height > 0 {
+				overlayHeight = m.height
+			}
+			content = overlayOnContent(content, overlay, max(1, m.width), max(1, overlayHeight))
+		}
 	}
 
 	v := tea.NewView(content)

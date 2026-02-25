@@ -153,6 +153,49 @@ Launch TUI against the same DB:
 - Result: __________
 - Evidence: ______________________________________________
 
+### C9. Text-selection mode works on every screen/modal
+- Toggle selection mode with `v` from board view.
+- Open each modal/screen below and verify terminal copy-selection works while selection mode is enabled:
+  - project picker (`p`),
+  - new/edit task (`n` / `e`),
+  - new/edit project (`N` / `M`),
+  - due picker (`d` from task form),
+  - label picker (labels field `enter`),
+  - dependency inspector (`b` from task info),
+  - command palette (`:`),
+  - thread view (`c` from task info).
+- Expected:
+  - selection mode remains enabled across transitions,
+  - text can be selected/copied in each screen/modal,
+  - `v` toggles mode off from modal contexts as well.
+- Result: __________
+- Evidence: ______________________________________________
+
+### C10. Project icon behavior + emoji support
+- Create or edit a project with icon value set to an emoji (example: `🚀`).
+- Expected:
+  - icon is accepted and persisted,
+  - icon is visible in board header, project tabs, and project picker rows.
+- Result: __________
+- Evidence: ______________________________________________
+
+### C11. Screen-specific `?` help overlay
+- In each major mode/modal, press `?` and verify help content is scoped to that active screen only.
+- Verify at minimum:
+  - board mode,
+  - task form,
+  - project form,
+  - due picker,
+  - dependency inspector,
+  - command palette,
+  - thread mode.
+- Expected:
+  - help title identifies active screen context,
+  - key guidance is specific to that screen (no unrelated workflows from other modes),
+  - `esc` closes help first without closing the underlying modal.
+- Result: __________
+- Evidence: ______________________________________________
+
 ## 7. Section D: HTTP/MCP Parity + Guardrails
 
 ### D1. `capture_state` parity hash MCP vs HTTP

@@ -25,31 +25,24 @@ project: Inbox • tasks: 1 • selected: Help Golden Task • level: task
 deps: total 1 • blocked 0 • unresolved 0 • edges 0
 0 overdue * 0 due soon
 
- n new task • s new subtask • i/enter task info • e edit task • f focus subtree …[H    ╭──────────────────────────────────────────────────────────────────────────────────────╮
-    │ KAN Help                                                                             │
-[4C│ Fang-style command reference                                                         │
-    │                                                                                      │
-    │ n       new task            h/← column left        [4hd     delete (default) [4l
-    │ s       new subtask         l/→ column right   [4h    a     archive task [4l
-    │ i/enter task info           k/↑ task up            D  [4h   hard delete         [4l
-    │ e       edit task           j/↓ task down          [4hu     restore task     [4l
-    │ N       new project         [   move task left  [4h   space toggle select [4l
-    │ M       edit project        ]   move task right    z     [4hundo                   [4l
-    │ :       command palette                            Z     redo[4h                       [4l
-    │ .       quick actions                 [12;54H[4h    g     activity log [4l
-    │ /       search                                   [4h                       [4l
-    │ p/P     project picker                                  [4h                       [4l
-    │ t       toggle archived                      [4h                       [4l
-    │ v       text select mode               [4h                       [4l
-    │ f       focus subtree                                  [4h                       [4l
-    │ F       full board                                       [4h                       [4l
-    │ ?       toggle help                    [4h                       [4l
-    │ r       reload                                               [4h                       [4l
-    │ q       quit                               [4h                       [4l
-    │                                        [4h                       [4l
-    │ Workflows                                                                            │
-    │ 1. n add task  •  s add subtask  •  i/enter view task  •  e edit task                │
-    │ 2. space toggle select  •  . quick actions / : command palette for bulk actions      │
-    │ 3. [ / ] move task across states  •  d/a/D/u actions use confirmations               │
-[4C│ 4. f focus selected subtree  •  F return full board  •  path line shows active scope │
-    │ 5. z undo  •  Z redo  •  g activity log                                              │[?1049l[?25h[?2004l[?1002l[?1003l[?1006l[=0;1u
+ n new task • s new subtask • i/enter task info • e edit task • f focus subtree …[7A[J[H[K
+[K
+
+[K
+[K
+[K
+[K
+    ╭──────────────────────────────────────────────────────────────────────────────────────╮
+    │ KAN Help                               [4h                       [4l
+    │ screen: board                                            [4h                       [4l
+    │                                                              [4h                       [4l
+    │ - h/l or left/right move columns; j/k or up/do[4hwn move task selection [4l
+    │ - n new task; s new subtask; i/enter task info; e[4h edit task             [4l
+    │ - space multi-select; [ / ] move task; d delete; a archive; D [4hhard delete; u restore [4l
+    │ - f focus subtree; F full board; t toggle arc[4hhived                  [4l
+    │ - / search; p project picker; : command pa[4hlette; . quick actions [4l
+    │ - z undo; Z redo; g activity log; q quit               [4h                       [4l
+    │                                                          [4h                       [4l
+    │ selection mode: off (v toggles)        [4h                       [4l
+    │ press ? or esc to close help                                 [4h                       [4l
+[4C╰──────────────────────────────────────────────────────────────────────────────────────╯[?1049l[?25h[?2004l[?1002l[?1003l[?1006l[=0;1u

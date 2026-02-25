@@ -1005,7 +1005,7 @@ func (m Model) View() tea.View {
 	taskByID := m.tasksByID()
 	attentionItems, attentionTotal, attentionBlocked, attentionTop := m.scopeAttentionSummary(taskByID)
 
-	header := titleStyle.Render("kan") + "  " + project.Name
+	header := titleStyle.Render("kan") + "  " + projectDisplayName(project)
 	header += statusStyle.Render("  [" + m.modeLabel() + "]")
 	if m.searchApplied && m.searchQuery != "" {
 		header += statusStyle.Render("  search: " + m.searchQuery)
@@ -1653,7 +1653,7 @@ func (m *Model) startProjectForm(project *domain.Project) tea.Cmd {
 		newModalInput("", "project name", "", 120),
 		newModalInput("", "short description", "", 240),
 		newModalInput("", "owner/team", "", 120),
-		newModalInput("", "icon text", "", 24),
+		newModalInput("", "icon / emoji", "", 64),
 		newModalInput("", "accent color (e.g. 62)", "", 32),
 		newModalInput("", "https://...", "", 200),
 		newModalInput("", "csv tags", "", 200),
@@ -4300,23 +4300,39 @@ func (m Model) labelSuggestions(maxLabels int) []string {
 	return out
 }
 
+// toggleHelpOverlay toggles the centered help modal for the active screen.
+func (m *Model) toggleHelpOverlay() {
+	m.help.ShowAll = !m.help.ShowAll
+	if m.help.ShowAll {
+		m.status = "help"
+		return
+	}
+	if m.mode == modeNone {
+		m.status = "ready"
+	}
+}
+
+// toggleMouseSelectionMode toggles terminal-friendly text selection mode.
+func (m *Model) toggleMouseSelectionMode() {
+	m.mouseSelectionMode = !m.mouseSelectionMode
+	if m.mouseSelectionMode {
+		m.status = "text selection mode enabled"
+		return
+	}
+	m.status = "text selection mode disabled"
+}
+
 // handleNormalModeKey handles normal mode key.
 func (m Model) handleNormalModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.quit):
 		return m, tea.Quit
 	case key.Matches(msg, m.keys.toggleHelp):
-		m.help.ShowAll = !m.help.ShowAll
-		if m.help.ShowAll {
-			m.status = "help"
-		} else {
-			m.status = "ready"
-		}
+		m.toggleHelpOverlay()
 		return m, nil
 	case msg.String() == "esc":
 		if m.help.ShowAll {
-			m.help.ShowAll = false
-			m.status = "ready"
+			m.toggleHelpOverlay()
 			return m, nil
 		}
 		if m.searchApplied || m.searchQuery != "" {
@@ -4502,12 +4518,7 @@ func (m Model) handleNormalModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.clearSelection()
 		return m, m.loadData
 	case key.Matches(msg, m.keys.toggleSelectMode):
-		m.mouseSelectionMode = !m.mouseSelectionMode
-		if m.mouseSelectionMode {
-			m.status = "text selection mode enabled"
-		} else {
-			m.status = "text selection mode disabled"
-		}
+		m.toggleMouseSelectionMode()
 		return m, nil
 	default:
 		return m, nil
@@ -4516,6 +4527,21 @@ func (m Model) handleNormalModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 // handleInputModeKey handles input mode key.
 func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if key.Matches(msg, m.keys.toggleSelectMode) {
+		m.toggleMouseSelectionMode()
+		return m, nil
+	}
+	if key.Matches(msg, m.keys.toggleHelp) {
+		m.toggleHelpOverlay()
+		return m, nil
+	}
+	if m.help.ShowAll {
+		if msg.Code == tea.KeyEscape || msg.String() == "esc" {
+			m.toggleHelpOverlay()
+		}
+		return m, nil
+	}
+
 	if m.mode == modeActivityLog {
 		switch {
 		case msg.String() == "esc" || key.Matches(msg, m.keys.activityLog):
@@ -8258,10 +8284,7 @@ func (m Model) renderProjectTabs(accent, dim color.Color) string {
 
 	parts := make([]string, 0, len(m.projects))
 	for idx, p := range m.projects {
-		label := p.Name
-		if p.ArchivedAt != nil {
-			label += " (archived)"
-		}
+		label := projectDisplayLabel(p)
 		if idx == m.selectedProject {
 			parts = append(parts, active.Render("["+label+"]"))
 		} else {
@@ -8269,6 +8292,27 @@ func (m Model) renderProjectTabs(accent, dim color.Color) string {
 		}
 	}
 	return strings.Join(parts, "  ")
+}
+
+// projectDisplayName returns one user-facing project name with an optional icon prefix.
+func projectDisplayName(project domain.Project) string {
+	name := strings.TrimSpace(project.Name)
+	if name == "" {
+		name = strings.TrimSpace(project.ID)
+	}
+	if icon := strings.TrimSpace(project.Metadata.Icon); icon != "" {
+		return icon + " " + name
+	}
+	return name
+}
+
+// projectDisplayLabel returns one user-facing project label with archive marker text.
+func projectDisplayLabel(project domain.Project) string {
+	label := projectDisplayName(project)
+	if project.ArchivedAt != nil {
+		label += " (archived)"
+	}
+	return label
 }
 
 // projectAccentColor returns the project-specific accent color or the default accent.
@@ -8301,7 +8345,7 @@ func (m Model) renderOverviewPanel(
 	contentWidth := max(12, panelWidth-6)
 	lines := []string{
 		lipgloss.NewStyle().Bold(true).Foreground(accent).Render("Notices"),
-		lipgloss.NewStyle().Foreground(muted).Render("project: " + truncate(project.Name, contentWidth)),
+		lipgloss.NewStyle().Foreground(muted).Render("project: " + truncate(projectDisplayName(project), contentWidth)),
 	}
 	if path, _ := m.projectionPathWithProject(project.Name); path != "" {
 		lines = append(lines, lipgloss.NewStyle().Foreground(muted).Render("path: "+truncate(path, contentWidth)))
@@ -8366,7 +8410,7 @@ func (m Model) renderOverviewPanel(
 // renderInfoLine renders output for the current model state.
 func (m Model) renderInfoLine(project domain.Project, muted color.Color) string {
 	parts := []string{
-		fmt.Sprintf("project: %s", project.Name),
+		fmt.Sprintf("project: %s", projectDisplayName(project)),
 		fmt.Sprintf("tasks: %d", len(m.tasks)),
 	}
 	if project.ArchivedAt != nil {
@@ -8407,35 +8451,23 @@ func (m Model) renderHelpOverlay(accent, muted, dim color.Color, _ lipgloss.Styl
 	if width <= 0 {
 		width = 72
 	}
-	hb := m.help
-	hb.ShowAll = true
-	hb.SetWidth(width - 4)
-
+	screenTitle, screenHelp := m.helpOverlayScreenTitleAndLines()
 	title := lipgloss.NewStyle().Bold(true).Foreground(accent).Render("KAN Help")
-	subtitle := lipgloss.NewStyle().Foreground(muted).Render("Fang-style command reference")
-	workflow := []string{
-		lipgloss.NewStyle().Bold(true).Foreground(accent).Render("Workflows"),
-		"1. n add task  •  s add subtask  •  i/enter view task  •  e edit task",
-		"2. space toggle select  •  . quick actions / : command palette for bulk actions",
-		"3. [ / ] move task across states  •  d/a/D/u actions use confirmations",
-		"4. f focus selected subtree  •  F return full board  •  path line shows active scope",
-		"5. z undo  •  Z redo  •  g activity log",
-		"6. N new project  •  M edit project  •  p switch project",
-		"7. / search: query -> states -> levels -> scope -> archived -> apply",
-		"8. search hotkeys: ctrl+u clear query • ctrl+r reset filters",
-		"9. task form: h/l priority  •  d due picker  •  enter/ctrl+l labels  •  enter/o deps  •  ctrl+r resources",
-		"10. task info: b dependency inspector  •  r attach file/dir from project root",
-		"11. v toggle text-selection mode (disables mouse capture so terminal selection works)",
+	subtitle := lipgloss.NewStyle().Foreground(muted).Render("screen: " + screenTitle)
+	lines := []string{title, subtitle, ""}
+	for _, line := range screenHelp {
+		lines = append(lines, "- "+line)
 	}
-	lines := []string{
-		title,
-		subtitle,
-		"",
-		hb.View(m.keys),
-		"",
-		lipgloss.NewStyle().Foreground(muted).Render(strings.Join(workflow, "\n")),
-		lipgloss.NewStyle().Foreground(muted).Render("press ? or esc to close"),
+	selectionState := "off"
+	if m.mouseSelectionMode {
+		selectionState = "on"
 	}
+	lines = append(
+		lines,
+		"",
+		lipgloss.NewStyle().Foreground(muted).Render(fmt.Sprintf("selection mode: %s (v toggles)", selectionState)),
+		lipgloss.NewStyle().Foreground(muted).Render("press ? or esc to close help"),
+	)
 	style := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(dim).
@@ -8444,6 +8476,185 @@ func (m Model) renderHelpOverlay(accent, muted, dim color.Color, _ lipgloss.Styl
 		style = style.Width(width)
 	}
 	return style.Render(strings.Join(lines, "\n"))
+}
+
+// helpOverlayScreenTitleAndLines returns mode-scoped help content for the expanded help overlay.
+func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
+	switch m.mode {
+	case modeNone:
+		return "board", []string{
+			"h/l or left/right move columns; j/k or up/down move task selection",
+			"n new task; s new subtask; i/enter task info; e edit task",
+			"space multi-select; [ / ] move task; d delete; a archive; D hard delete; u restore",
+			"f focus subtree; F full board; t toggle archived",
+			"/ search; p project picker; : command palette; . quick actions",
+			"z undo; Z redo; g activity log; q quit",
+		}
+	case modeAddTask:
+		return "new task", []string{
+			"tab/shift+tab move fields; enter saves; esc cancels",
+			"h/l changes priority when priority field is focused",
+			"d opens due picker; supports date-only or local date+time",
+			"labels field: enter or ctrl+l opens label picker; ctrl+y accepts suggestion",
+			"depends_on/blocked_by fields: enter or o opens dependency picker",
+			"ctrl+r opens resource picker",
+		}
+	case modeEditTask:
+		return "edit task", []string{
+			"tab/shift+tab move fields; enter saves; esc cancels",
+			"h/l changes priority when priority field is focused",
+			"d opens due picker; supports date-only or local date+time",
+			"labels field: enter or ctrl+l opens label picker; ctrl+y accepts suggestion",
+			"depends_on/blocked_by fields: enter or o opens dependency picker",
+			"ctrl+r opens resource picker",
+		}
+	case modeSearch:
+		return "search", []string{
+			"tab cycles query, states, levels, scope, archived, and apply",
+			"space or enter toggles the focused state/level/scope option",
+			"h/l cycles state/level cursors and toggles scope/archived",
+			"ctrl+u clears query; ctrl+r resets filters; esc cancels",
+		}
+	case modeRenameTask:
+		return "rename task", []string{
+			"type new title",
+			"enter saves; esc cancels",
+		}
+	case modeDuePicker:
+		return "due picker", []string{
+			"tab cycles include-time, date, time, and options list focus",
+			"space toggles include time when toggle is focused",
+			"type date/time to update dynamic suggestions",
+			"j/k navigates options list; enter applies; esc cancels",
+		}
+	case modeProjectPicker:
+		return "project picker", []string{
+			"j/k or mouse wheel changes selection",
+			"enter chooses project",
+			"N opens new-project form",
+			"esc closes picker",
+		}
+	case modeTaskInfo:
+		return "task info", []string{
+			"j/k selects subtasks; space toggles selected subtask completion",
+			"enter opens selected subtask; backspace moves to parent",
+			"e edit; s create subtask; c thread view",
+			"b dependency inspector; r attach resource",
+			"[ / ] move task between columns; f focus subtree; esc back/close",
+		}
+	case modeAddProject:
+		return "new project", []string{
+			"tab/shift+tab moves fields; enter saves; esc cancels",
+			"icon field is shown in header, tabs, and picker and supports emoji",
+			"root_path field: r opens directory picker",
+		}
+	case modeEditProject:
+		return "edit project", []string{
+			"tab/shift+tab moves fields; enter saves; esc cancels",
+			"icon field is shown in header, tabs, and picker and supports emoji",
+			"root_path field: r opens directory picker",
+		}
+	case modeSearchResults:
+		return "search results", []string{
+			"j/k moves result selection",
+			"enter jumps to selected result",
+			"esc closes results",
+		}
+	case modeCommandPalette:
+		return "command palette", []string{
+			"type to filter command names and aliases",
+			"j/k moves selection; tab autocompletes first match",
+			"enter runs command; esc closes palette",
+		}
+	case modeQuickActions:
+		return "quick actions", []string{
+			"j/k moves action selection",
+			"enter runs selected action",
+			"esc closes quick actions",
+		}
+	case modeConfirmAction:
+		return "confirm action", []string{
+			"h/l switches confirm vs cancel",
+			"enter applies highlighted choice",
+			"y confirms immediately; n cancels; esc cancels",
+		}
+	case modeActivityLog:
+		return "activity log", []string{
+			"esc closes activity log",
+			"z undo and Z redo remain available",
+		}
+	case modeResourcePicker:
+		if m.resourcePickerBack == modeAddProject || m.resourcePickerBack == modeEditProject || m.resourcePickerBack == modePathsRoots || m.resourcePickerBack == modeBootstrapSettings {
+			return "path picker", []string{
+				"type to filter entries",
+				"j/k or arrows move selection",
+				"right opens directory; left moves to parent directory",
+				"enter chooses path (file chooses parent dir)",
+				"ctrl+a chooses current directory; esc closes",
+			}
+		}
+		return "resource picker", []string{
+			"type to filter entries",
+			"j/k or arrows move selection",
+			"enter opens directory or attaches selected file",
+			"ctrl+a attaches selected or current directory; esc closes",
+		}
+	case modeLabelPicker:
+		return "label picker", []string{
+			"type to filter labels",
+			"j/k moves selection",
+			"enter adds selected label",
+			"ctrl+u clears filter; esc closes",
+		}
+	case modePathsRoots:
+		return "paths / roots", []string{
+			"type project root path (empty clears mapping)",
+			"r opens directory picker",
+			"enter saves; esc cancels",
+		}
+	case modeLabelsConfig:
+		return "labels config", []string{
+			"tab/shift+tab moves between global, project, branch, and phase fields",
+			"enter saves; esc cancels",
+			"global/project values save to config",
+			"branch/phase values apply to current hierarchy labels",
+		}
+	case modeHighlightColor:
+		return "highlight color", []string{
+			"set ANSI index or #RRGGBB value",
+			"empty value resets default color",
+			"enter saves; esc cancels",
+		}
+	case modeBootstrapSettings:
+		return "bootstrap settings", []string{
+			"tab cycles name, default path, and save focus",
+			"r opens directory picker for default path",
+			"enter chooses path or saves settings",
+			"d clears default path",
+			"esc cancels when bootstrap is optional",
+		}
+	case modeDependencyInspector:
+		return "dependency inspector", []string{
+			"tab cycles query, state filters, scope, archived, and list focus",
+			"type query text to filter candidates",
+			"d toggles depends_on; b toggles blocked_by; x switches active relation field",
+			"space toggles active relation value for selected candidate",
+			"a applies changes; enter jumps to task; esc cancels",
+		}
+	case modeThread:
+		return "thread", []string{
+			"type comment text in composer",
+			"enter posts comment",
+			"pgup/pgdown or mouse wheel scrolls",
+			"ctrl+r reloads comments",
+			"esc returns to previous screen",
+		}
+	default:
+		return "current screen", []string{
+			"enter confirms primary action",
+			"esc closes current screen",
+		}
+	}
 }
 
 // taskListSecondary returns task list secondary.
@@ -9280,10 +9491,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 				if idx == m.projectPickerIndex {
 					cursor = "> "
 				}
-				label := p.Name
-				if p.ArchivedAt != nil {
-					label += " (archived)"
-				}
+				label := projectDisplayLabel(p)
 				lines = append(lines, cursor+label)
 			}
 		}
@@ -9527,7 +9735,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		hintStyle := lipgloss.NewStyle().Foreground(muted)
 		projectLabel := "(none)"
 		if project, ok := m.currentProject(); ok {
-			projectLabel = project.Name
+			projectLabel = projectDisplayName(project)
 			if slug := strings.TrimSpace(strings.ToLower(project.Slug)); slug != "" {
 				projectLabel += " (" + slug + ")"
 			}
@@ -9804,6 +10012,9 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 				}
 				in.SetWidth(fieldWidth)
 				lines = append(lines, labelStyle.Render(fmt.Sprintf("%-12s", label+":"))+" "+in.View())
+			}
+			if m.projectFormFocus == projectFieldIcon {
+				lines = append(lines, hintStyle.Render("icon shows in project header/tabs/picker and supports emoji"))
 			}
 			if m.projectFormFocus == projectFieldRootPath {
 				lines = append(lines, hintStyle.Render("r browse and select a directory"))

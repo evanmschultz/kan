@@ -1571,6 +1571,173 @@ func TestClipboardShortcutHelpers(t *testing.T) {
 	}
 }
 
+// TestModelInputModeGlobalHelpAndSelectionToggles verifies '?' and 'v' work inside modal/input screens.
+func TestModelInputModeGlobalHelpAndSelectionToggles(t *testing.T) {
+	now := time.Date(2026, 2, 23, 9, 30, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, nil)))
+
+	m = applyMsg(t, m, keyRune('N'))
+	if m.mode != modeAddProject {
+		t.Fatalf("expected add-project mode, got %v", m.mode)
+	}
+
+	m = applyMsg(t, m, keyRune('?'))
+	if !m.help.ShowAll {
+		t.Fatal("expected help overlay to open from add-project modal")
+	}
+	if m.mode != modeAddProject {
+		t.Fatalf("expected help toggle to preserve add-project mode, got %v", m.mode)
+	}
+
+	m = applyMsg(t, m, keyRune('v'))
+	if !m.mouseSelectionMode {
+		t.Fatal("expected text-selection mode to toggle while modal is open")
+	}
+
+	// Esc should close help first and keep the modal open.
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.help.ShowAll {
+		t.Fatal("expected esc to close help overlay before modal")
+	}
+	if m.mode != modeAddProject {
+		t.Fatalf("expected add-project mode to remain active after closing help, got %v", m.mode)
+	}
+}
+
+// TestModelHelpOverlayModeSpecific verifies expanded help text changes by active screen.
+func TestModelHelpOverlayModeSpecific(t *testing.T) {
+	now := time.Date(2026, 2, 23, 9, 30, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, nil)))
+
+	accent := lipgloss.Color("62")
+	muted := lipgloss.Color("241")
+	dim := lipgloss.Color("239")
+
+	m.mode = modeCommandPalette
+	out := m.renderHelpOverlay(accent, muted, dim, lipgloss.NewStyle().Foreground(muted), 96)
+	if !strings.Contains(out, "screen: command palette") {
+		t.Fatalf("expected command-palette-specific help title, got %q", out)
+	}
+	if !strings.Contains(out, "type to filter command names and aliases") {
+		t.Fatalf("expected command-palette-specific key guidance, got %q", out)
+	}
+	if strings.Contains(out, "pgup/pgdown") {
+		t.Fatalf("expected thread-only text to be absent in command-palette help, got %q", out)
+	}
+
+	m.mode = modeDuePicker
+	out = m.renderHelpOverlay(accent, muted, dim, lipgloss.NewStyle().Foreground(muted), 96)
+	if !strings.Contains(out, "screen: due picker") {
+		t.Fatalf("expected due-picker-specific help title, got %q", out)
+	}
+	if !strings.Contains(out, "tab cycles include-time, date, time, and options list focus") {
+		t.Fatalf("expected due-picker-specific help guidance, got %q", out)
+	}
+}
+
+// TestHelpOverlayScreenTitleAndLinesCoverage verifies each input mode resolves mode-scoped help lines.
+func TestHelpOverlayScreenTitleAndLinesCoverage(t *testing.T) {
+	now := time.Date(2026, 2, 23, 9, 30, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, nil)))
+
+	modes := []inputMode{
+		modeNone,
+		modeAddTask,
+		modeSearch,
+		modeRenameTask,
+		modeEditTask,
+		modeDuePicker,
+		modeProjectPicker,
+		modeTaskInfo,
+		modeAddProject,
+		modeEditProject,
+		modeSearchResults,
+		modeCommandPalette,
+		modeQuickActions,
+		modeConfirmAction,
+		modeActivityLog,
+		modeResourcePicker,
+		modeLabelPicker,
+		modePathsRoots,
+		modeLabelsConfig,
+		modeHighlightColor,
+		modeBootstrapSettings,
+		modeDependencyInspector,
+		modeThread,
+	}
+	for _, mode := range modes {
+		m.mode = mode
+		title, lines := m.helpOverlayScreenTitleAndLines()
+		if strings.TrimSpace(title) == "" {
+			t.Fatalf("expected non-empty help title for mode %v", mode)
+		}
+		if len(lines) == 0 {
+			t.Fatalf("expected non-empty help lines for mode %v", mode)
+		}
+	}
+
+	m.mode = modeResourcePicker
+	m.resourcePickerBack = modeAddProject
+	title, lines := m.helpOverlayScreenTitleAndLines()
+	if title != "path picker" {
+		t.Fatalf("expected path-picker help title for root contexts, got %q", title)
+	}
+	if len(lines) == 0 {
+		t.Fatal("expected path-picker help lines")
+	}
+}
+
+// TestModelProjectIconEmojiSupport verifies project icon rendering and emoji persistence through form submit.
+func TestModelProjectIconEmojiSupport(t *testing.T) {
+	now := time.Date(2026, 2, 23, 9, 30, 0, 0, time.UTC)
+	p1, _ := domain.NewProject("p1", "Inbox", "", now)
+	if err := p1.UpdateDetails(p1.Name, p1.Description, domain.ProjectMetadata{Icon: "🚀"}, now); err != nil {
+		t.Fatalf("UpdateDetails() setup error = %v", err)
+	}
+	p2, _ := domain.NewProject("p2", "Roadmap", "", now)
+	c1, _ := domain.NewColumn("c1", p1.ID, "To Do", 0, 0, now)
+	c2, _ := domain.NewColumn("c2", p2.ID, "To Do", 0, 0, now)
+
+	svc := newFakeService([]domain.Project{p1, p2}, []domain.Column{c1, c2}, nil)
+	m := loadReadyModel(t, NewModel(svc))
+	viewText := fmt.Sprint(m.View().Content)
+	if !strings.Contains(viewText, "🚀 Inbox") {
+		t.Fatalf("expected project icon to render in board header/tabs, got %q", viewText)
+	}
+
+	m.mode = modeProjectPicker
+	m.projectPickerIndex = 0
+	accent := lipgloss.Color("62")
+	muted := lipgloss.Color("241")
+	dim := lipgloss.Color("239")
+	picker := m.renderModeOverlay(accent, muted, dim, lipgloss.NewStyle().Foreground(muted), 80)
+	if !strings.Contains(picker, "🚀 Inbox") {
+		t.Fatalf("expected project picker to render icon label, got %q", picker)
+	}
+
+	m = applyMsg(t, m, keyRune('N'))
+	if m.mode != modeAddProject {
+		t.Fatalf("expected add-project mode, got %v", m.mode)
+	}
+	m.projectFormInputs[projectFieldName].SetValue("Emoji Project")
+	m.projectFormInputs[projectFieldIcon].SetValue("🧠")
+	updated, cmd := m.submitInputMode()
+	m = applyResult(t, updated, cmd)
+	if len(svc.projects) < 3 {
+		t.Fatalf("expected created project in fake service, got %#v", svc.projects)
+	}
+	got := svc.projects[len(svc.projects)-1].Metadata.Icon
+	if got != "🧠" {
+		t.Fatalf("expected emoji icon to persist on create, got %q", got)
+	}
+}
+
 // TestModelCommandPaletteWindowedRendering verifies command selection stays visible past the first page.
 func TestModelCommandPaletteWindowedRendering(t *testing.T) {
 	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
