@@ -44,6 +44,12 @@ func (a *AppServiceAdapter) CaptureState(ctx context.Context, in CaptureStateReq
 		View: app.CaptureStateView(req.View),
 	})
 	if err != nil {
+		if errors.Is(err, app.ErrNotFound) {
+			projects, listErr := a.service.ListProjects(ctx, true)
+			if listErr == nil && len(projects) == 0 {
+				return CaptureState{}, fmt.Errorf("capture state: %w", errors.Join(ErrBootstrapRequired, err))
+			}
+		}
 		return CaptureState{}, mapAppError("capture state", err)
 	}
 
@@ -174,7 +180,17 @@ func normalizeAttentionListRequest(in ListAttentionItemsRequest) (ListAttentionI
 
 // normalizeRaiseAttentionItemRequest validates and canonicalizes raise_attention_item input.
 func normalizeRaiseAttentionItemRequest(in RaiseAttentionItemRequest) (RaiseAttentionItemRequest, error) {
-	projectID, scopeType, scopeID, err := normalizeScopeTuple(in.ProjectID, in.ScopeType, in.ScopeID)
+	projectID := strings.TrimSpace(in.ProjectID)
+	if projectID == "" {
+		return RaiseAttentionItemRequest{}, fmt.Errorf("project_id is required: %w", ErrInvalidCaptureStateRequest)
+	}
+	if strings.TrimSpace(in.ScopeType) == "" {
+		return RaiseAttentionItemRequest{}, fmt.Errorf("scope_type is required: %w", ErrUnsupportedScope)
+	}
+	if strings.TrimSpace(in.ScopeID) == "" {
+		return RaiseAttentionItemRequest{}, fmt.Errorf("scope_id is required: %w", ErrUnsupportedScope)
+	}
+	_, scopeType, scopeID, err := normalizeScopeTuple(projectID, in.ScopeType, in.ScopeID)
 	if err != nil {
 		return RaiseAttentionItemRequest{}, err
 	}
@@ -412,8 +428,19 @@ func mapAppError(operation string, err error) error {
 	}
 
 	switch {
+	case errors.Is(err, ErrBootstrapRequired):
+		return fmt.Errorf("%s: %w", operation, errors.Join(ErrBootstrapRequired, err))
 	case errors.Is(err, app.ErrNotFound):
 		return fmt.Errorf("%s: %w", operation, errors.Join(ErrNotFound, err))
+	case errors.Is(err, domain.ErrMutationLeaseRequired),
+		errors.Is(err, domain.ErrMutationLeaseInvalid),
+		errors.Is(err, domain.ErrMutationLeaseExpired),
+		errors.Is(err, domain.ErrMutationLeaseRevoked),
+		errors.Is(err, domain.ErrOrchestratorOverlap),
+		errors.Is(err, domain.ErrOverrideTokenRequired),
+		errors.Is(err, domain.ErrOverrideTokenInvalid),
+		errors.Is(err, domain.ErrTransitionBlocked):
+		return fmt.Errorf("%s: %w", operation, errors.Join(ErrGuardrailViolation, err))
 	case errors.Is(err, domain.ErrInvalidID),
 		errors.Is(err, domain.ErrInvalidScopeType),
 		errors.Is(err, domain.ErrInvalidScopeID),
@@ -421,8 +448,24 @@ func mapAppError(operation string, err error) error {
 		errors.Is(err, domain.ErrInvalidBodyMarkdown),
 		errors.Is(err, domain.ErrInvalidAttentionState),
 		errors.Is(err, domain.ErrInvalidAttentionKind),
-		errors.Is(err, domain.ErrInvalidActorType):
+		errors.Is(err, domain.ErrInvalidActorType),
+		errors.Is(err, domain.ErrInvalidName),
+		errors.Is(err, domain.ErrInvalidTitle),
+		errors.Is(err, domain.ErrInvalidParentID),
+		errors.Is(err, domain.ErrInvalidColumnID),
+		errors.Is(err, domain.ErrInvalidPriority),
+		errors.Is(err, domain.ErrInvalidLifecycleState),
+		errors.Is(err, domain.ErrInvalidKind),
+		errors.Is(err, domain.ErrInvalidKindID),
+		errors.Is(err, domain.ErrInvalidKindAppliesTo),
+		errors.Is(err, domain.ErrInvalidKindTemplate),
+		errors.Is(err, domain.ErrInvalidKindPayload),
+		errors.Is(err, domain.ErrInvalidKindPayloadSchema),
+		errors.Is(err, domain.ErrKindNotAllowed),
+		errors.Is(err, app.ErrInvalidDeleteMode):
 		return fmt.Errorf("%s: %w", operation, errors.Join(ErrInvalidCaptureStateRequest, err))
+	case errors.Is(err, domain.ErrKindNotFound):
+		return fmt.Errorf("%s: %w", operation, errors.Join(ErrNotFound, err))
 	default:
 		return fmt.Errorf("%s: %w", operation, err)
 	}

@@ -478,6 +478,31 @@ func TestHandlerAttentionJSONValidation(t *testing.T) {
 	}
 }
 
+// TestHandlerRaiseAttentionScopeValidationErrorMapping verifies scope validation errors map to invalid_request responses.
+func TestHandlerRaiseAttentionScopeValidationErrorMapping(t *testing.T) {
+	attention := &stubAttentionService{
+		err: errors.Join(common.ErrUnsupportedScope, errors.New("scope_type is required")),
+	}
+	handler := NewHandler(&stubCaptureStateReader{}, attention)
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/attention/items",
+		strings.NewReader(`{"project_id":"p1","kind":"risk_note","summary":"x"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+	envelope := decodeErrorEnvelope(t, rec)
+	if envelope.Error.Code != "invalid_request" {
+		t.Fatalf("error.code = %q, want invalid_request", envelope.Error.Code)
+	}
+}
+
 // TestHandlerAttentionListRequiresProjectID verifies list rejects missing project_id.
 func TestHandlerAttentionListRequiresProjectID(t *testing.T) {
 	handler := NewHandler(&stubCaptureStateReader{}, &stubAttentionService{})

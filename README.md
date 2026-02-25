@@ -43,6 +43,16 @@ Wave-locked MCP/HTTP direction (implemented and in active dogfooding closeout):
 - `capture_state` is a summary-first recovery surface for level-scoped workflows.
 - Attention/blocker signaling direction is node-scoped with user-action visibility and paginated scope queries for user/agent coordination.
 - Transport-level lease/scope request contracts enforce non-user mutation guardrails.
+- MCP tool surface now includes:
+  - bootstrap guidance: `kan.get_bootstrap_guide`
+  - projects: `kan.list_projects`, `kan.create_project`, `kan.update_project`
+  - tasks/work graph: `kan.list_tasks`, `kan.create_task`, `kan.update_task`, `kan.move_task`, `kan.delete_task`, `kan.restore_task`, `kan.reparent_task`, `kan.list_child_tasks`, `kan.search_task_matches`
+  - capture/attention: `kan.capture_state`, `kan.list_attention_items`, `kan.raise_attention_item`, `kan.resolve_attention_item`
+  - change/dependency context: `kan.list_project_change_events`, `kan.get_project_dependency_rollup`
+  - kinds/allowlists: `kan.list_kind_definitions`, `kan.upsert_kind_definition`, `kan.set_project_allowed_kinds`, `kan.list_project_allowed_kinds`
+  - capability leases: `kan.issue_capability_lease`, `kan.heartbeat_capability_lease`, `kan.renew_capability_lease`, `kan.revoke_capability_lease`, `kan.revoke_all_capability_leases`
+  - comments: `kan.create_comment`, `kan.list_comments_by_target`
+  - empty-instance `capture_state` now returns deterministic `bootstrap_required` signaling, and agents can call `kan.get_bootstrap_guide` for next steps.
 
 Roadmap-only in the active wave (explicitly deferred):
 - advanced import/export transport closure concerns (branch/commit-aware divergence reconciliation and conflict tooling),

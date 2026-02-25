@@ -957,7 +957,45 @@ After those are locked, move to Section 13.2 (specific contracts).
 - Keep localhost-only default bind for serve mode in MVP.
 - Make `capture_state` a first-class MVP read surface for deterministic context reorientation.
 
-## 15) Sources
+## 15) Recovery Checkpoint (2026-02-25)
+
+### Checkpoint O-REC-01 (Expanded MCP capability rebuild after uncommitted loss)
+
+- objective:
+  - restore and expand MCP capability beyond the minimal 4-tool surface using existing app/domain functionality.
+- lock owner(s):
+  - orchestrator/integrator (single-lane recovery patch).
+- files edited:
+  - `internal/adapters/server/common/mcp_surface.go` (new interfaces/contracts + bootstrap/guardrail sentinels)
+  - `internal/adapters/server/common/app_service_adapter_mcp.go` (new app adapter implementations for expanded MCP surface)
+  - `internal/adapters/server/common/app_service_adapter.go` (bootstrap-required capture handling, explicit attention raise scope requirements, expanded error mapping)
+  - `internal/adapters/server/httpapi/handler.go` (bootstrap/guardrail HTTP error mapping)
+  - `internal/adapters/server/mcpapi/extended_tools.go` (expanded MCP tool registration/handlers)
+  - `internal/adapters/server/mcpapi/handler.go` (tool registration wiring + error mapping + provider resolution)
+  - `internal/adapters/server/mcpapi/handler_test.go` (expanded error mapping + project tool registration/call tests)
+  - `internal/adapters/server/mcpapi/extended_tools_test.go` (broad expanded tool success-path coverage + bind error path)
+  - `README.md` (documented current MCP tool surface and bootstrap guidance behavior)
+- commands/tests and outcomes:
+  - `just fmt` -> pass
+  - `just test-pkg ./internal/adapters/server/common` -> pass (`[no test files]`, compile-only)
+  - `just test-pkg ./internal/adapters/server/httpapi` -> pass
+  - `just test-pkg ./internal/adapters/server/mcpapi` -> pass
+  - `just test-pkg ./cmd/kan` -> pass
+  - `just check` -> pass
+  - `just test-golden` -> pass
+  - first `just ci` -> fail (mcpapi coverage below threshold at 26.0%)
+  - Context7 re-consulted (`/mark3labs/mcp-go`, tool-handler/testing patterns) per failure policy
+  - added expanded MCP tests
+  - second `just ci` -> pass (mcpapi coverage 75.4%)
+- blockers/decisions:
+  - decision: expose existing app capabilities via MCP interfaces instead of introducing new core business logic.
+  - decision: add deterministic `bootstrap_required` error signaling plus `kan.get_bootstrap_guide` tool for empty-instance onboarding.
+  - decision: keep import/export transport-closure concerns roadmap-only (no scope change).
+  - blocker: none remaining for this recovery checkpoint.
+- next step:
+  - execute live MCP dogfooding against running `kan serve` endpoint and fill worksheet/report evidence with this expanded tool surface.
+
+## 16) Sources
 
 - `PRE_MCP_CONSENSUS.md`
 - `PRE_MCP_EXECUTION_WAVES.md`

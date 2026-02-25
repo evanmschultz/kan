@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/evanschultz/kan/internal/adapters/server/common"
+	"github.com/evanschultz/kan/internal/domain"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -43,6 +44,47 @@ type stubAttentionService struct {
 	lastList    common.ListAttentionItemsRequest
 	lastRaise   common.RaiseAttentionItemRequest
 	lastResolve common.ResolveAttentionItemRequest
+}
+
+// stubProjectService provides deterministic project responses for expanded MCP tool registration tests.
+type stubProjectService struct {
+	stubCaptureStateReader
+	projects            []domain.Project
+	createResult        domain.Project
+	updateResult        domain.Project
+	listErr             error
+	createErr           error
+	updateErr           error
+	lastIncludeArchived bool
+	lastCreate          common.CreateProjectRequest
+	lastUpdate          common.UpdateProjectRequest
+}
+
+// ListProjects returns deterministic project list rows.
+func (s *stubProjectService) ListProjects(_ context.Context, includeArchived bool) ([]domain.Project, error) {
+	s.lastIncludeArchived = includeArchived
+	if s.listErr != nil {
+		return nil, s.listErr
+	}
+	return append([]domain.Project(nil), s.projects...), nil
+}
+
+// CreateProject records and returns deterministic project creation results.
+func (s *stubProjectService) CreateProject(_ context.Context, req common.CreateProjectRequest) (domain.Project, error) {
+	s.lastCreate = req
+	if s.createErr != nil {
+		return domain.Project{}, s.createErr
+	}
+	return s.createResult, nil
+}
+
+// UpdateProject records and returns deterministic project update results.
+func (s *stubProjectService) UpdateProject(_ context.Context, req common.UpdateProjectRequest) (domain.Project, error) {
+	s.lastUpdate = req
+	if s.updateErr != nil {
+		return domain.Project{}, s.updateErr
+	}
+	return s.updateResult, nil
 }
 
 // ListAttentionItems returns deterministic list data.
@@ -294,6 +336,91 @@ func TestHandlerRegistersAttentionToolsWhenAvailable(t *testing.T) {
 	}
 }
 
+// TestHandlerRegistersProjectToolsWhenAvailable verifies expanded project tools register when the capture adapter exposes project APIs.
+func TestHandlerRegistersProjectToolsWhenAvailable(t *testing.T) {
+	capture := &stubProjectService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+	}
+	handler, err := NewHandler(Config{}, capture, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+	_, toolsResp := postJSONRPC(t, server.Client(), server.URL, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      2,
+		"method":  "tools/list",
+	})
+
+	toolsRaw, ok := toolsResp.Result["tools"].([]any)
+	if !ok {
+		t.Fatalf("tools list payload missing tools: %#v", toolsResp.Result)
+	}
+	toolNames := make([]string, 0, len(toolsRaw))
+	for _, toolRaw := range toolsRaw {
+		toolMap, ok := toolRaw.(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _ := toolMap["name"].(string)
+		toolNames = append(toolNames, name)
+	}
+	for _, required := range []string{
+		"kan.capture_state",
+		"kan.list_projects",
+		"kan.create_project",
+		"kan.update_project",
+	} {
+		if !slices.Contains(toolNames, required) {
+			t.Fatalf("tool list missing %q: %#v", required, toolNames)
+		}
+	}
+}
+
+// TestHandlerProjectToolCall verifies expanded project tool wiring returns structured project rows.
+func TestHandlerProjectToolCall(t *testing.T) {
+	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
+	capture := &stubProjectService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+		projects: []domain.Project{
+			{
+				ID:        "p1",
+				Slug:      "roadmap",
+				Name:      "Roadmap",
+				CreatedAt: now,
+				UpdatedAt: now,
+			},
+		},
+	}
+	handler, err := NewHandler(Config{}, capture, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3, "kan.list_projects", map[string]any{
+		"include_archived": true,
+	}))
+	structured := toolResultStructured(t, callResp.Result)
+	projectsRaw, ok := structured["projects"].([]any)
+	if !ok || len(projectsRaw) != 1 {
+		t.Fatalf("projects = %#v, want one row", structured["projects"])
+	}
+	if !capture.lastIncludeArchived {
+		t.Fatalf("include_archived = false, want true")
+	}
+}
+
 // TestHandlerCaptureStateToolCall verifies tool-call wiring returns structured capture data.
 func TestHandlerCaptureStateToolCall(t *testing.T) {
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
@@ -458,6 +585,16 @@ func TestToolResultFromErrorMapping(t *testing.T) {
 			name:       "nil error",
 			err:        nil,
 			wantPrefix: "unknown error",
+		},
+		{
+			name:       "bootstrap required",
+			err:        errors.Join(common.ErrBootstrapRequired, errors.New("no projects")),
+			wantPrefix: "bootstrap_required:",
+		},
+		{
+			name:       "guardrail violation",
+			err:        errors.Join(common.ErrGuardrailViolation, errors.New("lease mismatch")),
+			wantPrefix: "guardrail_failed:",
 		},
 		{
 			name:       "invalid capture request",

@@ -10,3 +10,4 @@ bin/
 .go-mod-cache/
 .go-build-cache/
 .kan/
+.codex/

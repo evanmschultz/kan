@@ -25,7 +25,7 @@ type Handler struct {
 	httpHandler http.Handler
 }
 
-// NewHandler builds one stateless MCP adapter with capture_state and optional attention tools.
+// NewHandler builds one stateless MCP adapter with capture_state, attention, and optional app-backed tools.
 func NewHandler(cfg Config, captureState common.CaptureStateReader, attention common.AttentionService) (*Handler, error) {
 	if captureState == nil {
 		return nil, fmt.Errorf("capture_state service is required")
@@ -41,6 +41,17 @@ func NewHandler(cfg Config, captureState common.CaptureStateReader, attention co
 	if attention != nil {
 		registerAttentionTools(mcpSrv, attention)
 	}
+	registerBootstrapTool(mcpSrv, pickBootstrapGuideReader(captureState, attention))
+	registerProjectTools(mcpSrv, pickProjectService(captureState, attention))
+	registerTaskTools(
+		mcpSrv,
+		pickTaskService(captureState, attention),
+		pickSearchService(captureState, attention),
+		pickChangeFeedService(captureState, attention),
+	)
+	registerKindTools(mcpSrv, pickKindCatalogService(captureState, attention))
+	registerCapabilityLeaseTools(mcpSrv, pickCapabilityLeaseService(captureState, attention))
+	registerCommentTools(mcpSrv, pickCommentService(captureState, attention))
 
 	streamable := mcpserver.NewStreamableHTTPServer(
 		mcpSrv,
@@ -237,6 +248,10 @@ func toolResultFromError(err error) *mcp.CallToolResult {
 	switch {
 	case err == nil:
 		return mcp.NewToolResultError("unknown error")
+	case errors.Is(err, common.ErrBootstrapRequired):
+		return mcp.NewToolResultError("bootstrap_required: " + err.Error())
+	case errors.Is(err, common.ErrGuardrailViolation):
+		return mcp.NewToolResultError("guardrail_failed: " + err.Error())
 	case errors.Is(err, common.ErrInvalidCaptureStateRequest), errors.Is(err, common.ErrUnsupportedScope):
 		return mcp.NewToolResultError("invalid_request: " + err.Error())
 	case errors.Is(err, common.ErrNotFound):
@@ -246,4 +261,92 @@ func toolResultFromError(err error) *mcp.CallToolResult {
 	default:
 		return mcp.NewToolResultError("internal_error: " + err.Error())
 	}
+}
+
+// pickBootstrapGuideReader resolves one bootstrap-guide provider from available services.
+func pickBootstrapGuideReader(captureState common.CaptureStateReader, attention common.AttentionService) common.BootstrapGuideReader {
+	if svc, ok := captureState.(common.BootstrapGuideReader); ok {
+		return svc
+	}
+	if svc, ok := attention.(common.BootstrapGuideReader); ok {
+		return svc
+	}
+	return nil
+}
+
+// pickProjectService resolves one project-service provider from available services.
+func pickProjectService(captureState common.CaptureStateReader, attention common.AttentionService) common.ProjectService {
+	if svc, ok := captureState.(common.ProjectService); ok {
+		return svc
+	}
+	if svc, ok := attention.(common.ProjectService); ok {
+		return svc
+	}
+	return nil
+}
+
+// pickTaskService resolves one task-service provider from available services.
+func pickTaskService(captureState common.CaptureStateReader, attention common.AttentionService) common.TaskService {
+	if svc, ok := captureState.(common.TaskService); ok {
+		return svc
+	}
+	if svc, ok := attention.(common.TaskService); ok {
+		return svc
+	}
+	return nil
+}
+
+// pickSearchService resolves one search-service provider from available services.
+func pickSearchService(captureState common.CaptureStateReader, attention common.AttentionService) common.SearchService {
+	if svc, ok := captureState.(common.SearchService); ok {
+		return svc
+	}
+	if svc, ok := attention.(common.SearchService); ok {
+		return svc
+	}
+	return nil
+}
+
+// pickChangeFeedService resolves one change-feed provider from available services.
+func pickChangeFeedService(captureState common.CaptureStateReader, attention common.AttentionService) common.ChangeFeedService {
+	if svc, ok := captureState.(common.ChangeFeedService); ok {
+		return svc
+	}
+	if svc, ok := attention.(common.ChangeFeedService); ok {
+		return svc
+	}
+	return nil
+}
+
+// pickKindCatalogService resolves one kind-catalog provider from available services.
+func pickKindCatalogService(captureState common.CaptureStateReader, attention common.AttentionService) common.KindCatalogService {
+	if svc, ok := captureState.(common.KindCatalogService); ok {
+		return svc
+	}
+	if svc, ok := attention.(common.KindCatalogService); ok {
+		return svc
+	}
+	return nil
+}
+
+// pickCapabilityLeaseService resolves one lease-service provider from available services.
+func pickCapabilityLeaseService(captureState common.CaptureStateReader, attention common.AttentionService) common.CapabilityLeaseService {
+	if svc, ok := captureState.(common.CapabilityLeaseService); ok {
+		return svc
+	}
+	if svc, ok := attention.(common.CapabilityLeaseService); ok {
+		return svc
+	}
+	return nil
+}
+
+// pickCommentService resolves one comment-service provider from available services.
+func pickCommentService(captureState common.CaptureStateReader, attention common.AttentionService) common.CommentService {
+	if svc, ok := captureState.(common.CommentService); ok {
+		return svc
+	}
+	if svc, ok := attention.(common.CommentService); ok {
+		return svc
+	}
+	return nil
 }

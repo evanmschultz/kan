@@ -223,6 +223,17 @@ func writeErrorFrom(w http.ResponseWriter, err error) {
 			Code:    "internal_error",
 			Message: "unknown error",
 		})
+	case errors.Is(err, common.ErrBootstrapRequired):
+		writeJSONError(w, http.StatusConflict, APIError{
+			Code:    "bootstrap_required",
+			Message: err.Error(),
+			Hint:    "Create the first project before calling capture_state.",
+		})
+	case errors.Is(err, common.ErrGuardrailViolation):
+		writeJSONError(w, http.StatusConflict, APIError{
+			Code:    "guardrail_failed",
+			Message: err.Error(),
+		})
 	case errors.Is(err, common.ErrNotFound):
 		writeJSONError(w, http.StatusNotFound, APIError{
 			Code:    "not_found",
