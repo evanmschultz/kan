@@ -1451,3 +1451,168 @@ Status:
   - horizontal symmetry fixed for board layout with/without notices panel.
   - controlling constants/functions now map directly to Lip Gloss v2 width semantics.
   - test and gate evidence complete.
+
+## Execution Log (2026-02-27: Header Simplification - Path-Only Project Context)
+
+Objective:
+- Apply agreed TUI header cleanup without changing interaction behavior:
+  - remove mode indicator token (for example `[normal]`) from main header,
+  - remove duplicated project identity from header/top tab row,
+  - keep project context in `path:` row,
+  - keep all existing key flows/modals intact.
+
+Context7 checkpoints:
+- Context7 consulted before edits (`/charmbracelet/bubbletea`) to confirm the change is view-only and should remain isolated to `View()` rendering.
+- After failing tests (golden diffs), Context7 consulted again before follow-up edits.
+
+File edits:
+- `internal/tui/model.go`
+  - header now renders only `kan` (project name and mode badge removed).
+  - removed top project tabs row from the composed sections.
+  - footer info line no longer prefixes `project: ...`; project identity remains in `path: ...`.
+  - updated add/edit-project help copy from "header/tabs/picker" to "path context/notices/picker" to reflect current UI.
+- `internal/tui/testdata/TestModelGoldenBoardOutput.golden`
+- `internal/tui/testdata/TestModelGoldenHelpExpandedOutput.golden`
+  - refreshed snapshots for the new header/footer text layout.
+
+Command/test evidence:
+- `just fmt` -> pass.
+- `just test-pkg ./internal/tui` -> fail (goldens only, expected from header/footer text changes).
+- Context7 re-check executed after failure.
+- `just test-golden-update` -> pass.
+- `just test-pkg ./internal/tui` -> pass.
+- `just check` -> pass.
+- `just ci` -> fail once (`internal/tui` coverage 69.9%).
+- Context7 consulted again after failed CI test gate.
+- added targeted helper coverage test for project-tab rendering path (`TestRenderProjectTabsAndLabels`).
+- `just fmt` -> pass.
+- `just test-pkg ./internal/tui` -> pass.
+- `just ci` -> pass (`internal/tui` coverage 70.0%).
+
+Status:
+- Completed and ready for user visual verification before commit.
+
+## Execution Log (2026-02-27: Path-Gap Placement + Header Design Playground Expansion)
+
+Objective:
+- Refine board spacing so the path-to-board gap is moved above the path row.
+- Enforce path-only header information in main TUI (no extra header status tokens).
+- Add a runnable header design playground (`cmd/headerlab`) with ten path-only concepts and promote two new top variants inspired by pixel-block and diagonal-chip motifs.
+
+Context7 checkpoints:
+- Context7 consulted before edits for Bubble Tea/Lip Gloss view composition and multiline join/styling patterns.
+- After failed TUI tests, Context7 consulted again before assertion updates.
+- Additional Context7 consult executed before block/pixel logo adaptation.
+
+File edits:
+- `internal/tui/model.go`
+  - moved the single blank spacer from below `path:` to above `path:` in the composed sections.
+  - simplified header content to logo-only (`kan`) by removing appended status tokens (search/scope/group/focus/attention/selection) from the header line.
+- `internal/tui/model_test.go`
+  - updated attention-marker assertion to validate path-only header behavior (no `attention: N` token in header) while preserving footer/summary expectations.
+- `internal/tui/testdata/TestModelGoldenBoardOutput.golden`
+- `internal/tui/testdata/TestModelGoldenHelpExpandedOutput.golden`
+  - refreshed snapshots for path-gap placement and header simplification.
+- `cmd/headerlab/main.go` (new)
+  - added standalone header playground command with 10 variants:
+    - top two variants adapted to KAN-specific visual direction:
+      - `KAN Pixel Blocks` (box/pixel-cell logo mosaic),
+      - `KAN Stair-Step Chips` (diagonal chip motif).
+  - ensured all variants are path-only context (no operational/status metadata in header body).
+  - retained configurable preview width via `--width`.
+
+Command/test evidence:
+- `just fmt` -> pass.
+- `just test-pkg ./internal/tui` -> fail (goldens + one header expectation after intentional view simplification).
+- Context7 consulted after failure.
+- `just test-golden-update` -> pass.
+- `just test-pkg ./internal/tui` -> pass.
+- `go run ./cmd/headerlab --width 108` -> initial compile failure (`lipgloss.Color ... is not a type`), fixed by switching palette fields to `image/color.Color`.
+- `go run ./cmd/headerlab --width 108` -> pass (verified rendering output).
+- subsequent design refinement (`KAN Pixel Blocks` / `KAN Stair-Step Chips`) verified with:
+  - `go run ./cmd/headerlab --width 108` -> pass.
+- `just check` -> pass.
+- `just ci` -> pass (`internal/tui` coverage 70.0%).
+
+Status:
+- Completed and ready for user visual review/selection of preferred header direction.
+
+Follow-up refinement (same date):
+- User-requested variant merge:
+  - combined headerlab variants `4` + `6` into one merged design with a true gradient color rail.
+  - updated variant naming:
+    - `04. Gradient Rail Box` (merged boxed wordmark + gradient left rail),
+    - `06. Inset Label Plate` (rebalanced list to avoid redundant non-merged rail entry).
+  - updated top-design naming to kan-specific motifs (`KAN Pixel Blocks`, `KAN Stair-Step Chips`).
+- Verification:
+  - `go run ./cmd/headerlab --width 108` -> pass (visual output verified).
+  - `just check` -> pass.
+  - `just ci` -> pass.
+
+Additional refinement (same date, follow-up request):
+- Updated `04. Gradient Rail Box` semantics to match requested composition:
+  - gradient now runs left-to-right across the frame bars around the boxed `KAN` mark,
+  - added gray divider line directly below the `path` line in this variant.
+- Updated helper implementation in `cmd/headerlab/main.go`:
+  - replaced vertical rail helper with `gradientBar` horizontal helper for left-to-right bar rendering.
+- Verification:
+  - `go run ./cmd/headerlab --width 108` -> pass.
+  - `just check` -> pass.
+  - `just ci` -> pass.
+
+Additional refinement (same date, smooth gradient correction):
+- Context7 consulted before edit (`/charmbracelet/bubbles`, `/charmbracelet/lipgloss`) for gradient/blend behavior guidance.
+- Updated `cmd/headerlab/main.go` variant `04. Gradient Rail Box`:
+  - expanded gradient stops and switched to full-width glyph bar rendering (`█`) for smooth left-to-right interpolation.
+  - preserved boxed `KAN` mark with solid side frame bars.
+  - kept gray divider directly below `path`.
+- Updated shared helper:
+  - `gradientBar(width, ramp, glyph)` now supports explicit glyph rendering with per-column RGB interpolation.
+- Verification:
+  - `just fmt` -> pass.
+- `go run ./cmd/headerlab --width 108` -> pass (requires escalated run due sandboxed Go build cache).
+- `just check` -> pass.
+- `just ci` -> pass.
+
+Additional refinement (same date, selected-header application):
+- User selected concept `03` and requested:
+  - boxed uppercase `KAN`,
+  - left-justified placement,
+  - and box border color matching the divider line color in the main TUI header.
+- Context7 consulted before edits (`/charmbracelet/lipgloss`) for border/block composition behavior.
+- `cmd/headerlab/main.go` updated:
+  - variant `03` now renders boxed uppercase `KAN` in left-aligned position with divider + path.
+- `internal/tui/model.go` updated:
+  - board header now renders boxed uppercase `KAN` via shared `headerMarkStyle()`.
+  - divider line added below logo and shares the same `dim` color token as the box border.
+  - path row remains the only informational row.
+  - board top/height math now derives from the boxed-header footprint (`boardHeaderLinesBeforeBoard`, `boardTop`) to preserve cursor/mouse alignment.
+- Verification:
+  - `just fmt` -> pass.
+  - `go run ./cmd/headerlab --width 108` -> pass.
+  - `just test-pkg ./internal/tui` -> fail first (expected golden snapshots).
+  - Context7 re-check executed after failure before next edits.
+  - `just test-golden-update` -> pass.
+  - `just test-pkg ./internal/tui` -> pass.
+- `just check` -> pass.
+- `just ci` -> pass (`internal/tui` coverage 70.0%).
+
+Additional refinement (same date, purple accent + path-gap inversion):
+- User-requested visual adjustment in board header:
+  - set boxed `KAN` border and divider line to purple `212`,
+  - move `path:` directly under divider,
+  - keep divider-to-panels vertical budget unchanged by placing the spacer below `path` instead of above it.
+- Context7 consulted before edits (`/charmbracelet/lipgloss`) for border foreground and multiline render ordering.
+- `internal/tui/model.go` updated:
+  - introduced `headerAccent := lipgloss.Color("212")` for header border/divider.
+  - box border now uses `BorderForeground(headerAccent)`.
+  - divider now uses a dedicated style with `Foreground(headerAccent)`.
+  - section ordering changed to `{header, divider, path, spacer, mainArea}`.
+- Verification:
+  - `just fmt` -> pass.
+  - `just test-pkg ./internal/tui` -> fail first (expected golden snapshot reordering from spacer move).
+  - Context7 re-check executed after failure before next update action.
+  - `just test-golden-update` -> pass.
+  - `just test-pkg ./internal/tui` -> pass.
+  - `just check` -> pass.
+  - `just ci` -> pass (`internal/tui` coverage 70.1%).

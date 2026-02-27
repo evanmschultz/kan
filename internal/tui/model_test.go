@@ -3223,6 +3223,34 @@ func TestHelpersCoverage(t *testing.T) {
 	}
 }
 
+// TestRenderProjectTabsAndLabels verifies project-tab rendering and label formatting helpers.
+func TestRenderProjectTabsAndLabels(t *testing.T) {
+	now := time.Date(2026, 2, 27, 12, 0, 0, 0, time.UTC)
+	inbox, _ := domain.NewProject("p1", "Inbox", "", now)
+	roadmap, _ := domain.NewProject("p2", "Roadmap", "", now)
+	roadmap.Metadata.Icon = "+"
+	archivedAt := now
+	roadmap.ArchivedAt = &archivedAt
+
+	m := Model{
+		projects:        []domain.Project{inbox},
+		selectedProject: 0,
+	}
+	if got := stripANSI(m.renderProjectTabs(lipgloss.Color("62"), lipgloss.Color("239"))); got != "" {
+		t.Fatalf("expected no tabs for single project, got %q", got)
+	}
+
+	m.projects = []domain.Project{inbox, roadmap}
+	m.selectedProject = 1
+	got := stripANSI(m.renderProjectTabs(lipgloss.Color("62"), lipgloss.Color("239")))
+	if !strings.Contains(got, "Inbox") {
+		t.Fatalf("expected inactive project tab label, got %q", got)
+	}
+	if !strings.Contains(got, "[+ Roadmap (archived)]") {
+		t.Fatalf("expected selected archived tab label, got %q", got)
+	}
+}
+
 // TestNoticesPanelSpacingBudget verifies board/panel width budgeting matches measured rendered widths.
 func TestNoticesPanelSpacingBudget(t *testing.T) {
 	m := Model{
@@ -5672,8 +5700,8 @@ func TestModelViewShowsAttentionMarkersAndSummary(t *testing.T) {
 		[]domain.Task{doneTask, blockedTask, waitingTask},
 	)))
 	rendered := stripANSI(fmt.Sprint(m.View().Content))
-	if !strings.Contains(rendered, "attention: 3") {
-		t.Fatalf("expected header attention count, got\n%s", rendered)
+	if strings.Contains(rendered, "attention: 3") {
+		t.Fatalf("expected header to stay path-only (no attention token), got\n%s", rendered)
 	}
 	if !strings.Contains(rendered, "attention scope: 2 items • unresolved 3 • blocked 1") {
 		t.Fatalf("expected attention summary line, got\n%s", rendered)

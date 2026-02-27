@@ -110,6 +110,8 @@ const (
 	activityLogMaxItems   = 200
 	activityLogViewWindow = 14
 	defaultHighlightColor = "212"
+	// headerMarkText defines the boxed brand wordmark shown in the board header.
+	headerMarkText = "KAN"
 	// tuiOuterHorizontalPadding keeps a small symmetric outer gutter around the whole TUI.
 	tuiOuterHorizontalPadding = 1
 	// boardColumnGapWidth is the horizontal spacing between adjacent board columns.
@@ -1037,42 +1039,20 @@ func (m Model) View() tea.View {
 	muted := lipgloss.Color("241")
 	dim := lipgloss.Color("239")
 
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("252"))
 	helpStyle := lipgloss.NewStyle().Foreground(muted)
 	statusStyle := lipgloss.NewStyle().Foreground(dim)
 	taskByID := m.tasksByID()
 	attentionItems, attentionTotal, attentionBlocked, attentionTop := m.scopeAttentionSummary(taskByID)
 
-	header := titleStyle.Render("kan") + "  " + projectDisplayName(project)
-	header += statusStyle.Render("  [" + m.modeLabel() + "]")
-	if m.searchApplied && m.searchQuery != "" {
-		header += statusStyle.Render("  search: " + m.searchQuery)
-	}
-	if m.searchApplied && m.searchCrossProject {
-		header += statusStyle.Render("  scope: all-projects")
-	}
-	if m.searchApplied {
-		if levelsSummary := m.searchLevelsSummary(); levelsSummary != "" {
-			header += statusStyle.Render("  levels: " + levelsSummary)
-		}
-	}
-	if m.showArchived {
-		header += statusStyle.Render("  showing archived")
-	}
-	if m.boardGroupBy != "none" {
-		header += statusStyle.Render("  grouped: " + m.boardGroupBy)
-	}
-	if breadcrumb := m.projectionBreadcrumb(); breadcrumb != "" {
-		header += statusStyle.Render("  focus: " + truncate(breadcrumb, 48))
-	}
-	if attentionTotal > 0 {
-		header += statusStyle.Render(fmt.Sprintf("  attention: %d", attentionTotal))
-	}
-	if count := len(m.selectedTaskIDs); count > 0 {
-		header += statusStyle.Render(fmt.Sprintf("  selected: %d", count))
-	}
-	tabs := m.renderProjectTabs(accent, dim)
 	layoutWidth := max(0, m.width-2*tuiOuterHorizontalPadding)
+	headerAccent := lipgloss.Color("62")
+	header := headerMarkStyle().
+		BorderForeground(headerAccent).
+		Foreground(lipgloss.Color("252")).
+		Render(headerMarkText)
+	headerRule := lipgloss.NewStyle().
+		Foreground(headerAccent).
+		Render(strings.Repeat("─", max(8, layoutWidth)))
 	noticesWidth := m.noticesPanelWidth(layoutWidth)
 	boardWidth := m.boardWidthFor(layoutWidth)
 
@@ -1287,14 +1267,11 @@ func (m Model) View() tea.View {
 	}
 	infoLine := m.renderInfoLine(project, muted)
 
-	sections := []string{header}
-	if tabs != "" {
-		sections = append(sections, tabs)
-	}
+	sections := []string{header, headerRule}
 	if path, _ := m.projectionPathWithProject(project.Name); path != "" {
-		sections = append(sections, statusStyle.Render("path: "+truncate(path, max(24, m.width-6))))
+		sections = append(sections, statusStyle.Render("path: "+truncate(path, max(24, m.width-6))), "")
 	}
-	sections = append(sections, "", mainArea)
+	sections = append(sections, mainArea)
 	if infoLine != "" {
 		sections = append(sections, infoLine)
 	}
@@ -8721,13 +8698,7 @@ func (m Model) renderOverviewPanel(
 
 // renderInfoLine renders output for the current model state.
 func (m Model) renderInfoLine(project domain.Project, muted color.Color) string {
-	parts := []string{
-		fmt.Sprintf("project: %s", projectDisplayName(project)),
-		fmt.Sprintf("tasks: %d", len(m.tasks)),
-	}
-	if project.ArchivedAt != nil {
-		parts = append(parts, "project archived")
-	}
+	parts := []string{fmt.Sprintf("tasks: %d", len(m.tasks))}
 	task, ok := m.selectedTaskInCurrentColumn()
 	if !ok {
 		parts = append(parts, "selected: none")
@@ -8859,13 +8830,13 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 	case modeAddProject:
 		return "new project", []string{
 			"tab/shift+tab moves fields; enter saves; esc cancels",
-			"icon field is shown in header, tabs, and picker and supports emoji",
+			"icon field is shown in path context, notices, and picker and supports emoji",
 			"root_path field: r opens directory picker",
 		}
 	case modeEditProject:
 		return "edit project", []string{
 			"tab/shift+tab moves fields; enter saves; esc cancels",
-			"icon field is shown in header, tabs, and picker and supports emoji",
+			"icon field is shown in path context, notices, and picker and supports emoji",
 			"root_path field: r opens directory picker",
 		}
 	case modeSearchResults:
@@ -10726,11 +10697,8 @@ func (m Model) boardWidthFor(totalWidth int) int {
 
 // columnHeight returns column height.
 func (m Model) columnHeight() int {
-	// Header rows: title + path + spacer, plus optional project tabs row.
-	headerLines := 4
-	if len(m.projects) > 1 {
-		headerLines++
-	}
+	// Header rows reserve boxed mark + divider + path (+ 1-based board origin offset).
+	headerLines := m.boardTop()
 	footerLines := 4
 	h := m.height - headerLines - footerLines
 	if h < 14 {
@@ -10739,15 +10707,24 @@ func (m Model) columnHeight() int {
 	return h
 }
 
+// headerMarkStyle returns the boxed brand style used at the top of board view.
+func headerMarkStyle() lipgloss.Style {
+	return lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder()).
+		Padding(0, 1).
+		Bold(true)
+}
+
+// boardHeaderLinesBeforeBoard returns the count of rows rendered before the board begins.
+func boardHeaderLinesBeforeBoard() int {
+	// Boxed mark + divider + spacer + path line.
+	return lipgloss.Height(headerMarkStyle().Render(headerMarkText)) + 3
+}
+
 // boardTop handles board top.
 func (m Model) boardTop() int {
-	// mouse coordinates from tea are 1-based
-	// title + optional tabs + path + spacer
-	top := 4
-	if len(m.projects) > 1 {
-		top++
-	}
-	return top
+	// Mouse coordinates from tea are 1-based; board starts after all header rows.
+	return boardHeaderLinesBeforeBoard() + 1
 }
 
 // clamp clamps the requested operation.
