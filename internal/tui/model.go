@@ -110,6 +110,18 @@ const (
 	activityLogMaxItems   = 200
 	activityLogViewWindow = 14
 	defaultHighlightColor = "212"
+	// tuiOuterHorizontalPadding keeps a small symmetric outer gutter around the whole TUI.
+	tuiOuterHorizontalPadding = 1
+	// boardColumnGapWidth is the horizontal spacing between adjacent board columns.
+	boardColumnGapWidth = 1
+	// noticesPanelGapWidth keeps the Done->Notices gap aligned with the outer gutter.
+	noticesPanelGapWidth = tuiOuterHorizontalPadding
+	// minimumColumnWidth is the minimum target style width for board columns.
+	minimumColumnWidth = 24
+	// minimumNoticesPanelWidth is the minimum target style width for the notices panel.
+	minimumNoticesPanelWidth = 24
+	// maximumNoticesPanelWidth caps notices panel growth to preserve board readability.
+	maximumNoticesPanelWidth = 38
 )
 
 // defaultLabelSuggestionsSeed provides baseline label suggestions before user/project customization exists.
@@ -977,16 +989,29 @@ func (m Model) View() tea.View {
 			sections = append(sections, "", statusStyle.Render(m.status))
 		}
 		content := strings.Join(sections, "\n")
+		innerWidth := max(0, m.width-2*tuiOuterHorizontalPadding)
+		if innerWidth > 0 {
+			content = lipgloss.NewStyle().
+				Width(innerWidth).
+				PaddingLeft(tuiOuterHorizontalPadding).
+				PaddingRight(tuiOuterHorizontalPadding).
+				Render(content)
+		}
 		helpBubble := m.help
 		helpBubble.ShowAll = false
-		helpBubble.SetWidth(max(0, m.width-2))
+		helpBubble.SetWidth(innerWidth)
 		helpLine := lipgloss.NewStyle().
 			Foreground(muted).
 			BorderTop(true).
 			BorderForeground(dim).
-			Padding(0, 1).
-			Width(max(0, m.width)).
+			Width(innerWidth).
 			Render(helpBubble.View(m.keys))
+		if tuiOuterHorizontalPadding > 0 {
+			helpLine = lipgloss.NewStyle().
+				PaddingLeft(tuiOuterHorizontalPadding).
+				PaddingRight(tuiOuterHorizontalPadding).
+				Render(helpLine)
+		}
 		contentHeight := lipgloss.Height(content)
 		if m.height > 0 {
 			helpHeight := lipgloss.Height(helpLine)
@@ -1047,179 +1072,218 @@ func (m Model) View() tea.View {
 		header += statusStyle.Render(fmt.Sprintf("  selected: %d", count))
 	}
 	tabs := m.renderProjectTabs(accent, dim)
-	noticesWidth := m.noticesPanelWidth(m.width)
-	boardWidth := m.boardWidthFor(m.width)
+	layoutWidth := max(0, m.width-2*tuiOuterHorizontalPadding)
+	noticesWidth := m.noticesPanelWidth(layoutWidth)
+	boardWidth := m.boardWidthFor(layoutWidth)
 
-	columnViews := make([]string, 0, len(m.columns))
-	colWidth := m.columnWidthFor(boardWidth)
-	colHeight := m.columnHeight()
-	baseColStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(dim).
-		Padding(1, 2).
-		MarginRight(1).
-		Width(colWidth)
-	selColStyle := baseColStyle.Copy().BorderForeground(accent)
-	normColStyle := baseColStyle.Copy()
-	colTitle := lipgloss.NewStyle().Bold(true).Foreground(accent)
-	archivedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
-	highlight := m.selectedTaskHighlightColor()
-	selectedTaskStyle := lipgloss.NewStyle().Foreground(highlight).Bold(true)
-	selectedMultiTaskStyle := lipgloss.NewStyle().Foreground(highlight).Bold(true).Underline(true)
-	// Multi-select should be indicated by marker stars only; avoid extra row background fill.
-	multiSelectedTaskStyle := lipgloss.NewStyle()
-	itemSubStyle := lipgloss.NewStyle().Foreground(muted)
-	groupStyle := lipgloss.NewStyle().Bold(true).Foreground(muted)
-	warningStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("203"))
-
-	for colIdx, column := range m.columns {
-		colTasks := m.boardTasksForColumn(column.ID)
-		parentByID := map[string]string{}
-		for _, task := range colTasks {
-			parentByID[task.ID] = task.ParentID
-		}
-		activeCount := 0
-		for _, task := range colTasks {
-			if task.ArchivedAt == nil {
-				activeCount++
+	renderMainArea := func(boardWidth, noticesWidth int) string {
+		columnViews := make([]string, 0, len(m.columns))
+		colWidth := m.columnWidthFor(boardWidth)
+		extraBoardWidthPerColumn := 0
+		extraBoardWidthRemainder := 0
+		if len(m.columns) > 0 {
+			interColumnGaps := max(0, len(m.columns)-1) * boardColumnGapWidth
+			usedBoardWidth := len(m.columns)*renderedBoardColumnWidth(colWidth) + interColumnGaps
+			if extra := max(0, boardWidth-usedBoardWidth); extra > 0 {
+				extraBoardWidthPerColumn = extra / len(m.columns)
+				extraBoardWidthRemainder = extra % len(m.columns)
 			}
 		}
+		colHeight := m.columnHeight()
+		baseColStyle := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(dim).
+			Padding(1, 2)
+		selColStyle := baseColStyle.Copy().BorderForeground(accent)
+		normColStyle := baseColStyle.Copy()
+		colTitle := lipgloss.NewStyle().Bold(true).Foreground(accent)
+		archivedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
+		highlight := m.selectedTaskHighlightColor()
+		selectedTaskStyle := lipgloss.NewStyle().Foreground(highlight).Bold(true)
+		selectedMultiTaskStyle := lipgloss.NewStyle().Foreground(highlight).Bold(true).Underline(true)
+		// Multi-select should be indicated by marker stars only; avoid extra row background fill.
+		multiSelectedTaskStyle := lipgloss.NewStyle()
+		itemSubStyle := lipgloss.NewStyle().Foreground(muted)
+		groupStyle := lipgloss.NewStyle().Bold(true).Foreground(muted)
+		warningStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("203"))
 
-		colHeader := fmt.Sprintf("%s (%d)", column.Name, len(colTasks))
-		if column.WIPLimit > 0 {
-			colHeader = fmt.Sprintf("%s (%d/%d)", column.Name, activeCount, column.WIPLimit)
-		}
-		headerLines := []string{colTitle.Render(colHeader)}
-		if m.showWIPWarnings && column.WIPLimit > 0 && activeCount > column.WIPLimit {
-			headerLines = append(headerLines, warningStyle.Render(fmt.Sprintf("WIP limit exceeded: %d/%d", activeCount, column.WIPLimit)))
-		}
+		for colIdx, column := range m.columns {
+			colRenderWidth := colWidth + extraBoardWidthPerColumn
+			if colIdx < extraBoardWidthRemainder {
+				colRenderWidth++
+			}
+			colTasks := m.boardTasksForColumn(column.ID)
+			parentByID := map[string]string{}
+			for _, task := range colTasks {
+				parentByID[task.ID] = task.ParentID
+			}
+			activeCount := 0
+			for _, task := range colTasks {
+				if task.ArchivedAt == nil {
+					activeCount++
+				}
+			}
 
-		taskLines := make([]string, 0, max(1, len(colTasks)*3))
-		selectedStart := -1
-		selectedEnd := -1
+			colHeader := fmt.Sprintf("%s (%d)", column.Name, len(colTasks))
+			if column.WIPLimit > 0 {
+				colHeader = fmt.Sprintf("%s (%d/%d)", column.Name, activeCount, column.WIPLimit)
+			}
+			headerLines := []string{colTitle.Render(colHeader)}
+			if m.showWIPWarnings && column.WIPLimit > 0 && activeCount > column.WIPLimit {
+				headerLines = append(headerLines, warningStyle.Render(fmt.Sprintf("WIP limit exceeded: %d/%d", activeCount, column.WIPLimit)))
+			}
 
-		if len(colTasks) == 0 {
-			taskLines = append(taskLines, archivedStyle.Render("(empty)"))
-		} else {
-			prevGroup := ""
-			for taskIdx, task := range colTasks {
-				if m.boardGroupBy != "none" {
-					groupLabel := m.groupLabelForTask(task)
-					if taskIdx == 0 || groupLabel != prevGroup {
-						if taskIdx > 0 {
-							taskLines = append(taskLines, "")
+			taskLines := make([]string, 0, max(1, len(colTasks)*3))
+			selectedStart := -1
+			selectedEnd := -1
+
+			if len(colTasks) == 0 {
+				taskLines = append(taskLines, archivedStyle.Render("(empty)"))
+			} else {
+				prevGroup := ""
+				for taskIdx, task := range colTasks {
+					if m.boardGroupBy != "none" {
+						groupLabel := m.groupLabelForTask(task)
+						if taskIdx == 0 || groupLabel != prevGroup {
+							if taskIdx > 0 {
+								taskLines = append(taskLines, "")
+							}
+							taskLines = append(taskLines, groupStyle.Render(groupLabel))
+							prevGroup = groupLabel
 						}
-						taskLines = append(taskLines, groupStyle.Render(groupLabel))
-						prevGroup = groupLabel
 					}
-				}
-				selected := colIdx == m.selectedColumn && taskIdx == m.selectedTask
-				multiSelected := m.isTaskSelected(task.ID)
+					selected := colIdx == m.selectedColumn && taskIdx == m.selectedTask
+					multiSelected := m.isTaskSelected(task.ID)
 
-				prefix := "   "
-				switch {
-				case selected && multiSelected:
-					prefix = "│* "
-				case selected:
-					prefix = "│  "
-				case multiSelected:
-					prefix = " * "
-				}
-				depth := taskDepth(task.ID, parentByID, 0)
-				indent := strings.Repeat("  ", min(depth, 4))
-				attentionCount := m.taskAttentionCount(task, taskByID)
-				attentionSuffix := ""
-				if attentionCount > 0 {
-					attentionSuffix = fmt.Sprintf(" !%d", attentionCount)
-				}
-				titleWidth := max(1, colWidth-(10+2*min(depth, 4))-utf8.RuneCountInString(attentionSuffix))
-				title := prefix + indent + truncate(task.Title, titleWidth) + attentionSuffix
-				sub := m.taskListSecondary(task)
-				if sub != "" {
-					sub = indent + truncate(sub, max(1, colWidth-(10+2*min(depth, 4))))
-				}
-				if task.ArchivedAt != nil {
-					title = archivedStyle.Render(title)
-					if sub != "" {
-						sub = archivedStyle.Render(sub)
-					}
-				} else {
+					prefix := "   "
 					switch {
 					case selected && multiSelected:
-						title = selectedMultiTaskStyle.Render(title)
+						prefix = "│* "
 					case selected:
-						title = selectedTaskStyle.Render(title)
+						prefix = "│  "
 					case multiSelected:
-						title = multiSelectedTaskStyle.Render(title)
+						prefix = " * "
+					}
+					depth := taskDepth(task.ID, parentByID, 0)
+					indent := strings.Repeat("  ", min(depth, 4))
+					attentionCount := m.taskAttentionCount(task, taskByID)
+					attentionSuffix := ""
+					if attentionCount > 0 {
+						attentionSuffix = fmt.Sprintf(" !%d", attentionCount)
+					}
+					titleWidth := max(1, colRenderWidth-(10+2*min(depth, 4))-utf8.RuneCountInString(attentionSuffix))
+					title := prefix + indent + truncate(task.Title, titleWidth) + attentionSuffix
+					sub := m.taskListSecondary(task)
+					if sub != "" {
+						sub = indent + truncate(sub, max(1, colRenderWidth-(10+2*min(depth, 4))))
+					}
+					if task.ArchivedAt != nil {
+						title = archivedStyle.Render(title)
+						if sub != "" {
+							sub = archivedStyle.Render(sub)
+						}
+					} else {
+						switch {
+						case selected && multiSelected:
+							title = selectedMultiTaskStyle.Render(title)
+						case selected:
+							title = selectedTaskStyle.Render(title)
+						case multiSelected:
+							title = multiSelectedTaskStyle.Render(title)
+						}
+					}
+
+					rowStart := len(taskLines)
+					taskLines = append(taskLines, title)
+					if sub != "" {
+						// Keep selection/focus markers on the title row only to avoid duplicate stars/cursor bars.
+						subPrefix := "   "
+						taskLines = append(taskLines, subPrefix+itemSubStyle.Render(sub))
+					}
+					if taskIdx < len(colTasks)-1 {
+						taskLines = append(taskLines, "")
+					}
+					if selected {
+						selectedStart = rowStart
+						selectedEnd = len(taskLines) - 1
 					}
 				}
+			}
 
-				rowStart := len(taskLines)
-				taskLines = append(taskLines, title)
-				if sub != "" {
-					// Keep selection/focus markers on the title row only to avoid duplicate stars/cursor bars.
-					subPrefix := "   "
-					taskLines = append(taskLines, subPrefix+itemSubStyle.Render(sub))
+			innerHeight := max(1, colHeight-4)
+			taskWindowHeight := max(1, innerHeight-len(headerLines))
+			scrollTop := 0
+			if colIdx == m.selectedColumn && selectedStart >= 0 {
+				if selectedEnd >= scrollTop+taskWindowHeight {
+					scrollTop = selectedEnd - taskWindowHeight + 1
 				}
-				if taskIdx < len(colTasks)-1 {
-					taskLines = append(taskLines, "")
-				}
-				if selected {
-					selectedStart = rowStart
-					selectedEnd = len(taskLines) - 1
+				if selectedStart < scrollTop {
+					scrollTop = selectedStart
 				}
 			}
+			maxScrollTop := max(0, len(taskLines)-taskWindowHeight)
+			scrollTop = clamp(scrollTop, 0, maxScrollTop)
+			if len(taskLines) > taskWindowHeight {
+				taskLines = taskLines[scrollTop : scrollTop+taskWindowHeight]
+			}
+			if len(taskLines) < taskWindowHeight {
+				taskLines = append(taskLines, make([]string, taskWindowHeight-len(taskLines))...)
+			}
+
+			lines := append(append([]string{}, headerLines...), taskLines...)
+			content := fitLines(strings.Join(lines, "\n"), innerHeight)
+			colStyle := normColStyle.Copy().Width(colRenderWidth)
+			if colIdx == m.selectedColumn {
+				colStyle = selColStyle.Copy().Width(colRenderWidth)
+			}
+			// Keep gaps only between columns; avoid trailing right gap after the last column.
+			if colIdx < len(m.columns)-1 && boardColumnGapWidth > 0 {
+				colStyle = colStyle.Copy().MarginRight(boardColumnGapWidth)
+			}
+			columnViews = append(columnViews, colStyle.Render(content))
 		}
 
-		innerHeight := max(1, colHeight-4)
-		taskWindowHeight := max(1, innerHeight-len(headerLines))
-		scrollTop := 0
-		if colIdx == m.selectedColumn && selectedStart >= 0 {
-			if selectedEnd >= scrollTop+taskWindowHeight {
-				scrollTop = selectedEnd - taskWindowHeight + 1
+		body := lipgloss.JoinHorizontal(lipgloss.Top, columnViews...)
+		mainArea := body
+		if noticesWidth > 0 {
+			overviewPanel := m.renderOverviewPanel(
+				project,
+				accent,
+				muted,
+				dim,
+				noticesWidth,
+				attentionItems,
+				attentionTotal,
+				attentionBlocked,
+				attentionTop,
+			)
+			if noticesPanelGapWidth > 0 {
+				overviewPanel = lipgloss.NewStyle().MarginLeft(noticesPanelGapWidth).Render(overviewPanel)
 			}
-			if selectedStart < scrollTop {
-				scrollTop = selectedStart
-			}
+			mainArea = lipgloss.JoinHorizontal(lipgloss.Top, body, overviewPanel)
 		}
-		maxScrollTop := max(0, len(taskLines)-taskWindowHeight)
-		scrollTop = clamp(scrollTop, 0, maxScrollTop)
-		if len(taskLines) > taskWindowHeight {
-			taskLines = taskLines[scrollTop : scrollTop+taskWindowHeight]
-		}
-		if len(taskLines) < taskWindowHeight {
-			taskLines = append(taskLines, make([]string, taskWindowHeight-len(taskLines))...)
-		}
+		return mainArea
+	}
 
-		lines := append(append([]string{}, headerLines...), taskLines...)
-		content := fitLines(strings.Join(lines, "\n"), innerHeight)
-		if colIdx == m.selectedColumn {
-			columnViews = append(columnViews, selColStyle.Render(content))
-		} else {
-			columnViews = append(columnViews, normColStyle.Render(content))
+	mainArea := renderMainArea(boardWidth, noticesWidth)
+	if layoutWidth > 0 && len(m.columns) > 0 {
+		for attempt := 0; attempt < 4; attempt++ {
+			delta := layoutWidth - lipgloss.Width(mainArea)
+			if delta == 0 {
+				break
+			}
+			nextBoardWidth := max(minimumColumnWidth, boardWidth+delta)
+			if nextBoardWidth == boardWidth {
+				break
+			}
+			boardWidth = nextBoardWidth
+			mainArea = renderMainArea(boardWidth, noticesWidth)
 		}
 	}
 
-	body := lipgloss.JoinHorizontal(lipgloss.Top, columnViews...)
 	overlay := m.renderModeOverlay(accent, muted, dim, helpStyle, m.width-8)
 	if m.help.ShowAll {
 		overlay = m.renderHelpOverlay(accent, muted, dim, helpStyle, m.width-8)
-	}
-
-	mainArea := body
-	if noticesWidth > 0 {
-		overviewPanel := m.renderOverviewPanel(
-			project,
-			accent,
-			muted,
-			dim,
-			noticesWidth,
-			attentionItems,
-			attentionTotal,
-			attentionBlocked,
-			attentionTop,
-		)
-		mainArea = lipgloss.JoinHorizontal(lipgloss.Top, body, overviewPanel)
 	}
 	infoLine := m.renderInfoLine(project, muted)
 
@@ -1255,17 +1319,29 @@ func (m Model) View() tea.View {
 		sections = append(sections, statusStyle.Render(m.status))
 	}
 	content := strings.Join(sections, "\n")
+	innerWidth := layoutWidth
+	if innerWidth > 0 {
+		content = lipgloss.NewStyle().
+			PaddingLeft(tuiOuterHorizontalPadding).
+			PaddingRight(tuiOuterHorizontalPadding).
+			Render(content)
+	}
 
 	helpBubble := m.help
 	helpBubble.ShowAll = false
-	helpBubble.SetWidth(max(0, m.width-2))
+	helpBubble.SetWidth(innerWidth)
 	helpLine := lipgloss.NewStyle().
 		Foreground(muted).
 		BorderTop(true).
 		BorderForeground(dim).
-		Padding(0, 1).
-		Width(max(0, m.width)).
+		Width(innerWidth).
 		Render(helpBubble.View(m.keys))
+	if tuiOuterHorizontalPadding > 0 {
+		helpLine = lipgloss.NewStyle().
+			PaddingLeft(tuiOuterHorizontalPadding).
+			PaddingRight(tuiOuterHorizontalPadding).
+			Render(helpLine)
+	}
 
 	contentHeight := lipgloss.Height(content)
 	if m.height > 0 {
@@ -10594,26 +10670,29 @@ func (m Model) columnWidth() int {
 	return m.columnWidthFor(m.boardWidthFor(m.width))
 }
 
+// renderedBoardColumnWidth returns the terminal render width for one board column at the given style width.
+func renderedBoardColumnWidth(width int) int {
+	return max(0, width)
+}
+
+// renderedNoticesPanelWidth returns the terminal render width for one notices panel at the given style width.
+func renderedNoticesPanelWidth(width int) int {
+	return max(0, width)
+}
+
 // columnWidthFor returns column width for.
 func (m Model) columnWidthFor(boardWidth int) int {
 	if len(m.columns) == 0 {
-		return 24
+		return minimumColumnWidth
 	}
-	w := 28
-	if boardWidth > 0 {
-		// Per-column overhead: left/right border (2), horizontal padding (4), margin-right (1)
-		const colOverhead = 7
-		usable := boardWidth - len(m.columns)*colOverhead
-		candidate := usable / len(m.columns)
-		if candidate > 0 {
-			w = candidate
-		}
+	interColumnGaps := max(0, len(m.columns)-1) * boardColumnGapWidth
+	usable := boardWidth - interColumnGaps
+	if usable <= 0 {
+		return minimumColumnWidth
 	}
-	if w < 24 {
-		return 24
-	}
-	if w > 42 {
-		return 42
+	w := usable / len(m.columns)
+	if w < minimumColumnWidth {
+		return minimumColumnWidth
 	}
 	return w
 }
@@ -10623,19 +10702,16 @@ func (m Model) noticesPanelWidth(totalWidth int) int {
 	if totalWidth <= 0 || len(m.columns) == 0 {
 		return 0
 	}
-	// Preserve minimum readable column widths before rendering the side panel.
-	minBoardWidth := len(m.columns) * (24 + 7)
-	if totalWidth < minBoardWidth+24 {
+	// Preserve minimum readable column widths and the Done->Notices/right-gutter budget.
+	minBoardWidth := len(m.columns)*renderedBoardColumnWidth(minimumColumnWidth) + max(0, len(m.columns)-1)*boardColumnGapWidth
+	availableForPanel := totalWidth - minBoardWidth - noticesPanelGapWidth
+	if availableForPanel < renderedNoticesPanelWidth(minimumNoticesPanelWidth) {
 		return 0
 	}
-	width := totalWidth / 4
-	if width < 26 {
-		width = 26
+	if availableForPanel > maximumNoticesPanelWidth {
+		return maximumNoticesPanelWidth
 	}
-	if width > 38 {
-		width = 38
-	}
-	return width
+	return availableForPanel
 }
 
 // boardWidthFor returns the board-body width after reserving optional side panel space.
@@ -10644,8 +10720,8 @@ func (m Model) boardWidthFor(totalWidth int) int {
 	if panelWidth <= 0 {
 		return totalWidth
 	}
-	// Leave one spacer column between board and notices panel.
-	return max(24, totalWidth-panelWidth-1)
+	reservedWidth := renderedNoticesPanelWidth(panelWidth) + noticesPanelGapWidth
+	return max(minimumColumnWidth, totalWidth-reservedWidth)
 }
 
 // columnHeight returns column height.

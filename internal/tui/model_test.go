@@ -3218,8 +3218,40 @@ func TestHelpersCoverage(t *testing.T) {
 		t.Fatal("expected minimum width")
 	}
 	m.width = 300
-	if m.columnWidth() > 42 {
-		t.Fatal("expected maximum width")
+	if m.columnWidth() <= 42 {
+		t.Fatal("expected width to continue expanding on wide terminals")
+	}
+}
+
+// TestNoticesPanelSpacingBudget verifies board/panel width budgeting matches measured rendered widths.
+func TestNoticesPanelSpacingBudget(t *testing.T) {
+	m := Model{
+		columns: []domain.Column{
+			{ID: "c1"},
+			{ID: "c2"},
+			{ID: "c3"},
+		},
+	}
+
+	minBoardWidth := len(m.columns)*renderedBoardColumnWidth(minimumColumnWidth) + max(0, len(m.columns)-1)*boardColumnGapWidth
+	minTotalWithPanel := minBoardWidth + noticesPanelGapWidth + renderedNoticesPanelWidth(minimumNoticesPanelWidth)
+
+	if got := m.noticesPanelWidth(minTotalWithPanel - 1); got != 0 {
+		t.Fatalf("expected notices panel hidden below clean-fit threshold, got width %d", got)
+	}
+
+	panelWidth := m.noticesPanelWidth(minTotalWithPanel)
+	if panelWidth != minimumNoticesPanelWidth {
+		t.Fatalf("expected minimum notices panel width at threshold, got %d", panelWidth)
+	}
+
+	boardWidth := m.boardWidthFor(minTotalWithPanel)
+	columnWidth := m.columnWidthFor(boardWidth)
+	boardRenderedWidth := len(m.columns)*renderedBoardColumnWidth(columnWidth) + max(0, len(m.columns)-1)*boardColumnGapWidth
+	panelRenderedWidth := renderedNoticesPanelWidth(panelWidth)
+	totalRenderedWidth := boardRenderedWidth + noticesPanelGapWidth + panelRenderedWidth
+	if totalRenderedWidth != minTotalWithPanel {
+		t.Fatalf("expected exact rendered-width budget match at threshold, got %d", totalRenderedWidth)
 	}
 }
 
@@ -5505,6 +5537,8 @@ func TestModelViewShowsNoticesPanel(t *testing.T) {
 		[]domain.Column{todo, progress, done},
 		[]domain.Task{blocked},
 	)))
+	// Notices panel rendering now starts at the clean-fit threshold; widen beyond default test viewport.
+	m = applyMsg(t, m, tea.WindowSizeMsg{Width: 128, Height: 40})
 	rendered := stripANSI(fmt.Sprint(m.View().Content))
 	if !strings.Contains(rendered, "Notices") {
 		t.Fatalf("expected notices panel title, got\n%s", rendered)
@@ -5512,15 +5546,77 @@ func TestModelViewShowsNoticesPanel(t *testing.T) {
 	if !strings.Contains(rendered, "Agent/User Action") {
 		t.Fatalf("expected notices panel attention section, got\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "g opens full activity log") {
+	if !strings.Contains(rendered, "g opens full activity") {
 		t.Fatalf("expected activity-log hint in notices panel, got\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "work items report") {
+	if !strings.Contains(rendered, "work items") {
 		t.Fatalf("expected blocker warning in notices panel, got\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "attention items requ") {
+	if !strings.Contains(rendered, "attention items") {
 		t.Fatalf("expected attention warning in notices panel, got\n%s", rendered)
 	}
+}
+
+// TestModelBoardHorizontalSpacingSymmetry verifies equal one-cell outer gutters and inter-panel gaps.
+func TestModelBoardHorizontalSpacingSymmetry(t *testing.T) {
+	now := time.Date(2026, 2, 27, 18, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	todo, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	progress, _ := domain.NewColumn("c2", p.ID, "In Progress", 1, 0, now)
+	done, _ := domain.NewColumn("c3", p.ID, "Done", 2, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  todo.ID,
+		Position:  0,
+		Title:     "Task 1",
+		Priority:  domain.PriorityMedium,
+	}, now)
+
+	m := loadReadyModel(t, NewModel(newFakeService(
+		[]domain.Project{p},
+		[]domain.Column{todo, progress, done},
+		[]domain.Task{task},
+	)))
+
+	assertSpacing := func(width int) {
+		scoped := applyMsg(t, m, tea.WindowSizeMsg{Width: width, Height: 40})
+		rendered := stripANSI(fmt.Sprint(scoped.View().Content))
+		layoutWidth := max(0, width-2*tuiOuterHorizontalPadding)
+		expectedPanels := len(scoped.columns)
+		if scoped.noticesPanelWidth(layoutWidth) > 0 {
+			expectedPanels++
+		}
+		lines := strings.Split(rendered, "\n")
+		borderLine := ""
+		for _, line := range lines {
+			if strings.Count(line, "╭") == expectedPanels {
+				borderLine = line
+				break
+			}
+		}
+		if borderLine == "" {
+			t.Fatalf("expected border row with %d panels at width %d, got\n%s", expectedPanels, width, rendered)
+		}
+
+		leadingSpaces := len(borderLine) - len(strings.TrimLeft(borderLine, " "))
+		trailingSpaces := len(borderLine) - len(strings.TrimRight(borderLine, " "))
+		if leadingSpaces != tuiOuterHorizontalPadding {
+			t.Fatalf("expected %d leading space, got %d in %q", tuiOuterHorizontalPadding, leadingSpaces, borderLine)
+		}
+		if trailingSpaces != tuiOuterHorizontalPadding {
+			t.Fatalf("expected %d trailing space, got %d in %q", tuiOuterHorizontalPadding, trailingSpaces, borderLine)
+		}
+
+		if got := strings.Count(borderLine, "╮ ╭"); got != expectedPanels-1 {
+			t.Fatalf("expected %d single-space panel joins, got %d in %q", expectedPanels-1, got, borderLine)
+		}
+	}
+
+	assertSpacing(96)
+	assertSpacing(110)
+	assertSpacing(128)
+	assertSpacing(144)
 }
 
 // TestModelViewShowsAttentionMarkersAndSummary verifies unresolved-attention markers and compact scope totals in board view.

@@ -1391,3 +1391,63 @@ Status:
   - `just ci` ✅
   - `just test-golden` ✅
 - Working tree is ready for commit review/staging.
+
+## Execution Log (2026-02-27: Notices-Panel Horizontal Spacing Symmetry)
+
+Objective:
+- Make board horizontal spacing symmetric in main view:
+  - left outer padding before `To Do`,
+  - gap between `Done` and `Notices`,
+  - right outer padding after `Notices`.
+- Identify and report exact code paths controlling those spacing values.
+
+Context7 checkpoints:
+- Context7 consulted before edits for Lip Gloss layout semantics (`/charmbracelet/lipgloss`), focusing on `Width`, `Padding`, `Margin`, and `JoinHorizontal`.
+
+Command/test evidence (discovery phase):
+- `sed -n '1,260p' Justfile` -> pass (confirmed `just` recipes and gates).
+- `sed -n '1,260p' COLLABORATIVE_POST_FIX_VALIDATION_WORKSHEET.md` -> pass (captured current collaboration validation context).
+- `rg -n "Notices|notices|panel|board|JoinHorizontal|padding|margin" internal/tui -g'*.go'` -> pass (located board/panel render path in `internal/tui/model.go`).
+- `sed -n '1000,1305p' internal/tui/model.go` -> pass (board render path and join logic).
+- `sed -n '10610,10710p' internal/tui/model.go` -> pass (column/panel width allocation logic).
+- `sed -n '8560,8725p' internal/tui/model.go` -> pass (overview panel render width/style).
+
+Status:
+- In progress:
+  - pending code edit in `internal/tui/model.go`,
+  - then `just check` and `just ci` validation.
+
+Follow-up discovery + remediation notes:
+- Context7 re-check after failing test run:
+  - `/charmbracelet/lipgloss` queried again for width/frame semantics.
+- Additional source checks:
+  - `go doc charm.land/lipgloss/v2.Style.GetHorizontalFrameSize` -> confirms frame size includes margins/padding/borders.
+  - `go doc charm.land/lipgloss/v2.Style.Width` -> confirms width is block width before margins.
+- Online references consulted for Lip Gloss spacing behavior:
+  - package docs + upstream README/issue threads via web search.
+- Test evidence:
+  - `just test-pkg ./internal/tui` -> fail (goldens + `TestModelBoardHorizontalSpacingSymmetry` expectation mismatch).
+  - failure trace showed border row no longer splitting, but panel visibility threshold in test was outdated.
+- File edits:
+  - `internal/tui/model.go`
+    - simplified width budgeting to match Lip Gloss v2 semantics (block width + margin-only extra):
+      - `renderedBoardColumnWidth` and `renderedNoticesPanelWidth` now map directly to style width.
+      - `columnWidthFor` now computes direct per-column width from available board width.
+      - `noticesPanelWidth` now allocates directly from remaining width with min/max clamp.
+      - `boardWidthFor` now reserves `panelWidth + noticesPanelGapWidth`.
+  - `internal/tui/model_test.go`
+    - updated `TestModelBoardHorizontalSpacingSymmetry` to derive expected panel count dynamically from actual panel visibility and verify symmetry across multiple viewport widths.
+- Formatting and verification:
+  - `just fmt` -> pass.
+  - `just test-pkg ./internal/tui` -> fail (goldens only; new spacing behavior changed expected snapshots).
+  - Context7 re-check executed after failure.
+  - `just test-golden-update` -> pass (goldens refreshed for new board/panel width budgeting).
+  - `just test-pkg ./internal/tui` -> pass.
+  - `just check` -> pass.
+  - `just ci` -> pass (`internal/tui` coverage 70.1%, repo gate green).
+
+Status:
+- Completed:
+  - horizontal symmetry fixed for board layout with/without notices panel.
+  - controlling constants/functions now map directly to Lip Gloss v2 width semantics.
+  - test and gate evidence complete.

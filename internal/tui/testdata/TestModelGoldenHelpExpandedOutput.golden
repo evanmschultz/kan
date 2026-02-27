@@ -1,26 +1,27 @@
-[?2026$p[?1049h[?25l[?2004h[?1002h[?1006h[=1;1u[?u[H[2Jkan  Inbox  [normal]
-path: Inbox
+[?2026$p[?1049h[?25l[?2004h[?1002h[?1006h[=1;1u[?u[H[2J kan  Inbox  [normal]
+ path: Inbox
 
-╭────────────────────────────────────────╮ ╭────────────────────────╮
-│                                        │ │                        │
-│  To Do (1)                             │ │ Notices                │
-│  │  Help Golden Task                   │ │ project: Inbox         │
-│     [low]                              │ │ path: Inbox            │
-│                                        │ │                        │
-│                                        │ │ Warnings               │
-│                                        │ │ none                   │
-│                                        │ │                        │
-│                                        │ │ Agent/User Action      │
-│                                        │ │ no unresolved notices  │
-│                                        │ │                        │
-│                                        │ │ Selection              │
-│                                        │ │ Help Golden Task       │
-│                                        │ │ [low]                  │
-│                                        │ │                        │
-│                                        │ │ Recent Activity        │
-│                                        │ │ (no activity yet)      │
-│                                        │ │                        │
-╰────────────────────────────────────────╯ │ g opens full activity  │[24;44H│ log                    │[25;44H│                        │[26;44H╰────────────────────────╯
+ ╭─────────────────────────────────────────────────────╮ ╭────────────────────────────────────╮
+ │                                                     │ │                                    │
+ │  To Do (1)                                          │ │ Notices                            │
+ │  │  Help Golden Task                                │ │ project: Inbox                     │
+ │     [low]                                           │ │ path: Inbox                        │
+ │                                                     │ │                                    │
+ │                                                     │ │ Warnings                           │
+ │                                                     │ │ none                               │
+ │                                                     │ │                                    │
+ │                                                     │ │ Agent/User Action                  │
+ │                                                     │ │ no unresolved notices              │
+ │                                                     │ │                                    │
+ │                                                     │ │ Selection                          │
+ │                                                     │ │ Help Golden Task                   │
+ │                                                     │ │ [low]                              │
+ │                                                     │ │                                    │
+ │                                                     │ │ Recent Activity                    │
+ │                                                     │ │ (no activity yet)                  │
+ │                                                     │ │                                    │
+ ╰─────────────────────────────────────────────────────╯ │ g opens full activity log          │[24;58H│                                    │[25;58H╰────────────────────────────────────╯
+ project: Inbox • tasks: 1 • selected: Help Golden Task • level: task
 …
  n new task • s new subtask • i/enter task info • e edit task • f focus subtree …[7A[J[H[K
 [K
@@ -28,18 +29,18 @@ path: Inbox
 [K
 [K
 [K
-    ╭──────────────────────────────────────────────────────────────────────────────────────╮
-    │ KAN Help                                           [4h                       [4l
-    │ screen: board                          [4h                       [4l
-    │                                                 [4h                       [4l
-    │ - h/l or left/right move columns; j/k or up/do[4hwn move task selection [4l
-    │ - n new task; s new subtask; i/enter ta[4hsk info; e edit task   [4l
-    │ - space multi-select; [ / ] move task; d delete; D hard d[4helete; u restore       [4l
-    │ - f focus subtree; F full board; t toggle archived           [4h                       [4l
-    │ - / search; p project picker; : command pa[4hlette; . quick actions [4l
-    │ - ctrl+y toggles text selection mode; ctrl+c/ctrl+v cop[4hy/paste in text inputs [4l
-    │ - z undo; Z redo; g activity log; q quit                [4h                       [4l
-    │                                              [4h                       [4l
-    │ selection mode: off (ctrl+y toggles)   [4h                       [4l
-    │ press ? or esc to close help                           [4h                       [4l
+    ╭──────────────────────────────────────────────────────────────────────────────────────╮[K
+    │ KAN Help                                                      [3P
+    │ screen: board                                     [3P
+    │                                                            [3P
+    │ - h/l or left/right move columns; j/k or up/down move task selection [3P
+    │ - n new task; s new subtask; i/enter task info; e edit task [3P
+    │ - space multi-select; [ / ] move task; d delete; D hard delete; u restore [3P
+    │ - f focus subtree; F full board; t toggle archived                      [3P
+    │ - / search; p project picker; : command palette; . quick actions [3P
+    │ - ctrl+y toggles text selection mode; ctrl+c/ctrl+v copy/paste in text inputs [3P
+    │ - z undo; Z redo; g activity log; q quit                           [3P
+    │                                                         [3P
+    │ selection mode: off (ctrl+y toggles)              [3P
+    │ press ? or esc to close help                                      [3P
 [4C╰──────────────────────────────────────────────────────────────────────────────────────╯[?1049l[?25h[?2004l[?1002l[?1003l[?1006l[=0;1u
