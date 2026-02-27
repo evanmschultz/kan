@@ -309,3 +309,75 @@ Legend:
 
 Closure rule:
 - A `TUI-CF-*` item can only be closed in this worksheet with a dated PASS/FAIL decision and concrete evidence path(s).
+
+## 12) Phase 0 Closeout Run (2026-02-27)
+
+Run artifact root:
+- `.tmp/phase0-collab-20260227_141800/`
+
+### 12.1 Phase 0 task tracker
+
+| Task | Status | Evidence | Notes |
+|---|---|---|---|
+| P0-T01 Manual TUI validation for C4/C6/C9/C10/C11/C12/C13 | BLOCKED | `.tmp/phase0-collab-20260227_141800/phase0_manual_steps.md`, `.tmp/phase0-collab-20260227_141800/manual/checklist.md` | Requires user-driven TUI execution and screenshot/log capture in this active run. |
+| P0-T02 Archived/search/keybinding targeted checks | BLOCKED | `.tmp/phase0-collab-20260227_141800/phase0_manual_steps.md`, `.tmp/phase0-collab-20260227_141800/manual/checklist.md` | Requires manual UX verification in running TUI session. |
+| P0-T03 Focused MCP rerun (`kan_restore_task`, `capture_state`) | FAIL | `.tmp/phase0-collab-20260227_141800/mcp_focused_checks.md`, `.tmp/phase0-collab-20260227_141800/http_capture_state_project.json` | `capture_state` readiness passes; `kan_restore_task` still fails guardrail path (`mutation lease is required`). |
+| P0-T04 Logging/help discoverability evidence capture | FAIL | `.tmp/phase0-collab-20260227_141800/phase0_preflight_summary.md`, `.tmp/phase0-collab-20260227_141800/help_kan.txt`, `.tmp/phase0-collab-20260227_141800/help_kan_serve.txt`, `.tmp/phase0-collab-20260227_141800/runtime_log_focus_filter.txt` | Help output path remains broken; operation-level log parity remains insufficient in this probe. Remediation requirements now include Charm/Fang-based help UX and first-launch config bootstrap behavior (copy default example config when missing). |
+| P0-T05 Fill blank checkpoints/sign-offs in `MCP_DOGFOODING_WORKSHEET.md` | PASS | `MCP_DOGFOODING_WORKSHEET.md` + run artifacts under `.tmp/phase0-collab-20260227_141800/` | Completed: all USER NOTES rows and final sign-off fields now have explicit `pass`/`fail`/`blocked` values with evidence paths. |
+| P0-T06 Update this worksheet with final evidence and verdict | BLOCKED | `COLLABORATIVE_POST_FIX_VALIDATION_WORKSHEET.md`, `.tmp/phase0-collab-20260227_141800/phase0_manual_steps.md` | Worksheet updated with current evidence and blockers, but final closeout verdict is blocked on pending user-driven manual collaborative checks. |
+
+### 12.2 Automated checks executed in this run
+
+1. `just check` -> PASS (`.tmp/phase0-collab-20260227_141800/just_check.txt`)
+2. `just ci` -> PASS (`.tmp/phase0-collab-20260227_141800/just_ci.txt`)
+3. `just test-golden` -> PASS (`.tmp/phase0-collab-20260227_141800/just_test_golden.txt`)
+4. `just build` -> PASS with environment warning (`.tmp/phase0-collab-20260227_141800/just_build.txt`)
+5. runtime listener/health checks -> PASS (`.tmp/phase0-collab-20260227_141800/port_18080_listener.txt`, `.tmp/phase0-collab-20260227_141800/healthz.txt`, `.tmp/phase0-collab-20260227_141800/readyz.txt`)
+
+### 12.3 Immediate blockers called out
+
+1. `./kan --help` and `./kan serve --help` do not provide expected discoverable help output in this run.
+2. `kan_restore_task` remains unusable in current MCP surface due guardrail tuple mismatch.
+3. Remaining TUI-centric collaborative checks require explicit user interaction and cannot be auto-validated by agent-only execution.
+
+### 12.4 User-Directed Additions And Process Contract
+
+Additional remediation requirements captured from user direction:
+1. First-launch bootstrap behavior:
+   - when launching `kan` for the first time and config file is missing, copy from the default example config (`config.example.toml`) instead of creating a short/minimal config stub.
+2. Help/CLI UX behavior:
+   - replace current failing `--help` behavior with a designed help surface using Charm/Fang so help output is readable, attractive, and discoverable.
+3. `kan_restore_task` contract remediation:
+   - close the mutation guardrail mismatch by aligning MCP restore transport with actor/lease tuple expectations enforced by the service guardrail path.
+
+Execution/process contract for remaining Phase 0 testing:
+1. Run collaborative validation section-by-section.
+2. User provides detailed notes/evidence for each section.
+3. Agent records notes verbatim in active markdown worksheets without shortening detail.
+4. Agent updates PASS/FAIL/BLOCKED outcomes immediately after each section handoff.
+5. No move to feature/fix implementation until Phase 0 closeout evidence is complete.
+6. Final step of this testing process:
+   - run subagents for code inspection,
+   - run Context7 for relevant library/API guidance,
+   - run targeted web research where needed,
+   - propose fix options,
+   - add agreed proposals to active markdown only after user+agent consensus.
+
+### 12.5 `kan_restore_task` Mutation Guardrail Root-Cause Summary (Explorer Audit)
+
+Observed failure:
+- `kan_restore_task` returns `guardrail_failed ... mutation lease is required` for agent-attributed archived tasks.
+
+Code-level explanation:
+1. MCP `kan.restore_task` currently accepts only `task_id` and calls restore without actor/lease tuple.
+2. Restore path in MCP/common surfaces does not carry actor lease data like update/move/delete paths.
+3. Restore adapter path does not attach mutation guard context before invoking service restore.
+4. Service restore enforces mutation guard using persisted `UpdatedByType`; for non-user actor types this requires a valid lease tuple.
+5. Without that tuple in context, guardrail returns `ErrMutationLeaseRequired`, mapped to MCP `guardrail_failed`.
+
+Primary evidence references from explorer review:
+1. `internal/adapters/server/mcpapi/extended_tools.go`
+2. `internal/adapters/server/common/mcp_surface.go`
+3. `internal/adapters/server/common/app_service_adapter_mcp.go`
+4. `internal/app/service.go`
+5. `internal/app/kind_capability.go`

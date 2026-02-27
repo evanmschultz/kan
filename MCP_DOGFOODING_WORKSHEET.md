@@ -32,9 +32,9 @@ Expected:
 
 ### USER NOTES M0.1-N1
 
-- Pass/Fail (set one: pass|fail|blocked):
-- Evidence (required):
-- Notes:
+- Pass/Fail (set one: pass|fail|blocked): fail
+- Evidence (required): `.tmp/phase0-collab-20260227_141800/just_build.txt`, `.tmp/phase0-collab-20260227_141800/help_kan.txt`, `.tmp/phase0-collab-20260227_141800/help_kan_serve.txt`, `.tmp/phase0-collab-20260227_141800/phase0_preflight_summary.md`
+- Notes: Build succeeded, but help-surface validation failed. `./kan --help` returned `error: flag: help requested`, and `./kan serve --help` entered startup/open-db flow instead of printing stable help. Remediation requirement: implement a Charm/Fang-based help surface for usable, styled CLI help output.
 
 ---
 
@@ -62,9 +62,9 @@ Expected:
 
 ### USER NOTES M0.2-N1
 
-- Pass/Fail (set one: pass|fail|blocked):
-- Evidence (required):
-- Notes:
+- Pass/Fail (set one: pass|fail|blocked): blocked
+- Evidence (required): `.tmp/phase0-collab-20260227_141800/port_18080_listener.txt`, `.tmp/phase0-collab-20260227_141800/healthz.headers`, `.tmp/phase0-collab-20260227_141800/healthz.txt`, `.tmp/phase0-collab-20260227_141800/readyz.headers`, `.tmp/phase0-collab-20260227_141800/readyz.txt`
+- Notes: Active runtime is up and healthy on `127.0.0.1:18080`, but strict isolated dogfood DB/config launch for this worksheet step still needs an explicit fresh-runtime user run.
 
 ---
 
@@ -91,9 +91,9 @@ Expected:
 
 ### USER NOTES M0.3-N1
 
-- Pass/Fail (set one: pass|fail|blocked):
-- Evidence (required):
-- Notes:
+- Pass/Fail (set one: pass|fail|blocked): blocked
+- Evidence (required): `.tmp/phase0-collab-20260227_141800/phase0_manual_steps.md`
+- Notes: Hierarchy fixture creation in TUI (`branch -> phase -> subphase -> task -> subtask`) and user-action blocker seeding remain pending manual user execution.
 
 ---
 
@@ -129,9 +129,9 @@ Expected:
 
 ### USER NOTES M1.1-N1
 
-- Pass/Fail (set one: pass|fail|blocked):
-- Evidence (required):
-- Notes:
+- Pass/Fail (set one: pass|fail|blocked): blocked
+- Evidence (required): `.tmp/phase0-collab-20260227_141800/mcp_focused_checks.md`, `.tmp/phase0-collab-20260227_141800/http_capture_state_project.headers`, `.tmp/phase0-collab-20260227_141800/http_capture_state_project.json`
+- Notes: Project-level capture_state readiness is confirmed (deterministic hash + resume hints), but scope-by-scope coverage for `branch/phase/subphase/task/subtask` is pending seeded hierarchy.
 
 ---
 
@@ -150,9 +150,9 @@ Expected:
 
 ### USER NOTES M1.2-N1
 
-- Pass/Fail (set one: pass|fail|blocked):
-- Evidence (required):
-- Notes:
+- Pass/Fail (set one: pass|fail|blocked): blocked
+- Evidence (required): `.tmp/phase0-collab-20260227_141800/phase0_manual_steps.md`
+- Notes: Requires unresolved blocker fixture tied to real hierarchy scope before validation of `requires_user_action` highlights in capture summaries.
 
 ---
 
@@ -173,9 +173,9 @@ Expected:
 
 ### USER NOTES M2.1-N1
 
-- Pass/Fail (set one: pass|fail|blocked):
-- Evidence (required):
-- Notes:
+- Pass/Fail (set one: pass|fail|blocked): pass
+- Evidence (required): `.tmp/phase0-collab-20260227_141800/mcp_focused_checks.md`, `.tmp/phase0-collab-20260227_141800/guardrail_failure_checks.md`
+- Notes: Non-user mutations without a valid lease tuple fail closed as expected, including no-tuple (`mutation lease is required`) and malformed-token (`mutation lease is invalid`) cases.
 
 ---
 
@@ -193,9 +193,9 @@ Expected:
 
 ### USER NOTES M2.2-N1
 
-- Pass/Fail (set one: pass|fail|blocked):
-- Evidence (required):
-- Notes:
+- Pass/Fail (set one: pass|fail|blocked): fail
+- Evidence (required): `.tmp/phase0-collab-20260227_141800/guardrail_failure_checks.md`
+- Notes: Mixed outcome. Cross-project lease mismatch correctly failed closed, but a scope mismatch probe (`scope_type=task` with project-id scope_id) was accepted and persisted, violating deterministic mismatch rejection expectation.
 
 ---
 
@@ -214,9 +214,9 @@ Expected:
 
 ### USER NOTES M2.3-N1
 
-- Pass/Fail (set one: pass|fail|blocked):
-- Evidence (required):
-- Notes:
+- Pass/Fail (set one: pass|fail|blocked): pass
+- Evidence (required): `.tmp/phase0-collab-20260227_141800/completion_guard_check.md`
+- Notes: Transition to done was blocked while unresolved blocker attention existed, and succeeded only after blocker resolution.
 
 ---
 
@@ -238,9 +238,9 @@ Expected:
 
 ### USER NOTES M3.1-N1
 
-- Pass/Fail (set one: pass|fail|blocked):
-- Evidence (required):
-- Notes:
+- Pass/Fail (set one: pass|fail|blocked): blocked
+- Evidence (required): `.tmp/phase0-collab-20260227_141800/phase0_manual_steps.md`
+- Notes: Requires user-driven TUI validation of warning indicators and compact unresolved panel behavior.
 
 ---
 
@@ -259,9 +259,9 @@ Expected:
 
 ### USER NOTES M3.2-N1
 
-- Pass/Fail (set one: pass|fail|blocked):
-- Evidence (required):
-- Notes:
+- Pass/Fail (set one: pass|fail|blocked): blocked
+- Evidence (required): `.tmp/phase0-collab-20260227_141800/phase0_manual_steps.md`
+- Notes: Requires combined transport mutation + TUI refresh parity verification with interactive UI evidence.
 
 ---
 
@@ -283,9 +283,9 @@ Expected:
 
 ### USER NOTES M4.1-N1
 
-- Pass/Fail (set one: pass|fail|blocked):
-- Evidence (required):
-- Notes:
+- Pass/Fail (set one: pass|fail|blocked): blocked
+- Evidence (required): `.tmp/phase0-collab-20260227_141800/phase0_manual_steps.md`
+- Notes: Scope-filter behavior across all hierarchy levels depends on seeded hierarchy and interactive query validation.
 
 ---
 
@@ -303,9 +303,9 @@ Expected:
 
 ### USER NOTES M4.2-N1
 
-- Pass/Fail (set one: pass|fail|blocked):
-- Evidence (required):
-- Notes:
+- Pass/Fail (set one: pass|fail|blocked): blocked
+- Evidence (required): `.tmp/phase0-collab-20260227_141800/phase0_manual_steps.md`
+- Notes: API/MCP versus TUI query parity still requires manual cross-surface comparison once hierarchy fixture is in place.
 
 ---
 
@@ -326,9 +326,9 @@ Expected:
 
 ### USER NOTES M5.1-N1
 
-- Pass/Fail (set one: pass|fail|blocked):
-- Evidence (required):
-- Notes:
+- Pass/Fail (set one: pass|fail|blocked): pass
+- Evidence (required): `.tmp/phase0-collab-20260227_141800/mcp_focused_checks.md`
+- Notes: capture_state summary includes sufficient goal/scope context and explicit resume hints (`list_attention_items`, `list_project_change_events`, `list_child_tasks`) to continue work after context loss.
 
 ---
 
@@ -348,23 +348,23 @@ Expected:
 
 ### USER NOTES M5.2-N1
 
-- Pass/Fail (set one: pass|fail|blocked):
-- Evidence (required):
-- Notes:
+- Pass/Fail (set one: pass|fail|blocked): pass
+- Evidence (required): `.tmp/phase0-collab-20260227_141800/capture_state_hash_loop.md`
+- Notes: State hash changed predictably after mutation and returned to baseline after cleanup, demonstrating stable short-loop resume behavior.
 
 ---
 
 ## Final Sign-off
 
-- Overall result (set one): `pass` | `pass_with_minor_issues` | `fail`
-- Blocking defects:
-- Non-blocking defects:
-- Required user actions before next wave checkpoint:
-- Tester(s):
-- Date (`YYYY-MM-DD`):
+- Overall result (set one): `fail`
+- Blocking defects: help discoverability path failures (`./kan --help`, `./kan serve --help`) plus required Charm/Fang help redesign, missing first-launch config bootstrap requirement (copy `config.example.toml` when config is absent), `kan_restore_task` guardrail contract mismatch, scope-mismatch rejection gap in M2.2, and unresolved manual TUI/fixture-dependent sections.
+- Non-blocking defects: environment warning during `just build` (`go` stat-cache write permission warning) did not fail build.
+- Required user actions before next wave checkpoint: run manual TUI hierarchy/notification/search/keybinding checks and attach evidence paths under `.tmp/phase0-collab-20260227_141800/manual/`.
+- Tester(s): Codex (agent) + evanschultz (user pending manual steps)
+- Date (`YYYY-MM-DD`): 2026-02-27
 
 ### USER NOTES MF.1-N1
 
-- Pass/Fail (set one: pass|fail|blocked):
-- Evidence (required):
-- Notes:
+- Pass/Fail (set one: pass|fail|blocked): fail
+- Evidence (required): `.tmp/phase0-collab-20260227_141800/phase0_preflight_summary.md`, `.tmp/phase0-collab-20260227_141800/mcp_focused_checks.md`, `.tmp/phase0-collab-20260227_141800/guardrail_failure_checks.md`, `.tmp/phase0-collab-20260227_141800/completion_guard_check.md`, `.tmp/phase0-collab-20260227_141800/phase0_manual_steps.md`
+- Notes: Agent-completable checks were executed and recorded; final wave sign-off is blocked until user-driven collaborative TUI checks are completed and open blocking defects are resolved.

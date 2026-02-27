@@ -223,3 +223,156 @@ Result:
 
 Test status:
 - `test_not_applicable` (docs-only change).
+
+### 2026-02-27: Phase 0 Collaborative Closeout Run (in progress)
+
+Objective:
+- execute Phase 0 closeout checks, capture fresh evidence, and update active worksheets with explicit PASS/FAIL/BLOCKED outcomes.
+
+Evidence root:
+- `.tmp/phase0-collab-20260227_141800/`
+
+Commands run and outcomes:
+1. `just check` -> PASS (`.tmp/phase0-collab-20260227_141800/just_check.txt`)
+2. `just ci` -> PASS (`.tmp/phase0-collab-20260227_141800/just_ci.txt`)
+3. `just test-golden` -> PASS (`.tmp/phase0-collab-20260227_141800/just_test_golden.txt`)
+4. `just build` -> PASS with environment warning (`.tmp/phase0-collab-20260227_141800/just_build.txt`)
+5. `./kan --help` -> FAIL help discoverability (`.tmp/phase0-collab-20260227_141800/help_kan.txt`)
+6. `./kan serve --help` -> FAIL help discoverability / startup side-effect path (`.tmp/phase0-collab-20260227_141800/help_kan_serve.txt`)
+7. `curl http://127.0.0.1:18080/healthz` -> PASS (`.tmp/phase0-collab-20260227_141800/healthz.headers`, `.tmp/phase0-collab-20260227_141800/healthz.txt`)
+8. `curl http://127.0.0.1:18080/readyz` -> PASS (`.tmp/phase0-collab-20260227_141800/readyz.headers`, `.tmp/phase0-collab-20260227_141800/readyz.txt`)
+
+Focused MCP checks and outcomes:
+1. `capture_state` readiness -> PASS
+   - evidence: `.tmp/phase0-collab-20260227_141800/http_capture_state_project.headers`, `.tmp/phase0-collab-20260227_141800/http_capture_state_project.json`, `.tmp/phase0-collab-20260227_141800/mcp_focused_checks.md`
+2. `kan_restore_task` known failure repro -> FAIL (`mutation lease is required`)
+   - evidence: `.tmp/phase0-collab-20260227_141800/mcp_focused_checks.md`
+3. Guardrail failure matrix probes -> MIXED
+   - M2.1 (missing/invalid lease tuple): PASS
+   - M2.2 (scope mismatch rejection): FAIL (scope-type/scope-id mismatch accepted in one probe)
+   - evidence: `.tmp/phase0-collab-20260227_141800/guardrail_failure_checks.md`
+4. Completion guard probe -> PASS
+   - unresolved blocker prevented `progress -> done`; transition succeeded after resolver step
+   - evidence: `.tmp/phase0-collab-20260227_141800/completion_guard_check.md`
+5. Resume/hash short loop probe -> PASS
+   - state hash changed on mutation and returned to baseline post-cleanup
+   - evidence: `.tmp/phase0-collab-20260227_141800/capture_state_hash_loop.md`
+
+Blockers currently open:
+1. CLI help discoverability remains broken (`./kan --help`, `./kan serve --help`).
+2. `kan_restore_task` MCP contract mismatch remains unresolved.
+3. Manual collaborative TUI checks remain pending user execution (C4/C6/C9/C10/C11/C12/C13 and archived/search/key policy checks).
+4. Additional user-directed remediation requirements must be carried into fix phase:
+   - first-launch config bootstrap should copy `config.example.toml` when config is missing,
+   - help UX should be implemented with Charm/Fang styled output.
+
+Current status:
+- Phase 0 remains open until manual collaborative checks are completed and worksheet sign-offs are finalized.
+- `MCP_DOGFOODING_WORKSHEET.md` has no blank sign-off fields; remaining blocked rows now carry explicit blocker statements and evidence paths.
+
+File edits in this checkpoint:
+1. `MCP_DOGFOODING_WORKSHEET.md`
+   - filled all USER NOTES blocks and final sign-off fields with explicit status + evidence references for this run.
+2. `COLLABORATIVE_POST_FIX_VALIDATION_WORKSHEET.md`
+   - added Section 12 Phase 0 tracker with current task statuses and blockers.
+3. `PLAN.md`
+   - logged command evidence, focused-check outcomes, blockers, and worksheet status for the active Phase 0 run.
+
+Process contract update from user:
+1. Continue section-by-section collaborative test walkthrough and note capture.
+2. Preserve user notes verbatim with full detail in active markdown docs.
+3. Final step of testing process will run subagents + Context7 (+ web research as needed) to propose fixes, then record proposals only after explicit user+agent consensus.
+
+### 2026-02-27: Remote E2EE Architecture + Roadmap Draft
+
+Objective:
+- produce a detailed roadmap for optional remote org collaboration with strict E2EE data handling while preserving local-first OSS usage.
+
+Commands run and outcomes:
+1. `rg --files -g'*.md' | sort` -> PASS (identified doc targets)
+2. `sed -n '1,360p' PLAN.md` -> PASS (loaded active plan/worklog context)
+3. `rg -n "export|import|snapshot|remote|tenancy|auth|sync|sqlite|postgres|file|attachment|project_roots" ...` -> PASS (collected active constraints from canonical docs)
+4. Context7 lookup:
+   - `resolve-library-id sqlite` -> PASS
+   - `resolve-library-id postgresql` -> PASS
+   - `query-docs /websites/sqlite_cli` -> PASS
+   - `query-docs /websites/postgresql_current` -> PASS
+5. Web-source verification:
+   - SQLite (`isolation`, `wal`, `useovernet`, `backup`, `lang_vacuum`, `sessionintro`) -> PASS
+   - PostgreSQL (`ddl-rowsecurity`, `sql-listen`, `sql-notify`) -> PASS
+   - S3 (`Welcome`, `using-presigned-url`, `Versioning`) -> PASS
+   - WebSocket RFC6455 -> PASS
+   - libsodium `secretstream` -> PASS
+
+File edits in this checkpoint:
+1. `REMOTE_E2EE_ROADMAP.md`
+   - added full architecture decision, live-update model, file/blob strategy, OSS execution phases, hosted-service roadmap, and aligned references.
+2. `PLAN.md`
+   - added this checkpoint with command/test evidence.
+
+Test status:
+- `test_not_applicable` (docs-only changes; no code/test behavior modified).
+
+### 2026-02-27: Restore Task Guardrail Contract Investigation
+
+Objective:
+- trace `kan_restore_task` (`kan.restore_task`) guardrail failure (`mutation lease is required`) across MCP registration, common adapter contracts, and app guard enforcement.
+
+Commands run and outcomes:
+1. `rg -n "restore_task|kan_restore_task|mutation lease is required|lease"` -> PASS (identified MCP/tool + guardrail references)
+2. `rg -n "delete_task|move_task|update_task|actor"` -> PASS (identified tuple-capable mutation tools for comparison)
+3. `nl -ba internal/adapters/server/mcpapi/extended_tools.go` (scoped ranges) -> PASS
+4. `nl -ba internal/adapters/server/common/mcp_surface.go` -> PASS
+5. `nl -ba internal/adapters/server/common/app_service_adapter_mcp.go` (scoped ranges) -> PASS
+6. `nl -ba internal/app/service.go` + `internal/app/kind_capability.go` (scoped ranges) -> PASS
+7. `nl -ba internal/adapters/server/common/app_service_adapter.go` + `internal/adapters/server/mcpapi/handler.go` -> PASS
+8. `nl -ba internal/domain/errors.go` + `internal/domain/task.go` -> PASS
+9. `nl -ba Justfile` -> PASS (startup recipe review requirement)
+
+Findings summary:
+1. `kan.restore_task` MCP registration only accepts `task_id` and calls `tasks.RestoreTask(ctx, taskID)` with no actor/lease tuple.
+2. Common task-service contract and adapter method signature for restore accept only `task_id`, unlike update/move/delete request structs that include `ActorLeaseTuple`.
+3. App `RestoreTask` still enforces mutation guardrails using persisted `task.UpdatedByType`; when that actor type is non-user and no guard tuple is attached to context, enforcement returns `domain.ErrMutationLeaseRequired`.
+4. Error mapping converts this to MCP-visible `guardrail_failed: ... mutation lease is required`.
+
+File edits in this checkpoint:
+1. `PLAN.md`
+   - added investigation worklog entry with command evidence and root-cause chain.
+
+Test status:
+- `test_not_applicable` (investigation/docs-only; no code changes).
+
+### 2026-02-27: Remote Roadmap Update (HTTP-Only Runtime + Fang/Cobra Plan)
+
+Objective:
+- update remote roadmap with newly agreed runtime decisions:
+  - HTTP-only MCP for now,
+  - `kan` launches TUI with local-server ensure/reuse behavior,
+  - default local endpoint `127.0.0.1:5437` with auto-fallback,
+  - user endpoint selection in CLI/TUI,
+  - Fang/Cobra migration,
+  - phase/lane plan for parallel subagents.
+
+Commands run and outcomes:
+1. `Context7 resolve-library-id fang` -> PASS
+2. `Context7 resolve-library-id cobra` -> PASS
+3. `Context7 query-docs /charmbracelet/fang` -> PASS
+4. `Context7 query-docs /spf13/cobra` -> PASS
+5. Spawned explorer subagents for:
+   - serve/runtime lifecycle verification (PASS),
+   - current help/UX friction and recommendations (PASS)
+6. `sed -n '1,320p' REMOTE_E2EE_ROADMAP.md` -> PASS (loaded current roadmap prior to patching)
+7. `Context7 resolve-library-id mcp-go` + `query-docs /mark3labs/mcp-go` -> PASS (validated transport suitability/limits for HTTP-first decision)
+
+File edits in this checkpoint:
+1. `REMOTE_E2EE_ROADMAP.md`
+   - added locked 2026-02-27 runtime/transport decisions,
+   - added local runtime modes, endpoint fallback policy, and supervisor behavior,
+   - added `R-CLI` phase for Fang/Cobra + server orchestration,
+   - added explicit parallel lane map for subagent execution,
+   - updated milestones and references.
+2. `PLAN.md`
+   - added this checkpoint with evidence and outcomes.
+
+Test status:
+- `test_not_applicable` (docs-only changes; no code/test behavior modified).
