@@ -8,7 +8,8 @@ A core product purpose is maintaining one DB-backed source of truth for planning
 Current scope:
 - local tracking and planning workflows (human-operated TUI).
 - local runtime diagnostics with styled logging and dev-mode local log files.
-- active Phase 11 wave delivery for locked MCP/HTTP slices is in progress in `MCP_DESIGN_AND_PLAN.md` (HTTP `/api/v1`, stateless MCP adapter, `capture_state`, attention/worksheet readiness).
+- active collaborative remediation and validation tracked in `COLLAB_E2E_REMEDIATION_PLAN_WORKLOG.md` and `COLLABORATIVE_POST_FIX_VALIDATION_WORKSHEET.md`.
+- canonical MCP full-sweep execution procedure tracked in `MCP_FULL_TESTER_AGENT_RUNBOOK.md`.
 - advanced import/export transport-closure concerns (branch/commit-aware divergence reconciliation and richer conflict tooling) remain roadmap-only unless user re-prioritizes.
 
 Contributor workflow and CI policy: `CONTRIBUTING.md`
@@ -29,10 +30,11 @@ Contributor workflow and CI policy: `CONTRIBUTING.md`
 - JSON snapshot import/export.
 - Configurable task field visibility.
 
-## Active Status (2026-02-24)
+## Active Status (2026-02-27)
 Implemented now:
 - Use `kan` as the canonical local planning/verification source while collaborating with an agent in terminal/chat.
-- Keep manual QA notes in `TUI_MANUAL_TEST_WORKSHEET.md` with sectioned anchors for precise replay.
+- Keep collaborative validation notes in `COLLABORATIVE_POST_FIX_VALIDATION_WORKSHEET.md`.
+- Use `MCP_FULL_TESTER_AGENT_RUNBOOK.md` for MCP full-sweep execution protocol and evidence contract.
 - Local-only TUI + SQLite workflows (including startup bootstrap, project picker, threads/comments, and import/export snapshots).
 - Board info line includes hierarchy-aware focus guidance (`f` focus subtree, `F` return full board) with selected level and child counts for branch/phase/subphase navigation.
 - Board scope rendering is level-scoped: project shows immediate project children, and focused branch/phase/subphase views show immediate children for that level (not full descendant dumps).
@@ -191,11 +193,12 @@ Full template: `config.example.toml`
 - `:`: command palette
 - `/`: search
 - `d`: delete using configured default mode
+- `.`: open quick actions (archive/restore and context actions)
 - `a`: archive task
 - `D`: hard delete task
 - `u`: restore task
 - `t`: toggle archived visibility
-- `v`: toggle text-selection mode (copy-friendly mouse selection)
+- `ctrl+y`: toggle text-selection mode (copy-friendly mouse selection)
 - `?`: toggle expanded help
 - `q`: quit
 

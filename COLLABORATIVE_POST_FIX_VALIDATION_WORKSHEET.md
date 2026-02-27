@@ -7,6 +7,8 @@ Artifact dir: `.tmp/collab-post-fix-20260225_143243/`
 
 This is the active worksheet for post-fix validation.  
 `COLLABORATIVE_FULL_E2E_TEST_WORKSHEET.md` is historical context only; do not record new run results there.
+`TUI_MANUAL_TEST_WORKSHEET.md` was retired on 2026-02-27; unresolved TUI carry-forward items are now tracked in Section 11 of this worksheet.
+Use `MCP_FULL_TESTER_AGENT_RUNBOOK.md` as the canonical MCP full-sweep procedure and evidence contract.
 
 ## 1) Objective
 
@@ -283,3 +285,27 @@ Highest-risk unresolved items (priority):
 3. REQ-010: stdout/file sink parity gap for MCP guardrail logs.
 4. REQ-027: `kan_restore_task` MCP contract mismatch (guardrail requires lease, tool path lacks required tuple).
 5. REQ-019/021: archive-key and project archived UX policy mismatches still open.
+
+## 11) TUI Carry-Forward (Migrated From Retired Worksheet)
+
+Source:
+- retired worksheet: `TUI_MANUAL_TEST_WORKSHEET.md` (retired 2026-02-27)
+- extracted unresolved anchors from latest prior run before retirement.
+
+Legend:
+- `OPEN` means unresolved and still requires implementation or validation evidence in this worksheet.
+- `MIGRATED` means source anchor was moved here and should not be tracked in a separate TUI worksheet anymore.
+
+| TUI-CF ID | Migrated issue | Prior anchor(s) | Maps to requirement(s) | Status |
+|---|---|---|---|---|
+| TUI-CF-01 | Due date/time UX clarity remains unclear in modal flows. | `S2.1`, `S2.3` | REQ-015, REQ-016 | OPEN / MIGRATED |
+| TUI-CF-02 | Contextual `esc` back-stack behavior still needs full manual pass confirmation. | `S3.1` | REQ-014 | OPEN / MIGRATED |
+| TUI-CF-03 | Modal help/key guidance consistency remains insufficient in some flows. | `S3.2` | REQ-004, REQ-005, REQ-028, REQ-029 | OPEN / MIGRATED |
+| TUI-CF-04 | Subtask save return-origin behavior requires explicit validation/fix confirmation. | `S3.3` | REQ-014 | OPEN / MIGRATED |
+| TUI-CF-05 | Text-input key handling/select-mode collisions need explicit revalidation in all forms. | `S4.1` note mismatch | REQ-001, REQ-002, REQ-003, REQ-011, REQ-012, REQ-013 | OPEN / MIGRATED |
+| TUI-CF-06 | Project color/accent behavior remains unclear/insufficiently validated. | `S8.1` | REQ-030 | OPEN / MIGRATED |
+| TUI-CF-07 | Labels-config scope behavior still has unresolved bug notes. | `S8.3` | REQ-032 | OPEN / MIGRATED |
+| TUI-CF-08 | Consolidated rerun anchors were incomplete and blocked final sign-off in the retired worksheet. | `D0.1`..`D7.1` | REQ-001..REQ-032 | OPEN / MIGRATED |
+
+Closure rule:
+- A `TUI-CF-*` item can only be closed in this worksheet with a dated PASS/FAIL decision and concrete evidence path(s).

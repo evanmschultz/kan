@@ -33,7 +33,7 @@ You are a senior Go dev. YOU ALWAYS:
 - Never use dependency-fetch bypasses (for example `GOPROXY=direct`, `GOSUMDB=off`, or checksum bypass flags).
 - Never delete files or directories without explicit user approval.
 - Keep the active execution/work log in `PLAN.md`. Use `worklogs/` only when the user explicitly asks for split logs.
-- When creating the MCP design/planning markdown file (for example `MCP_DESIGN_AND_PLAN.md`), you must explicitly review and discuss all locked roadmap decisions, unresolved roadmap items, and relevant current-code constraints from `PLAN.md`, `PRE_PHASE11_CLOSEOUT_DISCUSSION.md`, `PRE_MCP_EXECUTION_WAVES.md`, `PRE_MCP_CONSENSUS.md`, and `Pre_MCP_User_NOTES.md` before proposing implementation phases.
+- When proposing new implementation phases, you must explicitly review and discuss the active backlog and open discussion items in `PLAN.md`, plus unresolved findings in `COLLAB_E2E_REMEDIATION_PLAN_WORKLOG.md` and `COLLABORATIVE_POST_FIX_VALIDATION_WORKSHEET.md`.
 - When clarification is needed, ask in two stages:
   - first ask general goal-alignment questions and lock shared objectives,
   - only after that consensus ask specific implementation-detail questions.
@@ -84,13 +84,12 @@ You are a senior Go dev. YOU ALWAYS:
   - tests/checks run and outcomes,
   - or explicit `test_not_applicable` with rationale for docs-only/process-only steps.
 
-## Temporary Next-Step Directive (Pre-MCP Closeout + MCP Build)
+## Temporary Next-Step Directive (Collaborative Remediation Closeout)
 
 - This temporary section is active for the current phase:
-  - finish all remaining pre-MCP non-roadmap gaps,
-  - implement non-roadmap MCP/HTTP functionality discussed and locked in planning docs,
-  - prioritize dogfooding readiness for real user+agent workflows.
-- For this temporary phase, use `MCP_DESIGN_AND_PLAN.md` as the execution/worklog hub for MCP-oriented slices.
+  - close remaining collaborative remediation gaps tracked in active collab docs,
+  - prioritize dogfooding readiness for real user+agent workflows,
+  - keep planning/roadmap state centralized in `PLAN.md`.
 - Orchestrator requirements:
   - plan for coexistent parallel subagents with explicit, non-overlapping file-lock scopes,
   - prevent workers from touching the same file concurrently,
@@ -98,7 +97,9 @@ You are a senior Go dev. YOU ALWAYS:
 - Delivery requirements for this temporary phase:
   - keep docs synchronized as implementation lands (`README.md` and affected planning/testing docs),
   - ensure `just check` and `just ci` both pass before marking work complete,
-  - create/update one TUI manual worksheet for current behavior verification,
+  - keep `COLLAB_E2E_REMEDIATION_PLAN_WORKLOG.md` as the remediation requirement/worklog source,
+  - keep `COLLABORATIVE_POST_FIX_VALIDATION_WORKSHEET.md` as the canonical collaborative TUI/runtime validation worksheet,
+  - keep `MCP_FULL_TESTER_AGENT_RUNBOOK.md` as the canonical MCP full-sweep execution runbook,
   - create/update one HTTP/MCP (MCP-primary) dogfooding worksheet for user+agent validation.
 - Dogfooding requirement:
   - testing docs must support collaborative user+agent validation and clearly call out guardrails, blockers, and recovery workflows.

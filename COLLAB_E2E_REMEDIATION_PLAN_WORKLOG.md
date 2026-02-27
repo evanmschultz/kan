@@ -2,8 +2,9 @@
 
 Created: 2026-02-25  
 Owner: orchestrator (Codex)  
-Status: planning locked, implementation not started  
+Status: active; partial implementation and checkpoints recorded, with outstanding tasks remaining  
 Primary test source: `COLLABORATIVE_POST_FIX_VALIDATION_WORKSHEET.md`  
+Canonical MCP execution runbook: `MCP_FULL_TESTER_AGENT_RUNBOOK.md`  
 Recovered baseline source: `.tmp/old-worksheet-audit/COLLABORATIVE_FULL_E2E_TEST_WORKSHEET.HEAD.md`  
 Evidence root: `.tmp/collab-e2e-20260225_080750/`
 
