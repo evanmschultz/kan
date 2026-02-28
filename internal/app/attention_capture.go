@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hylla/hakoll/internal/domain"
+	"github.com/hylla/tillsyn/internal/domain"
 )
 
 // CaptureStateView identifies the sizing profile used by CaptureState.

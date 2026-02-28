@@ -6,10 +6,10 @@ Set Width 1200
 Set Height 520
 Set Framerate 30
 
-Type "rm -f /tmp/koll-vhs-regression-scroll.db"
+Type "rm -f /tmp/till-vhs-regression-scroll.db"
 Enter
 Sleep 300ms
-Type "KOLL_DB_PATH=/tmp/koll-vhs-regression-scroll.db ./koll"
+Type "TILL_DB_PATH=/tmp/till-vhs-regression-scroll.db ./till"
 Enter
 Sleep 1200ms
 

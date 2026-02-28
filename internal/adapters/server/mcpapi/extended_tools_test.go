@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hylla/hakoll/internal/adapters/server/common"
-	"github.com/hylla/hakoll/internal/domain"
+	"github.com/hylla/tillsyn/internal/adapters/server/common"
+	"github.com/hylla/tillsyn/internal/domain"
 )
 
 // stubExpandedService provides deterministic responses for expanded MCP tool coverage tests.
@@ -379,32 +379,32 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		toolNames = append(toolNames, name)
 	}
 	requiredTools := []string{
-		"koll.get_bootstrap_guide",
-		"koll.list_projects",
-		"koll.create_project",
-		"koll.update_project",
-		"koll.list_tasks",
-		"koll.create_task",
-		"koll.update_task",
-		"koll.move_task",
-		"koll.delete_task",
-		"koll.restore_task",
-		"koll.reparent_task",
-		"koll.list_child_tasks",
-		"koll.search_task_matches",
-		"koll.list_project_change_events",
-		"koll.get_project_dependency_rollup",
-		"koll.list_kind_definitions",
-		"koll.upsert_kind_definition",
-		"koll.set_project_allowed_kinds",
-		"koll.list_project_allowed_kinds",
-		"koll.issue_capability_lease",
-		"koll.heartbeat_capability_lease",
-		"koll.renew_capability_lease",
-		"koll.revoke_capability_lease",
-		"koll.revoke_all_capability_leases",
-		"koll.create_comment",
-		"koll.list_comments_by_target",
+		"till.get_bootstrap_guide",
+		"till.list_projects",
+		"till.create_project",
+		"till.update_project",
+		"till.list_tasks",
+		"till.create_task",
+		"till.update_task",
+		"till.move_task",
+		"till.delete_task",
+		"till.restore_task",
+		"till.reparent_task",
+		"till.list_child_tasks",
+		"till.search_task_matches",
+		"till.list_project_change_events",
+		"till.get_project_dependency_rollup",
+		"till.list_kind_definitions",
+		"till.upsert_kind_definition",
+		"till.set_project_allowed_kinds",
+		"till.list_project_allowed_kinds",
+		"till.issue_capability_lease",
+		"till.heartbeat_capability_lease",
+		"till.renew_capability_lease",
+		"till.revoke_capability_lease",
+		"till.revoke_all_capability_leases",
+		"till.create_comment",
+		"till.list_comments_by_target",
 	}
 	for _, toolName := range requiredTools {
 		found := false
@@ -423,32 +423,32 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		name string
 		args map[string]any
 	}{
-		{name: "koll.get_bootstrap_guide", args: map[string]any{}},
-		{name: "koll.list_projects", args: map[string]any{"include_archived": true}},
-		{name: "koll.create_project", args: map[string]any{"name": "Project One"}},
-		{name: "koll.update_project", args: map[string]any{"project_id": "p1", "name": "Project One Updated"}},
-		{name: "koll.list_tasks", args: map[string]any{"project_id": "p1"}},
-		{name: "koll.create_task", args: map[string]any{"project_id": "p1", "column_id": "c1", "title": "Task One"}},
-		{name: "koll.update_task", args: map[string]any{"task_id": "t1", "title": "Task One Updated"}},
-		{name: "koll.move_task", args: map[string]any{"task_id": "t1", "to_column_id": "c2", "position": 1}},
-		{name: "koll.delete_task", args: map[string]any{"task_id": "t1"}},
-		{name: "koll.restore_task", args: map[string]any{"task_id": "t1"}},
-		{name: "koll.reparent_task", args: map[string]any{"task_id": "t1", "parent_id": "parent-1"}},
-		{name: "koll.list_child_tasks", args: map[string]any{"project_id": "p1", "parent_id": "parent-1"}},
-		{name: "koll.search_task_matches", args: map[string]any{"project_id": "p1", "query": "task"}},
-		{name: "koll.list_project_change_events", args: map[string]any{"project_id": "p1", "limit": 25}},
-		{name: "koll.get_project_dependency_rollup", args: map[string]any{"project_id": "p1"}},
-		{name: "koll.list_kind_definitions", args: map[string]any{}},
-		{name: "koll.upsert_kind_definition", args: map[string]any{"id": "phase", "applies_to": []any{"phase"}}},
-		{name: "koll.set_project_allowed_kinds", args: map[string]any{"project_id": "p1", "kind_ids": []any{"phase", "task"}}},
-		{name: "koll.list_project_allowed_kinds", args: map[string]any{"project_id": "p1"}},
-		{name: "koll.issue_capability_lease", args: map[string]any{"project_id": "p1", "scope_type": "project", "role": "worker", "agent_name": "agent-1"}},
-		{name: "koll.heartbeat_capability_lease", args: map[string]any{"agent_instance_id": "inst-1", "lease_token": "tok-1"}},
-		{name: "koll.renew_capability_lease", args: map[string]any{"agent_instance_id": "inst-1", "lease_token": "tok-1", "ttl_seconds": 60}},
-		{name: "koll.revoke_capability_lease", args: map[string]any{"agent_instance_id": "inst-1"}},
-		{name: "koll.revoke_all_capability_leases", args: map[string]any{"project_id": "p1", "scope_type": "project"}},
-		{name: "koll.create_comment", args: map[string]any{"project_id": "p1", "target_type": "task", "target_id": "t1", "body_markdown": "hello"}},
-		{name: "koll.list_comments_by_target", args: map[string]any{"project_id": "p1", "target_type": "task", "target_id": "t1"}},
+		{name: "till.get_bootstrap_guide", args: map[string]any{}},
+		{name: "till.list_projects", args: map[string]any{"include_archived": true}},
+		{name: "till.create_project", args: map[string]any{"name": "Project One"}},
+		{name: "till.update_project", args: map[string]any{"project_id": "p1", "name": "Project One Updated"}},
+		{name: "till.list_tasks", args: map[string]any{"project_id": "p1"}},
+		{name: "till.create_task", args: map[string]any{"project_id": "p1", "column_id": "c1", "title": "Task One"}},
+		{name: "till.update_task", args: map[string]any{"task_id": "t1", "title": "Task One Updated"}},
+		{name: "till.move_task", args: map[string]any{"task_id": "t1", "to_column_id": "c2", "position": 1}},
+		{name: "till.delete_task", args: map[string]any{"task_id": "t1"}},
+		{name: "till.restore_task", args: map[string]any{"task_id": "t1"}},
+		{name: "till.reparent_task", args: map[string]any{"task_id": "t1", "parent_id": "parent-1"}},
+		{name: "till.list_child_tasks", args: map[string]any{"project_id": "p1", "parent_id": "parent-1"}},
+		{name: "till.search_task_matches", args: map[string]any{"project_id": "p1", "query": "task"}},
+		{name: "till.list_project_change_events", args: map[string]any{"project_id": "p1", "limit": 25}},
+		{name: "till.get_project_dependency_rollup", args: map[string]any{"project_id": "p1"}},
+		{name: "till.list_kind_definitions", args: map[string]any{}},
+		{name: "till.upsert_kind_definition", args: map[string]any{"id": "phase", "applies_to": []any{"phase"}}},
+		{name: "till.set_project_allowed_kinds", args: map[string]any{"project_id": "p1", "kind_ids": []any{"phase", "task"}}},
+		{name: "till.list_project_allowed_kinds", args: map[string]any{"project_id": "p1"}},
+		{name: "till.issue_capability_lease", args: map[string]any{"project_id": "p1", "scope_type": "project", "role": "worker", "agent_name": "agent-1"}},
+		{name: "till.heartbeat_capability_lease", args: map[string]any{"agent_instance_id": "inst-1", "lease_token": "tok-1"}},
+		{name: "till.renew_capability_lease", args: map[string]any{"agent_instance_id": "inst-1", "lease_token": "tok-1", "ttl_seconds": 60}},
+		{name: "till.revoke_capability_lease", args: map[string]any{"agent_instance_id": "inst-1"}},
+		{name: "till.revoke_all_capability_leases", args: map[string]any{"project_id": "p1", "scope_type": "project"}},
+		{name: "till.create_comment", args: map[string]any{"project_id": "p1", "target_type": "task", "target_id": "t1", "body_markdown": "hello"}},
+		{name: "till.list_comments_by_target", args: map[string]any{"project_id": "p1", "target_type": "task", "target_id": "t1"}},
 	}
 	for idx, tc := range calls {
 		resp, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(100+idx, tc.name, tc.args))
@@ -477,7 +477,7 @@ func TestHandlerExpandedToolForwardsActorTupleFields(t *testing.T) {
 	defer server.Close()
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
-	_, updateResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(301, "koll.update_task", map[string]any{
+	_, updateResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(301, "till.update_task", map[string]any{
 		"task_id":    "t1",
 		"title":      "Task One Updated",
 		"actor_type": "user",
@@ -493,7 +493,7 @@ func TestHandlerExpandedToolForwardsActorTupleFields(t *testing.T) {
 		t.Fatalf("update_task agent_name = %q, want EVAN", got)
 	}
 
-	_, restoreResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(302, "koll.restore_task", map[string]any{
+	_, restoreResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(302, "till.restore_task", map[string]any{
 		"task_id":           "t1",
 		"actor_type":        "agent",
 		"agent_name":        "agent-1",
@@ -537,7 +537,7 @@ func TestHandlerExpandedToolInvalidBindArguments(t *testing.T) {
 	defer server.Close()
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
-	_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(201, "koll.create_project", map[string]any{
+	_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(201, "till.create_project", map[string]any{
 		"name": 123,
 	}))
 	if isError, _ := callResp.Result["isError"].(bool); !isError {

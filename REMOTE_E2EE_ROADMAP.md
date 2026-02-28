@@ -1,4 +1,4 @@
-# Remote E2EE Architecture + Roadmap For `hakoll`
+# Remote E2EE Architecture + Roadmap For `tillsyn`
 
 Created: 2026-02-27  
 Owner: product/architecture planning  
@@ -8,9 +8,9 @@ Status: proposed (design + execution plan)
 
 Add optional remote collaboration for customer organizations while preserving:
 
-1. local-first `hakoll` UX and offline operation,
+1. local-first `tillsyn` UX and offline operation,
 2. zero required cloud dependencies for OSS local-only users,
-3. end-to-end encrypted (E2EE) customer project data such that the `hakoll` service operator cannot read project/task/file content.
+3. end-to-end encrypted (E2EE) customer project data such that the `tillsyn` service operator cannot read project/task/file content.
 
 This roadmap covers two tracks:
 
@@ -21,7 +21,7 @@ This roadmap covers two tracks:
 
 1. Local-first SQLite is the current primary persistence model.
 2. HTTP + MCP serve surfaces exist and are currently local/dev oriented.
-3. Snapshot import/export exists (`hakoll.snapshot.v1` JSON model).
+3. Snapshot import/export exists (`tillsyn.snapshot.v1` JSON model).
 4. Task metadata already supports resource references and project-root attachment boundaries.
 5. Remote/team auth-tenancy and hardening are explicitly roadmap/deferred in active planning docs.
 
@@ -35,9 +35,9 @@ Primary repo references:
 
 ## 3) Required Product Constraints
 
-1. The same `hakoll` client must support:
-   - local-only personal projects,
-   - remote org projects synced from the cloud.
+1. The same `tillsyn` client must support:
+    - local-only personal projects,
+    - remote org projects synced from the cloud.
 2. Remote org projects must live-update across authorized org members.
 3. Org data content (project/task/comment/attachment payloads) must be unreadable to service operators.
 4. Export/import must remain first-class and project-scoped portability must improve.
@@ -63,24 +63,24 @@ These are explicitly agreed implementation decisions for the next wave:
 
 1. MCP transport in OSS runtime is HTTP-only for now (Streamable HTTP endpoint).
 2. No stdio MCP transport in this immediate wave.
-3. `koll serve` remains the explicit headless runtime entrypoint.
-4. `koll` (TUI launch) must ensure local server availability:
-   - if already running, reuse it and do not restart,
-   - if not running, auto-start local server process and continue.
+3. `till serve` remains the explicit headless runtime entrypoint.
+4. `till` (TUI launch) must ensure local server availability:
+    - if already running, reuse it and do not restart,
+    - if not running, auto-start local server process and continue.
 5. Default local server bind target is `127.0.0.1:5437`.
 6. If `5437` is unavailable, auto-select another available local endpoint and surface it to the user.
 7. Endpoint must be user-selectable from:
-   - CLI launch flags/options,
-   - TUI runtime settings.
+    - CLI launch flags/options,
+    - TUI runtime settings.
 8. HTTP-first transport is also the canonical path for:
-   - future non-CLI clients,
-   - hosted remote/org service endpoints,
-   - browser/webapp-adjacent integration surfaces.
+    - future non-CLI clients,
+    - hosted remote/org service endpoints,
+    - browser/webapp-adjacent integration surfaces.
 
 ## 4.2 Why HTTP-Only First (Now)
 
 1. Keeps one transport contract across local + remote.
-2. Matches existing `hakoll` implementation (`serve` is already headless; TUI is not required at runtime).
+2. Matches existing `tillsyn` implementation (`serve` is already headless; TUI is not required at runtime).
 3. Reduces branching complexity in auth, observability, and test matrices.
 4. Supports future non-CLI clients better than stdio-only.
 5. Allows stdio to be added later as an optional compatibility transport if needed.
@@ -88,11 +88,11 @@ These are explicitly agreed implementation decisions for the next wave:
 ## 4.3 MCP-Go Viability + Known Limits (Planning Constraints)
 
 1. `mcp-go` supports Streamable HTTP and stdio transports, and can run multiple transports in one process.
-2. Current `hakoll` implementation already uses Streamable HTTP in stateless mode for MCP.
+2. Current `tillsyn` implementation already uses Streamable HTTP in stateless mode for MCP.
 3. HTTP-only requires a running server process; clients cannot talk to MCP when no process is bound.
 4. Streamable HTTP is the right long-term path for remote/multi-client and web-facing integration.
 5. Known limitation from `mcp-go` docs to track:
-   - some advanced sampling-related behavior is not supported on Streamable HTTP.
+    - some advanced sampling-related behavior is not supported on Streamable HTTP.
 
 ## 5) Why This Fits Better Than Alternatives
 
@@ -140,11 +140,11 @@ Local users still get no extra service dependencies. Remote collaboration become
 1. User edits remote project in TUI.
 2. Client commits edit to local SQLite immediately (low latency UX).
 3. Client generates deterministic mutation event:
-   - `project_id`,
-   - `client_event_id` (idempotency),
-   - `base_seq` (last known remote seq),
-   - encrypted payload,
-   - signature/MAC metadata.
+    - `project_id`,
+    - `client_event_id` (idempotency),
+    - `base_seq` (last known remote seq),
+    - encrypted payload,
+    - signature/MAC metadata.
 4. Server validates auth + org/project ACL + replay/idempotency.
 5. Server persists encrypted event and assigns monotonic `project_seq`.
 6. Server emits realtime notification with `{project_id, project_seq}` to subscribers.
@@ -177,34 +177,34 @@ Board/project picker behavior:
 
 ## 8.1 Local Runtime Modes
 
-1. `koll`:
-   - launches TUI,
-   - probes configured local HTTP server endpoint,
-   - reuses existing running server if healthy,
-   - otherwise auto-starts local serve process.
-2. `koll serve`:
-   - explicit headless API/MCP server process,
-   - useful for external MCP clients, scripting, and remote-sync-only sessions.
+1. `till`:
+    - launches TUI,
+    - probes configured local HTTP server endpoint,
+    - reuses existing running server if healthy,
+    - otherwise auto-starts local serve process.
+2. `till serve`:
+    - explicit headless API/MCP server process,
+    - useful for external MCP clients, scripting, and remote-sync-only sessions.
 3. Future optional mode:
-   - persistent daemon/service install (`launchd`/`systemd`) can be added later,
-   - not required for initial rollout.
+    - persistent daemon/service install (`launchd`/`systemd`) can be added later,
+    - not required for initial rollout.
 
 ## 8.2 Endpoint Selection + Fallback Policy
 
 1. Default bind:
-   - `127.0.0.1:5437`.
+    - `127.0.0.1:5437`.
 2. If bind fails:
-   - attempt deterministic fallback ports (for example `5438..5457`),
-   - if fallback range exhausted, allocate an OS-assigned local port.
+    - attempt deterministic fallback ports (for example `5438..5457`),
+    - if fallback range exhausted, allocate an OS-assigned local port.
 3. Chosen endpoint is written to runtime state for discovery by:
-   - subsequent TUI launches,
-   - local MCP client configuration helpers.
+    - subsequent TUI launches,
+    - local MCP client configuration helpers.
 4. User controls:
-   - CLI flag override for bind endpoint,
-   - TUI settings screen to view/edit active endpoint.
+    - CLI flag override for bind endpoint,
+    - TUI settings screen to view/edit active endpoint.
 5. Safety:
-   - localhost bind only by default,
-   - explicit non-local binds require deliberate user opt-in.
+    - localhost bind only by default,
+    - explicit non-local binds require deliberate user opt-in.
 
 ## 8.3 Local Server Supervisor Behavior
 
@@ -221,9 +221,9 @@ Deliverables:
 
 1. migrate CLI from `flag` package to Charm Fang + Cobra command tree,
 2. command UX shape:
-   - `koll` (TUI with local-server ensure behavior),
-   - `koll serve` (headless server),
-   - `koll export` / `koll import` / `koll paths`.
+    - `till` (TUI with local-server ensure behavior),
+    - `till serve` (headless server),
+    - `till export` / `till import` / `till paths`.
 3. deterministic help/usage behavior for root + subcommands,
 4. local-server endpoint controls in CLI flags and config persistence,
 5. TUI startup supervisor behavior (reuse running server; auto-start only when needed),
@@ -231,9 +231,9 @@ Deliverables:
 
 Acceptance:
 
-1. `koll --help` and `koll serve --help` are deterministic and side-effect free,
-2. launching `koll` with running server does not restart server process,
-3. launching `koll` without running server auto-starts server and surfaces endpoint,
+1. `till --help` and `till serve --help` are deterministic and side-effect free,
+2. launching `till` with running server does not restart server process,
+3. launching `till` without running server auto-starts server and surfaces endpoint,
 4. default endpoint starts at `127.0.0.1:5437` with automatic fallback behavior,
 5. regression tests cover supervisor/reuse/fallback flows.
 
@@ -257,11 +257,11 @@ Acceptance:
 Deliverables:
 
 1. local tables for remote sync state:
-   - remote project registry,
-   - per-project sync cursor,
-   - outbound event queue,
-   - inbound event dedupe ledger,
-   - key-envelope cache.
+    - remote project registry,
+    - per-project sync cursor,
+    - outbound event queue,
+    - inbound event dedupe ledger,
+    - key-envelope cache.
 2. domain structs for event envelope and file manifests.
 3. snapshot version bump plan for remote metadata compatibility.
 
@@ -276,11 +276,11 @@ Acceptance:
 Deliverables:
 
 1. sync engine module with:
-   - queueing,
-   - retry/backoff,
-   - ordered apply,
-   - idempotency,
-   - checkpointing.
+    - queueing,
+    - retry/backoff,
+    - ordered apply,
+    - idempotency,
+    - checkpointing.
 2. pluggable transport adapter interface (HTTP/MCP websocket/poll abstraction).
 3. structured logs and notices integration for sync failures/recovery.
 
@@ -296,10 +296,10 @@ Deliverables:
 
 1. preserve current local attachment behavior for local projects,
 2. add remote attachment flow:
-   - client-side encryption streaming,
-   - pre-signed upload/download URLs,
-   - encrypted file manifest event commit,
-   - local cache policy.
+    - client-side encryption streaming,
+    - pre-signed upload/download URLs,
+    - encrypted file manifest event commit,
+    - local cache policy.
 3. size/quota guardrails and resumable upload behavior.
 
 Acceptance:
@@ -315,9 +315,9 @@ Recommended policy for v1:
 1. operation-based event model with deterministic reducers,
 2. optimistic writes with base-seq precondition,
 3. on divergence:
-   - non-overlapping field edits auto-merge,
-   - overlapping edits use deterministic last-writer policy plus conflict notice,
-   - optional manual conflict resolution action in TUI.
+    - non-overlapping field edits auto-merge,
+    - overlapping edits use deterministic last-writer policy plus conflict notice,
+    - optional manual conflict resolution action in TUI.
 
 Acceptance:
 
@@ -331,8 +331,8 @@ Deliverables:
 
 1. keep current JSON snapshot import/export path,
 2. add project-scoped remote-aware exports:
-   - decrypted portable export (user-controlled, local use/interoperability),
-   - encrypted backup bundle (events + manifests + blobs metadata + key envelopes).
+    - decrypted portable export (user-controlled, local use/interoperability),
+    - encrypted backup bundle (events + manifests + blobs metadata + key envelopes).
 3. local DB-file export guidance based on SQLite backup mechanisms (safe copy workflow).
 
 Acceptance:
@@ -363,38 +363,38 @@ Each phase below is designed for single-branch parallel execution with non-overl
 ### Phase R-CLI lanes
 
 1. `RCLI-L1` CLI framework lane:
-   - scope: `cmd/koll/**`, CLI tests, command/help docs.
+    - scope: `cmd/till/**`, CLI tests, command/help docs.
 2. `RCLI-L2` local-server supervisor lane:
-   - scope: runtime process-management module(s), endpoint selection/fallback logic, related tests.
+    - scope: runtime process-management module(s), endpoint selection/fallback logic, related tests.
 3. `RCLI-L3` TUI integration lane:
-   - scope: TUI startup/runtime settings/status surfaces and tests.
+    - scope: TUI startup/runtime settings/status surfaces and tests.
 
 ### Phase R0-R2 lanes
 
 1. `RDATA-L1` domain/app contracts:
-   - scope: `internal/domain/**`, `internal/app/**`.
+    - scope: `internal/domain/**`, `internal/app/**`.
 2. `RDATA-L2` storage/migrations:
-   - scope: `internal/adapters/storage/sqlite/**`.
+    - scope: `internal/adapters/storage/sqlite/**`.
 3. `RDATA-L3` transport adapters:
-   - scope: `internal/adapters/server/**`, transport contract tests.
+    - scope: `internal/adapters/server/**`, transport contract tests.
 
 ### Phase R3-R4 lanes
 
 1. `RFILE-L1` encrypted attachment pipeline:
-   - scope: file-manifest domain/app logic.
+    - scope: file-manifest domain/app logic.
 2. `RFILE-L2` upload/download adapter lane:
-   - scope: transport + blob gateway integration.
+    - scope: transport + blob gateway integration.
 3. `RFILE-L3` conflict/merge lane:
-   - scope: reducer logic, replay/convergence tests.
+    - scope: reducer logic, replay/convergence tests.
 
 ### Phase R5-R6 lanes
 
 1. `RUX-L1` import/export compatibility lane:
-   - scope: snapshot/export/import code and tests.
+    - scope: snapshot/export/import code and tests.
 2. `RUX-L2` onboarding/settings lane:
-   - scope: TUI UX and config surfaces.
+    - scope: TUI UX and config surfaces.
 3. `RUX-L3` docs/runbook lane:
-   - scope: `README.md`, MCP runbooks, dogfooding worksheets, policy docs.
+    - scope: `README.md`, MCP runbooks, dogfooding worksheets, policy docs.
 
 Global lane rules:
 
@@ -424,18 +424,18 @@ Global lane rules:
 ## 10.3 Release waves
 
 1. Cloud Alpha:
-   - small org pilot,
-   - core project/task/comment sync,
-   - basic file uploads (images/PDF),
-   - manual key recovery policy.
+    - small org pilot,
+    - core project/task/comment sync,
+    - basic file uploads (images/PDF),
+    - manual key recovery policy.
 2. Cloud Beta:
-   - improved conflict tooling,
-   - richer file handling (resume/chunk verification),
-   - admin controls and audit views.
+    - improved conflict tooling,
+    - richer file handling (resume/chunk verification),
+    - admin controls and audit views.
 3. GA:
-   - SLA/SLO targets,
-   - billing integration,
-   - regional data controls and documented incident response.
+    - SLA/SLO targets,
+    - billing integration,
+    - regional data controls and documented incident response.
 
 ## 11) Alignment With Existing Active Backlog + Unresolved Findings
 
@@ -445,8 +445,8 @@ This roadmap does **not** replace active closeout priorities in current plan doc
 
 1. Current immediate lock remains Phase 0 collaborative closeout.
 2. Existing deferred Phase 5 already flags:
-   - advanced import/export divergence reconciliation,
-   - multi-user/team auth-tenancy and security hardening.
+    - advanced import/export divergence reconciliation,
+    - multi-user/team auth-tenancy and security hardening.
 3. Remote roadmap should branch from that Phase 5 area after Phase 0-4 completion.
 
 ## 11.2 Remediation worksheet alignment
@@ -488,43 +488,52 @@ References:
 ## 14.1 External technical references
 
 1. SQLite isolation + WAL:
-   - https://sqlite.org/isolation.html
-   - https://sqlite.org/wal.html
+    - https://sqlite.org/isolation.html
+    - https://sqlite.org/wal.html
 2. SQLite over network caveats:
-   - https://sqlite.org/useovernet.html
+    - https://sqlite.org/useovernet.html
 3. SQLite backup/export mechanisms:
-   - https://sqlite.org/backup.html
-   - https://sqlite.org/lang_vacuum.html
+    - https://sqlite.org/backup.html
+    - https://sqlite.org/lang_vacuum.html
 4. SQLite session/changeset extension:
-   - https://sqlite.org/sessionintro.html
+    - https://sqlite.org/sessionintro.html
 5. PostgreSQL row-level security:
-   - https://www.postgresql.org/docs/current/ddl-rowsecurity.html
+    - https://www.postgresql.org/docs/current/ddl-rowsecurity.html
 6. PostgreSQL LISTEN/NOTIFY:
-   - https://www.postgresql.org/docs/current/sql-listen.html
-   - https://www.postgresql.org/docs/current/sql-notify.html
+    - https://www.postgresql.org/docs/current/sql-listen.html
+    - https://www.postgresql.org/docs/current/sql-notify.html
 7. WebSocket protocol:
-   - https://www.rfc-editor.org/rfc/rfc6455
+    - https://www.rfc-editor.org/rfc/rfc6455
 8. S3 model references (consistency/presigned URLs/versioning):
-   - https://docs.aws.amazon.com/AmazonS3/latest/userguide/Welcome.html
-   - https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-presigned-url.html
-   - https://docs.aws.amazon.com/AmazonS3/latest/userguide/Versioning.html
+    - https://docs.aws.amazon.com/AmazonS3/latest/userguide/Welcome.html
+    - https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-presigned-url.html
+    - https://docs.aws.amazon.com/AmazonS3/latest/userguide/Versioning.html
 9. Streaming authenticated encryption reference:
-   - https://doc.libsodium.org/secret-key_cryptography/secretstream
+    - https://doc.libsodium.org/secret-key_cryptography/secretstream
 10. Optional SQLite-remote alternative references:
-   - https://docs.turso.tech/features/embedded-replicas/introduction
-   - https://litestream.io/getting-started/
+
+- https://docs.turso.tech/features/embedded-replicas/introduction
+- https://litestream.io/getting-started/
+
 11. MCP transport and architecture references:
-   - https://modelcontextprotocol.io/docs/learn/architecture
-   - https://modelcontextprotocol.io/specification/2025-03-26/basic/transports
+
+- https://modelcontextprotocol.io/docs/learn/architecture
+- https://modelcontextprotocol.io/specification/2025-03-26/basic/transports
+
 12. Cobra documentation:
-   - https://github.com/spf13/cobra
+
+- https://github.com/spf13/cobra
+
 13. Fang documentation:
-   - https://github.com/charmbracelet/fang
+
+- https://github.com/charmbracelet/fang
+
 14. MCP-Go transport references:
-   - https://mcp-go.dev/transports/
-   - https://mcp-go.dev/transports/http
-   - https://mcp-go.dev/transports/stdio/
-   - https://mcp-go.dev/servers/advanced-sampling/
+
+- https://mcp-go.dev/transports/
+- https://mcp-go.dev/transports/http
+- https://mcp-go.dev/transports/stdio/
+- https://mcp-go.dev/servers/advanced-sampling/
 
 ## 14.2 Context7 evidence used for this plan
 

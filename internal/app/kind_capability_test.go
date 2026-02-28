@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hylla/hakoll/internal/domain"
+	"github.com/hylla/tillsyn/internal/domain"
 )
 
 // boolPtr returns a pointer to one bool value.

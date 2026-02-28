@@ -8,15 +8,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hylla/hakoll/internal/app"
-	"github.com/hylla/hakoll/internal/domain"
+	"github.com/hylla/tillsyn/internal/app"
+	"github.com/hylla/tillsyn/internal/domain"
 	_ "modernc.org/sqlite"
 )
 
 // TestRepository_ProjectColumnTaskLifecycle verifies behavior for the covered scenario.
 func TestRepository_ProjectColumnTaskLifecycle(t *testing.T) {
 	ctx := context.Background()
-	dbPath := filepath.Join(t.TempDir(), "hakoll.db")
+	dbPath := filepath.Join(t.TempDir(), "tillsyn.db")
 	repo, err := Open(dbPath)
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
@@ -159,7 +159,7 @@ func TestRepository_CreateAndListCommentsByTarget(t *testing.T) {
 		TargetID:     project.ID,
 		BodyMarkdown: "project note",
 		ActorType:    domain.ActorTypeSystem,
-		AuthorName:   "hakoll",
+		AuthorName:   "tillsyn",
 	}, now.Add(time.Minute))
 	if err != nil {
 		t.Fatalf("NewComment(c3) error = %v", err)
@@ -234,7 +234,7 @@ func TestRepository_NotFoundCases(t *testing.T) {
 // TestRepository_ProjectAndColumnUpdates verifies behavior for the covered scenario.
 func TestRepository_ProjectAndColumnUpdates(t *testing.T) {
 	ctx := context.Background()
-	repo, err := Open(filepath.Join(t.TempDir(), "hakoll.db"))
+	repo, err := Open(filepath.Join(t.TempDir(), "tillsyn.db"))
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
@@ -246,7 +246,7 @@ func TestRepository_ProjectAndColumnUpdates(t *testing.T) {
 	project, _ := domain.NewProject("p1", "Alpha", "desc", now)
 	project.Metadata = domain.ProjectMetadata{
 		Owner: "owner-1",
-		Tags:  []string{"hakoll"},
+		Tags:  []string{"tillsyn"},
 	}
 	if err := repo.CreateProject(ctx, project); err != nil {
 		t.Fatalf("CreateProject() error = %v", err)

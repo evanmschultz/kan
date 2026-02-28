@@ -327,14 +327,14 @@ File edits in this checkpoint:
 Test status:
 - `test_not_applicable` (docs-only changes; no code/test behavior modified).
 
-### 2026-02-28: Rename Wave Kickoff (hakoll project + koll command)
+### 2026-02-28: Rename Wave Kickoff (tillsyn project + till command)
 
 Objective:
-- execute full no-compat rename from `kan` to `hakoll` (project/repo identity) and `koll` (runtime command/binary), then revalidate parity with `just check` and `just ci`.
+- execute full no-compat rename from `kan` to `tillsyn` (project/repo identity) and `till` (runtime command/binary), then revalidate parity with `just check` and `just ci`.
 
 Commands run and outcomes:
 1. `git status --short` -> PASS (`README.md` staged change only).
-2. `git add README.md && git commit -m "docs: note hakoll naming origin in README"` -> PASS (`aadf95c`).
+2. `git add README.md && git commit -m "docs: note tillsyn naming origin in README"` -> PASS (`aadf95c`).
 3. Context7:
    - `resolve-library-id` for Go (`/golang/go`) -> PASS.
    - `query-docs` on module path/import rename implications -> PASS.
@@ -354,25 +354,25 @@ Test status:
 ### 2026-02-28: Rename Wave Implementation Complete (No Compatibility Layer)
 
 Objective:
-- complete the all-at-once rename from `kan` to `hakoll` (project/repo/module identity) and `koll` (runtime command/binary/tool namespace), with no compatibility aliases.
+- complete the all-at-once rename from `kan` to `tillsyn` (project/repo/module identity) and `till` (runtime command/binary/tool namespace), with no compatibility aliases.
 
 Subagent lane execution and outcomes:
 1. `R1-core-cli` (core CLI/module/build/path surfaces) -> PASS
-   - scope delivered: `go.mod`, `cmd/koll/**` (from `cmd/kan/**`), `internal/platform/**`, `internal/config/**`, `internal/tui/**`, `Justfile`, `.goreleaser.yml`, `.github/workflows/ci.yml`, `.gitignore`, `config.example.toml`, `cmd/headerlab/main.go`.
+   - scope delivered: `go.mod`, `cmd/till/**` (from `cmd/kan/**`), `internal/platform/**`, `internal/config/**`, `internal/tui/**`, `Justfile`, `.goreleaser.yml`, `.github/workflows/ci.yml`, `.gitignore`, `config.example.toml`, `cmd/headerlab/main.go`.
 2. `R2-runtime-mcp` (server/app/domain/storage surfaces) -> PASS
    - scope delivered: `internal/adapters/server/**`, `internal/adapters/storage/sqlite/**`, `internal/app/**`, `internal/domain/**`.
 3. `R3-docs-ops` (docs/runbooks/worksheets/tapes) -> PASS
    - scope delivered: `README.md`, `AGENTS.md`, `MCP_*`, `COLLAB*`, `REMOTE_E2EE_ROADMAP.md`, `vhs/**`.
 
 Commands run and outcomes:
-1. Integrator gate run `just check` -> FAIL (verify-sources pathspec before staging renamed `cmd/koll/*` files).
+1. Integrator gate run `just check` -> FAIL (verify-sources pathspec before staging renamed `cmd/till/*` files).
 2. Context7 re-consult (Go rename/staging implications) -> PASS.
-3. Staged rename paths and reran `just check` -> FAIL (`gofmt required for cmd/koll/main.go`).
+3. Staged rename paths and reran `just check` -> FAIL (`gofmt required for cmd/till/main.go`).
 4. Context7 re-consult (gofmt workflow) -> PASS.
 5. `just fmt` -> PASS.
 6. `just check` -> PASS.
 7. `just ci` -> PASS.
-8. Final cleanup of lingering test sample tokens (`kan` -> `hakoll`) in:
+8. Final cleanup of lingering test sample tokens (`kan` -> `tillsyn`) in:
    - `internal/adapters/storage/sqlite/repo_test.go`
    - `internal/app/service_test.go`
    - `internal/adapters/server/mcpapi/handler_test.go`
@@ -394,7 +394,7 @@ Objective:
 - resolve a docs regression introduced during rename sweep where absolute local links in the remote roadmap pointed at a non-existent workspace path.
 
 Commands run and outcomes:
-1. `rg -n "/Users/.*/personal/hakoll|/Users/.*/personal/kan" REMOTE_E2EE_ROADMAP.md ...` -> PASS (identified hardcoded absolute links).
+1. `rg -n "/Users/.*/personal/tillsyn|/Users/.*/personal/kan" REMOTE_E2EE_ROADMAP.md ...` -> PASS (identified hardcoded absolute links).
 2. Patched `REMOTE_E2EE_ROADMAP.md` links to repo-relative paths -> PASS.
 
 File edits in this checkpoint:
@@ -570,57 +570,57 @@ Test status:
 ### 2026-02-28: R-CLI-FANG-01 Integrated (Fang/Cobra CLI Migration)
 
 Objective:
-- replace stdlib `flag` CLI parsing in `cmd/koll` with Fang/Cobra, improve help/error UX, and remove orphaned parser code paths.
+- replace stdlib `flag` CLI parsing in `cmd/till` with Fang/Cobra, improve help/error UX, and remove orphaned parser code paths.
 
 Commands/tools run and outcomes:
 1. Context7 `resolve-library-id` + `query-docs` for `/charmbracelet/fang` and `/spf13/cobra` -> PASS (captured Execute/RunE/help/error patterns).
-2. Spawned worker lane `R-CLI-FANG-01` (lock scope: `cmd/koll/**`, `go.mod`, `go.sum`) -> PASS.
+2. Spawned worker lane `R-CLI-FANG-01` (lock scope: `cmd/till/**`, `go.mod`, `go.sum`) -> PASS.
 3. Worker lane package check loop:
-   - `just test-pkg ./cmd/koll` baseline -> PASS
-   - post-migration `just test-pkg ./cmd/koll` -> FAIL (missing `go.sum` entry)
-   - dependency fetch for missing checksum + `just fmt` + rerun `just test-pkg ./cmd/koll` -> PASS
+   - `just test-pkg ./cmd/till` baseline -> PASS
+   - post-migration `just test-pkg ./cmd/till` -> FAIL (missing `go.sum` entry)
+   - dependency fetch for missing checksum + `just fmt` + rerun `just test-pkg ./cmd/till` -> PASS
 4. Integrator verification:
    - `just check` -> PASS
    - `just ci` -> PASS
 5. Runtime smoke:
-   - `./koll --help` -> PASS (styled root help)
-   - `./koll serve --help` -> PASS (styled subcommand help)
-   - `./koll --badflag` -> PASS (styled error + guidance + existing `error: ...` line)
+   - `./till --help` -> PASS (styled root help)
+   - `./till serve --help` -> PASS (styled subcommand help)
+   - `./till --badflag` -> PASS (styled error + guidance + existing `error: ...` line)
 
 File edits in this checkpoint:
-1. `cmd/koll/main.go`
+1. `cmd/till/main.go`
    - migrated to Cobra command tree executed by Fang;
    - removed stdlib `flag` parser flow and related orphaned helpers;
    - preserved `tui` default, `serve`, `export`, `import`, and `paths` command behavior.
-2. `cmd/koll/main_test.go`
+2. `cmd/till/main_test.go`
    - updated/added help coverage for Fang/Cobra output behavior.
 3. `go.mod`, `go.sum`
    - added Fang/Cobra dependencies and required checksum entries.
 
 Current status:
 - CLI adapter migration is integrated locally and gated (`just check` + `just ci` passing).
-- No remaining orphaned stdlib `flag` parser path in `cmd/koll/main.go`.
+- No remaining orphaned stdlib `flag` parser path in `cmd/till/main.go`.
 
 ### 2026-02-28: Fang Output Refinement (Paths + Error Surface)
 
 Objective:
-- ensure command output/error surfaces are Fang-styled where practical, including `koll paths` presentation and removal of duplicate plain error output.
+- ensure command output/error surfaces are Fang-styled where practical, including `till paths` presentation and removal of duplicate plain error output.
 
 Commands run and outcomes:
 1. Context7 `query-docs /charmbracelet/fang` (output/error handler styling confirmation) -> PASS.
 2. `go doc github.com/charmbracelet/fang` + `go doc -all github.com/charmbracelet/fang` -> PASS (validated available APIs/Styles surface).
-3. `just fmt && just test-pkg ./cmd/koll` -> PASS.
+3. `just fmt && just test-pkg ./cmd/till` -> PASS.
 4. `just ci` -> PASS.
 5. Runtime smoke:
-   - `./koll paths` -> PASS (styled titled key/value output).
-   - `./koll --badflag` -> PASS (Fang-styled error block, no extra plain `error:` suffix).
+   - `./till paths` -> PASS (styled titled key/value output).
+   - `./till --badflag` -> PASS (Fang-styled error block, no extra plain `error:` suffix).
 
 File edits in this checkpoint:
-1. `cmd/koll/main.go`
+1. `cmd/till/main.go`
    - removed duplicate top-level plain error print in `main`;
    - added `writePathsOutput` using Fang default color scheme + lipgloss rendering;
    - routed `paths` command through styled renderer.
-2. `cmd/koll/main_test.go`
+2. `cmd/till/main_test.go`
    - updated `TestRunPathsCommand` assertions for titled/styled paths output semantics.
 
 Current status:
@@ -629,25 +629,25 @@ Current status:
 ### 2026-02-28: init-dev-config Regression Fix (TTY vs Non-TTY Paths Output)
 
 Objective:
-- restore automation compatibility for recipes parsing `koll paths` while keeping styled interactive output.
+- restore automation compatibility for recipes parsing `till paths` while keeping styled interactive output.
 
 Commands run and outcomes:
 1. `nl -ba Justfile | sed -n '1,140p'` -> PASS (identified parser dependency on `config: ...` format in `init-dev-config`/`clean-dev`).
 2. Context7 resolve/query for Go terminal package -> unavailable/insufficient for target package.
 3. Fallback doc source: `go doc golang.org/x/term.IsTerminal` -> PASS (`IsTerminal(fd int) bool`).
-4. `just fmt && just test-pkg ./cmd/koll && just ci` -> PASS.
+4. `just fmt && just test-pkg ./cmd/till && just ci` -> PASS.
 
 File edits in this checkpoint:
-1. `cmd/koll/main.go`
+1. `cmd/till/main.go`
    - `paths` now renders styled output only when stdout is a terminal and `NO_COLOR` is unset;
    - non-TTY output path restored to stable plain `key: value` lines for script parsing;
    - added small test hook variable for forcing styled mode in tests.
-2. `cmd/koll/main_test.go`
+2. `cmd/till/main_test.go`
    - restored plain-output assertions for `run(paths)` on non-TTY writers;
    - added tests for plain output, styled output path, and `supportsStyledOutput` behavior.
 
 Current status:
-- interactive `koll paths` remains styled;
+- interactive `till paths` remains styled;
 - non-interactive/pipe usage remains machine-parseable, fixing `just init-dev-config` and `just clean-dev` parsing behavior.
 
 ### 2026-02-28: Default Serve Endpoint Update to 5437
@@ -661,11 +661,11 @@ Commands run and outcomes:
 3. `just fmt && just check && just ci` -> PASS.
 
 File edits in this checkpoint:
-1. `cmd/koll/main.go`
+1. `cmd/till/main.go`
    - changed default `serve` flag HTTP bind from `127.0.0.1:8080` to `127.0.0.1:5437`.
 2. `internal/adapters/server/server.go`
    - changed server fallback bind constant to `127.0.0.1:5437`.
-3. `cmd/koll/main_test.go`
+3. `cmd/till/main_test.go`
    - updated default serve binding expectation to `127.0.0.1:5437`.
 
 Current status:
@@ -678,7 +678,7 @@ Objective:
 - capture explicit policy that dev-mode behavior must not be the default for packaged/public OSS distributions; contributors should opt into dev behavior explicitly.
 
 Policy note:
-- For release/brew installs and general OSS user flows, dev behavior should be opt-in (`--dev` or `KOLL_DEV_MODE=true`) rather than implicit default.
+- For release/brew installs and general OSS user flows, dev behavior should be opt-in (`--dev` or `TILL_DEV_MODE=true`) rather than implicit default.
 - Contributor workflows can still use explicit dev mode for isolated local paths/logging.
 - Future packaging/release hardening should verify non-dev defaults and avoid shipping with implicit dev-mode defaults.
 
@@ -688,22 +688,22 @@ Current status:
 ### 2026-02-28: Independent Live HTTP/MCP E2E Probe Sweep (Against User-Run Server)
 
 Objective:
-- run independent transport + parity probes against user-started `./koll serve` runtime on `127.0.0.1:5437`, acknowledging existing `User_Project` data.
+- run independent transport + parity probes against user-started `./till serve` runtime on `127.0.0.1:5437`, acknowledging existing `User_Project` data.
 
 Commands run and outcomes:
 1. HTTP connectivity probe:
    - `curl -i http://127.0.0.1:5437/api/v1/capture_state` -> PASS (reachable, deterministic 400 invalid_request for missing `project_id`).
 2. MCP initialize/tools discovery:
-   - `initialize` (`protocolVersion=2025-06-18`) -> PASS (200, negotiated protocol `2025-06-18`, server `hakoll/dev`).
-   - `tools/list` -> PASS (30 tools present, includes `koll.list_projects`).
+   - `initialize` (`protocolVersion=2025-06-18`) -> PASS (200, negotiated protocol `2025-06-18`, server `tillsyn/dev`).
+   - `tools/list` -> PASS (30 tools present, includes `till.list_projects`).
 3. Existing project probe (expected pre-seeded data):
-   - `tools/call koll.list_projects(include_archived=true)` -> PASS (`User_Project` present, treated as expected).
+   - `tools/call till.list_projects(include_archived=true)` -> PASS (`User_Project` present, treated as expected).
 4. HTTP/MCP parity on same project (`User_Project`, id `10cdd734-bf41-4155-b978-b5f5f5061050`):
-   - HTTP `GET /api/v1/capture_state?...view=summary` vs MCP `koll.capture_state(...view=summary)` -> PASS:
+   - HTTP `GET /api/v1/capture_state?...view=summary` vs MCP `till.capture_state(...view=summary)` -> PASS:
      - matching `state_hash`,
      - matching scope name (`User_Project`),
      - matching `work_overview.total_tasks=0`.
-   - HTTP `GET /api/v1/attention/items?...state=open` vs MCP `koll.list_attention_items(...state=open)` -> PASS:
+   - HTTP `GET /api/v1/attention/items?...state=open` vs MCP `till.list_attention_items(...state=open)` -> PASS:
      - matching item count (`0`).
 5. Stateless/transport behavior:
    - `tools/list` with bogus `Mcp-Session-Id` header -> PASS (200, request still works).
@@ -727,7 +727,7 @@ Current status:
 ### 2026-02-28: Bubble Tea v2 External-Update + Polling Research (No Code Edit)
 
 Objective:
-- collect authoritative guidance for Bubble Tea v2 external updates and live refresh loops (`Program.Send`, `tea.Tick`, `tea.Every`) and map it to current `koll` TUI architecture risks.
+- collect authoritative guidance for Bubble Tea v2 external updates and live refresh loops (`Program.Send`, `tea.Tick`, `tea.Every`) and map it to current `till` TUI architecture risks.
 
 Commands/research actions and outcomes:
 1. Context7:
@@ -740,7 +740,7 @@ Commands/research actions and outcomes:
      - `tea.go`, `commands.go` -> PASS (authoritative comments for send and timer semantics).
      - `examples/simple/main.go`, `examples/realtime/main.go`, `examples/send-msg/main.go`, discussion `#951` -> PASS (practical periodic and external-event patterns).
 3. Repo architecture mapping:
-   - reviewed `cmd/koll/main.go`, `internal/tui/model.go`, `internal/tui/thread_mode.go`, `internal/tui/options.go`, `internal/config/config.go` -> PASS.
+   - reviewed `cmd/till/main.go`, `internal/tui/model.go`, `internal/tui/thread_mode.go`, `internal/tui/options.go`, `internal/config/config.go` -> PASS.
    - confirmed current TUI uses command-triggered reloads (`m.loadData`) with no background tick loop and no `Program.Send` integration.
    - confirmed existing selection/focus retention hooks (`clampSelections`, `retainSelectionForLoadedTasks`, `focusTaskByID`) that can be leveraged for stale-selection mitigation.
 
@@ -766,7 +766,7 @@ Commands/research actions and outcomes:
 3. Implementation gates:
    - `just fmt` -> PASS.
    - `just test-pkg ./internal/tui` -> PASS.
-   - `just test-pkg ./cmd/koll` -> PASS.
+   - `just test-pkg ./cmd/till` -> PASS.
    - `just check` -> PASS.
    - `just ci` -> PASS.
 
@@ -780,7 +780,7 @@ File edits in this checkpoint:
    - refactored loaded-state application into `applyLoadedMsg` and wired auto-refresh flow to schedule follow-up ticks.
 3. `internal/tui/options.go`
    - added `WithAutoRefreshInterval(time.Duration)` option.
-4. `cmd/koll/main.go`
+4. `cmd/till/main.go`
    - enabled TUI auto-refresh in runtime with `tui.WithAutoRefreshInterval(2*time.Second)`.
 5. `internal/tui/model_test.go`
    - added live-refresh regression tests:
@@ -821,14 +821,14 @@ Actions taken:
 Current status:
 - bug fixed and verified; notices-panel `Recent Activity` now follows live external activity updates on normal board refresh.
 
-### 2026-02-28: Header Branding Correction (`KOLL` -> `HA KOLL`)
+### 2026-02-28: Header Branding Correction (`TILL` -> `HA TILL`)
 
 Objective:
-- align TUI header brand mark with project naming (`HA KOLL`) and keep tests/goldens green.
+- align TUI header brand mark with project naming (`HA TILL`) and keep tests/goldens green.
 
 Actions taken:
-1. Updated board header wordmark constant in `internal/tui/model.go` from `KOLL` to `HA KOLL`.
-2. Updated expanded help title label from `KOLL Help` to `HA KOLL Help` for consistent branding.
+1. Updated board header wordmark constant in `internal/tui/model.go` from `TILL` to `HA TILL`.
+2. Updated expanded help title label from `TILL Help` to `HA TILL Help` for consistent branding.
 3. Golden snapshot remediation after expected output change:
    - `just test-golden-update` -> PASS.
    - `just test-pkg ./internal/tui` -> PASS.
@@ -894,11 +894,11 @@ Current status:
 ### 2026-02-28: MCP/Change-Event Actor Attribution Trace + Minimal Remediation
 
 Objective:
-- trace actor attribution end-to-end (MCP -> server adapter -> app service -> sqlite change_events) and fix the specific gaps causing notices activity rows to appear as `user|hakoll-user` for orchestrator-driven mutations.
+- trace actor attribution end-to-end (MCP -> server adapter -> app service -> sqlite change_events) and fix the specific gaps causing notices activity rows to appear as `user|tillsyn-user` for orchestrator-driven mutations.
 
 Context + root-cause findings:
 1. MCP mutation actor tuple normalization lived in `withMutationGuardContext`, but user-attribution naming and guard tuple detection were conflated (explicit `actor_type=user` + `agent_name` was rejected).
-2. `koll.restore_task` did not accept/pass actor tuple at all, so restore mutations could not carry actor identity/guard context through MCP.
+2. `till.restore_task` did not accept/pass actor tuple at all, so restore mutations could not carry actor identity/guard context through MCP.
 3. Several app mutation paths (`move`, `restore`, `rename`, `reparent`, archive delete, and update-without-metadata) wrote task changes without reapplying caller actor identity, so persisted change events often reused fallback/default ownership.
 4. Hard delete change-event insertion path in sqlite used stored task actor fields only and did not honor request-scoped actor context.
 
@@ -919,7 +919,7 @@ File edits in this checkpoint:
    - refined guard-tuple detection (`agent_instance_id|lease_token|override_token`) so `actor_type=user` + `agent_name` works for attribution without forcing lease tuple.
    - attached mutation actor metadata to context for downstream persistence attribution.
 4. `internal/adapters/server/mcpapi/extended_tools.go`
-   - extended `koll.restore_task` tool schema with actor tuple fields and forwarded them to restore request.
+   - extended `till.restore_task` tool schema with actor tuple fields and forwarded them to restore request.
 5. `internal/app/service.go`
    - added `applyMutationActorToTask` helper and applied it in task mutation paths (`move`, `restore`, `rename`, `update`, `reparent`, archive delete).
    - updated metadata update path to reuse normalized task-level actor fields when persisting.
@@ -1028,7 +1028,7 @@ Commands and outcomes:
 6. `just check` -> PASS.
 7. `just ci` -> PASS.
 8. `just build` -> PASS (non-fatal module stat-cache permission warning observed in sandboxed environment).
-9. `./koll --help` smoke check -> PASS.
+9. `./till --help` smoke check -> PASS.
 
 Current status:
 - repository gates are green (`just check`, `just ci`);
@@ -1046,32 +1046,32 @@ Context7 checkpoints:
 3. After failed `just check` runtime panic (unsupported lookahead in Go regexp), re-queried Context7 and switched to Go-compatible regex + index slicing.
 
 Edits made:
-1. `cmd/koll/main.go`
+1. `cmd/till/main.go`
    - added `init-dev-config` Cobra/Fang subcommand with help text.
    - added `runInitDevConfig` flow:
      - resolves dev paths via platform options,
      - creates missing config from repo `config.example.toml`,
      - enforces `[logging] level = "debug"` via Go helper.
    - added `ensureLoggingSectionDebug` regex helper and related TOML section regexes.
-2. `cmd/koll/main_test.go`
+2. `cmd/till/main_test.go`
    - updated root-help expectations to include `init-dev-config`.
    - added subcommand-help expectations for `init-dev-config`.
    - added command tests for create/update behavior and output contract.
    - added table test for `ensureLoggingSectionDebug`.
 3. `Justfile`
    - replaced shell/awk recipe body with direct command call:
-     - `./koll --dev init-dev-config`
+     - `./till --dev init-dev-config`
 
 Commands and outcomes:
 1. `just fmt` -> PASS.
-2. `just check` (first run) -> FAIL (panic from unsupported regexp lookahead in `cmd/koll/main.go`).
+2. `just check` (first run) -> FAIL (panic from unsupported regexp lookahead in `cmd/till/main.go`).
 3. Context7 re-check performed for Go-compatible regex approach.
 4. `just fmt` -> PASS (after fix).
 5. `just check` -> PASS.
 6. `just ci` -> PASS.
-7. `./koll --help` -> PASS; command listed with Fang-styled help.
-8. `./koll init-dev-config --help` -> PASS; subcommand help renders correctly.
-9. `HOME=$(mktemp -d) ... ./koll --app hakoll-smoke init-dev-config` -> PASS; single-line output confirmed.
+7. `./till --help` -> PASS; command listed with Fang-styled help.
+8. `./till init-dev-config --help` -> PASS; subcommand help renders correctly.
+9. `HOME=$(mktemp -d) ... ./till --app tillsyn-smoke init-dev-config` -> PASS; single-line output confirmed.
 
 Current status:
 - `init-dev-config` is now a native Cobra/Fang command (no ad-hoc shell parser logic in recipe);
@@ -1089,41 +1089,41 @@ Context:
 3. User rebuilt/restarted server; rerun then proceeded successfully.
 
 Commands/evidence (MCP + minimal local read-only support):
-1. `koll.list_projects(include_archived=true)` -> PASS; active project `d83f5620-d9cb-4dc1-b281-67f92c69463b` (`1_user_pro`).
-2. `koll.list_tasks(project_id=..., include_archived=false)` -> PASS (initially empty).
+1. `till.list_projects(include_archived=true)` -> PASS; active project `d83f5620-d9cb-4dc1-b281-67f92c69463b` (`1_user_pro`).
+2. `till.list_tasks(project_id=..., include_archived=false)` -> PASS (initially empty).
 3. Local read-only SQL query for column IDs (required because MCP has no list-columns tool) -> PASS:
    - To Do: `c7fd8e06-678a-441f-901f-897e2da9bf0b`
    - In Progress: `8644d4c9-4429-42f0-aaa2-89060855d851`
    - Done: `e11c99eb-6c68-4ecd-8388-6bd601fdb6e6`
 
 SG1 guardrail lane (`Codex_Subagent_SG1`, `sg1-instance`):
-1. `koll.create_task` as `actor_type=agent` without lease tuple -> PASS expected failure (`invalid_request`, lease tuple required).
-2. `koll.issue_capability_lease` -> PASS (`lease_token=e9a556ec-0a47-4c6a-bf27-81bd42ac7400`).
-3. `koll.create_task` -> PASS created `d0cf8388-30dc-4424-80c0-2c8e6161f5e8` (`10_SG1_Lease_Create`).
-4. `koll.update_task` -> PASS title now `10_SG1_Lease_Update`.
-5. `koll.move_task` to In Progress -> PASS.
-6. `koll.create_comment` on SG1 task -> PASS comment `55f749a6-b6d8-491d-8375-c6abc6231eeb`.
+1. `till.create_task` as `actor_type=agent` without lease tuple -> PASS expected failure (`invalid_request`, lease tuple required).
+2. `till.issue_capability_lease` -> PASS (`lease_token=e9a556ec-0a47-4c6a-bf27-81bd42ac7400`).
+3. `till.create_task` -> PASS created `d0cf8388-30dc-4424-80c0-2c8e6161f5e8` (`10_SG1_Lease_Create`).
+4. `till.update_task` -> PASS title now `10_SG1_Lease_Update`.
+5. `till.move_task` to In Progress -> PASS.
+6. `till.create_comment` on SG1 task -> PASS comment `55f749a6-b6d8-491d-8375-c6abc6231eeb`.
 
 SG2 ownership lane (`Codex_Subagent_SG2`, `sg2-instance`):
-1. `koll.issue_capability_lease` -> PASS (`lease_token=aa1c2c4f-fa6e-48b0-a6bf-3b21dec62115`).
-2. `koll.create_task` branch -> PASS `c7fad53f-5c12-4146-b727-ab80ea0036da` (`11_SG2_Branch`).
-3. `koll.create_task` phase (parent=branch) -> PASS `196e55bf-54dc-4d2b-a2e2-eaf1ce9b3dd6`.
-4. `koll.create_task` with `kind=subphase` -> FAIL (`kind definition not found: "subphase"`).
-5. `koll.create_task` subphase using `scope=subphase`, `kind=phase` -> PASS `b87d4221-36dd-4c0e-82f1-2b09a2def653`.
-6. `koll.create_task` child task -> PASS `fabd90bc-e700-485d-9658-add06cc6883f`.
-7. `koll.update_task` -> PASS title `11_SG2_Task_Updated`.
-8. `koll.move_task` to In Progress then Done -> PASS both moves.
-9. `koll.create_comment` on SG2 branch -> PASS comment `f3978dfc-a2ba-4d0b-9053-492f7d3e0f50`.
+1. `till.issue_capability_lease` -> PASS (`lease_token=aa1c2c4f-fa6e-48b0-a6bf-3b21dec62115`).
+2. `till.create_task` branch -> PASS `c7fad53f-5c12-4146-b727-ab80ea0036da` (`11_SG2_Branch`).
+3. `till.create_task` phase (parent=branch) -> PASS `196e55bf-54dc-4d2b-a2e2-eaf1ce9b3dd6`.
+4. `till.create_task` with `kind=subphase` -> FAIL (`kind definition not found: "subphase"`).
+5. `till.create_task` subphase using `scope=subphase`, `kind=phase` -> PASS `b87d4221-36dd-4c0e-82f1-2b09a2def653`.
+6. `till.create_task` child task -> PASS `fabd90bc-e700-485d-9658-add06cc6883f`.
+7. `till.update_task` -> PASS title `11_SG2_Task_Updated`.
+8. `till.move_task` to In Progress then Done -> PASS both moves.
+9. `till.create_comment` on SG2 branch -> PASS comment `f3978dfc-a2ba-4d0b-9053-492f7d3e0f50`.
 
 Guardrail validation:
 1. SG2 task update with bogus lease token `00000000-0000-0000-0000-000000000000` -> PASS expected `guardrail_failed` (`mutation lease is invalid`).
 2. SG1 task update with SG2 lease token -> PASS expected `guardrail_failed` (`mutation lease is invalid`).
 
 Ownership evidence:
-1. `koll.list_project_change_events(project_id=..., limit=40)` -> PASS:
+1. `till.list_project_change_events(project_id=..., limit=40)` -> PASS:
    - events show `ActorType=agent` with `ActorID=Codex_Subagent_SG1` for SG1 create/update/move.
    - events show `ActorType=agent` with `ActorID=Codex_Subagent_SG2` for SG2 create/update/move.
-2. `koll.list_comments_by_target` on SG1/SG2 targets -> PASS:
+2. `till.list_comments_by_target` on SG1/SG2 targets -> PASS:
    - SG1 comment `AuthorName=Codex_Subagent_SG1`, `ActorType=agent`.
    - SG2 comment `AuthorName=Codex_Subagent_SG2`, `ActorType=agent`.
 
@@ -1131,7 +1131,7 @@ Current status:
 - live MCP mutation path is working after server restart;
 - guardrails + ownership attribution are validated with preserved artifacts for TUI check;
 - one surfaced contract gap: no `subphase` kind definition (requires `scope=subphase` with `kind=phase`).
-- one surfaced MCP tooling gap: no `koll.list_columns`/column-discovery endpoint, forcing out-of-band DB lookup to obtain `column_id` values before `create_task`/`move_task` calls.
+- one surfaced MCP tooling gap: no `till.list_columns`/column-discovery endpoint, forcing out-of-band DB lookup to obtain `column_id` values before `create_task`/`move_task` calls.
 
 ### 2026-02-28: Collaborative TUI Activity UX Remediation (Recent Activity + Jump + Event Details)
 
@@ -1175,4 +1175,97 @@ Commands and outcomes:
 Current status:
 - collaborative activity UX findings above are implemented and covered by tests;
 - repo gates are green for this cycle (`just check`, `just ci`);
-- MCP tooling gap (`no koll.list_columns`) remains explicitly tracked for follow-up fix scope.
+- MCP tooling gap (`no till.list_columns`) remains explicitly tracked for follow-up fix scope.
+
+### 2026-02-28: Branding Normalization (`tillsyn` app name, `till` command-only)
+
+Objective:
+- enforce naming intent: app/UI branding must be `tillsyn`; command/tool syntax remains `till`.
+
+Findings captured before edits:
+1. TUI header/help branding showed `HA TILL` and `HA TILL Help`.
+2. Empty-project and thread headers showed `till` as app label (`till`, `till thread`).
+3. README wording contained invalid phrase `ha till`.
+4. Config example heading used `# till example configuration`.
+
+Implementation updates:
+1. `internal/tui/model.go`
+   - `headerMarkText` -> `TILLSYN`.
+   - help modal title -> `TILLSYN Help`.
+   - empty-project title -> `tillsyn`.
+   - command palette quit description -> `quit tillsyn`.
+   - default identity display -> `tillsyn-user`.
+   - removed legacy `till-user` alias in activity-owner normalization.
+2. `internal/tui/thread_mode.go`
+   - thread header -> `tillsyn thread`.
+   - fallback comment author/default actor display -> `tillsyn-user`.
+3. Test/golden synchronization:
+   - `internal/tui/model_teatest_test.go`
+   - `internal/tui/model_test.go`
+   - `internal/tui/testdata/TestModelGoldenBoardOutput.golden`
+   - `internal/tui/testdata/TestModelGoldenHelpExpandedOutput.golden`
+4. Docs/config wording:
+   - `README.md` naming sentence -> Swedish word definition for `tillsyn`.
+   - README fallback identity text -> `tillsyn-user`.
+   - `config.example.toml` heading -> `# tillsyn example configuration`.
+
+Commands and outcomes:
+1. `just check` -> FAIL (`gofmt required for internal/tui/model.go`).
+2. Context7 re-check performed before next edit.
+3. `just fmt && just check && just ci` -> FAIL at `just check` (`internal/tui` golden EOF newline mismatch only).
+4. Context7 re-check performed before fixture-byte edit.
+5. Adjusted golden fixtures to match exact EOF byte expectation.
+6. `just check && just ci` (escalated for Go cache writes) -> PASS.
+
+Current status:
+- app-visible branding now uses `tillsyn`;
+- command surfaces remain `till`;
+- gates are green after normalization (`just check`, `just ci`).
+
+### 2026-02-28: Init-Dev-Config Copy/Paste Path Output Fix
+
+Objective:
+- make `just init-dev-config` output copy/paste-safe on paths containing spaces.
+
+Issue observed:
+1. `init-dev-config` printed unquoted absolute paths (for example under `~/Library/Application Support/...`), causing direct shell reuse to fail unless manually escaped.
+
+Implementation updates:
+1. `cmd/till/main.go`
+   - added `shellQuotePath` helper for POSIX-safe single-quoted path rendering.
+   - updated `runInitDevConfig` output line to print quoted config path.
+2. `cmd/till/main_test.go`
+   - updated init-dev-config output assertions to expect quoted paths.
+
+Commands and outcomes:
+1. Context7 consulted before edit (Go string/formatting guidance) -> PASS.
+2. `just fmt && just check && just ci` -> PASS.
+
+Current status:
+- `init-dev-config` now prints copy/paste-safe quoted path output, e.g.:
+  - `dev config already exists: '/Users/.../Library/Application Support/tillsyn-dev/config.toml'`.
+
+### 2026-02-28: Init-Dev-Config Output Style Adjustment (Backslash Escapes)
+
+Objective:
+- align `init-dev-config` output with user preference for direct paste paths using backslash-escaped spaces (instead of single-quoted paths).
+
+Issue observed:
+1. Single-quoted path output was technically shell-safe but did not match expected copy/paste ergonomics (`Application\\ Support` style).
+
+Implementation updates:
+1. `cmd/till/main.go`
+   - replaced quoted output helper with `shellEscapePath` that emits one shell-safe token using backslash escapes for spaces and shell metacharacters.
+   - `runInitDevConfig` output now uses escaped token format.
+2. `cmd/till/main_test.go`
+   - updated output assertions to expect escaped token paths.
+   - added `TestShellEscapePath` coverage for `Application Support` path escaping.
+
+Commands and outcomes:
+1. Context7 consulted before edits (Go formatting/string output guidance) -> PASS.
+2. `just fmt && just check && just ci` -> PASS.
+3. Local smoke check with temp HOME/XDG env -> PASS:
+   - output now prints `.../Library/Application\ Support/...`.
+
+Current status:
+- `just init-dev-config` output is now backslash-escaped and directly pasteable as requested.

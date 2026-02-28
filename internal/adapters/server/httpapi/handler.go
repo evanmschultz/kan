@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/hylla/hakoll/internal/adapters/server/common"
+	"github.com/hylla/tillsyn/internal/adapters/server/common"
 )
 
 // maxRequestBodyBytes limits decoded JSON payload size for fail-closed request handling.

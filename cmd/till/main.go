@@ -18,13 +18,13 @@ import (
 	"github.com/charmbracelet/fang"
 	charmLog "github.com/charmbracelet/log"
 	"github.com/google/uuid"
-	serveradapter "github.com/hylla/hakoll/internal/adapters/server"
-	servercommon "github.com/hylla/hakoll/internal/adapters/server/common"
-	"github.com/hylla/hakoll/internal/adapters/storage/sqlite"
-	"github.com/hylla/hakoll/internal/app"
-	"github.com/hylla/hakoll/internal/config"
-	"github.com/hylla/hakoll/internal/platform"
-	"github.com/hylla/hakoll/internal/tui"
+	serveradapter "github.com/hylla/tillsyn/internal/adapters/server"
+	servercommon "github.com/hylla/tillsyn/internal/adapters/server/common"
+	"github.com/hylla/tillsyn/internal/adapters/storage/sqlite"
+	"github.com/hylla/tillsyn/internal/app"
+	"github.com/hylla/tillsyn/internal/config"
+	"github.com/hylla/tillsyn/internal/platform"
+	"github.com/hylla/tillsyn/internal/tui"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -103,13 +103,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 
 	rootOpts := rootCommandOptions{
-		appName: "hakoll",
+		appName: "tillsyn",
 		devMode: version == "dev",
 	}
-	if envDev, ok := parseBoolEnv("KOLL_DEV_MODE"); ok {
+	if envDev, ok := parseBoolEnv("TILL_DEV_MODE"); ok {
 		rootOpts.devMode = envDev
 	}
-	if envApp := strings.TrimSpace(os.Getenv("KOLL_APP_NAME")); envApp != "" {
+	if envApp := strings.TrimSpace(os.Getenv("TILL_APP_NAME")); envApp != "" {
 		rootOpts.appName = envApp
 	}
 
@@ -125,7 +125,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	importOpts := importCommandOptions{}
 
 	rootCmd := &cobra.Command{
-		Use:           "koll",
+		Use:           "till",
 		Short:         "Terminal kanban board with HTTP+MCP adapters",
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -216,7 +216,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 // writeVersion writes the current CLI version to stdout.
 func writeVersion(stdout io.Writer) error {
-	if _, err := fmt.Fprintf(stdout, "koll %s\n", version); err != nil {
+	if _, err := fmt.Fprintf(stdout, "till %s\n", version); err != nil {
 		return fmt.Errorf("write version output: %w", err)
 	}
 	return nil
@@ -348,10 +348,24 @@ func runInitDevConfig(stdout io.Writer, opts rootCommandOptions) error {
 	if created {
 		msg = "created dev config"
 	}
-	if _, err := fmt.Fprintf(stdout, "%s: %s\n", msg, configPath); err != nil {
+	if _, err := fmt.Fprintf(stdout, "%s: %s\n", msg, shellEscapePath(configPath)); err != nil {
 		return fmt.Errorf("write init-dev-config output: %w", err)
 	}
 	return nil
+}
+
+// shellEscapePath returns a POSIX-shell-escaped path token suitable for direct paste.
+func shellEscapePath(path string) string {
+	var out strings.Builder
+	out.Grow(len(path) + 8)
+	for _, r := range path {
+		switch r {
+		case ' ', '\t', '\n', '\\', '(', ')', '[', ']', '\'', '"', '&', ';', '|', '<', '>', '$', '!', '*', '?', '#':
+			out.WriteByte('\\')
+		}
+		out.WriteRune(r)
+	}
+	return out.String()
 }
 
 // configExamplePath resolves the repository-local config example path.
@@ -434,14 +448,14 @@ func executeCommandFlow(
 	dbPath := rootOpts.dbPath
 	dbOverridden := strings.TrimSpace(dbPath) != ""
 	if configPath == "" {
-		if envPath := strings.TrimSpace(os.Getenv("KOLL_CONFIG")); envPath != "" {
+		if envPath := strings.TrimSpace(os.Getenv("TILL_CONFIG")); envPath != "" {
 			configPath = envPath
 		} else {
 			configPath = paths.ConfigPath
 		}
 	}
 	if !dbOverridden {
-		if envPath := strings.TrimSpace(os.Getenv("KOLL_DB_PATH")); envPath != "" {
+		if envPath := strings.TrimSpace(os.Getenv("TILL_DB_PATH")); envPath != "" {
 			dbPath = envPath
 			dbOverridden = true
 		} else {
@@ -963,7 +977,7 @@ func (l *runtimeLogger) Error(msg string, keyvals ...any) {
 func devLogFilePath(configDir, appName string, now time.Time) (string, error) {
 	baseDir := strings.TrimSpace(configDir)
 	if baseDir == "" {
-		baseDir = ".hakoll/log"
+		baseDir = ".tillsyn/log"
 	}
 	if !filepath.IsAbs(baseDir) {
 		cwd, err := os.Getwd()
@@ -1011,12 +1025,12 @@ func hasWorkspaceMarker(dir string) bool {
 func sanitizeLogFileStem(appName string) string {
 	stem := strings.TrimSpace(appName)
 	if stem == "" {
-		return "hakoll"
+		return "tillsyn"
 	}
 	replacer := strings.NewReplacer("/", "-", "\\", "-", ":", "-", " ", "-")
 	stem = strings.Trim(replacer.Replace(stem), "-")
 	if stem == "" {
-		return "hakoll"
+		return "tillsyn"
 	}
 	return stem
 }

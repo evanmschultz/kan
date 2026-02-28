@@ -1,4 +1,4 @@
-module github.com/hylla/hakoll
+module github.com/hylla/tillsyn
 
 go 1.26.0
 

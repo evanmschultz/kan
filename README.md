@@ -1,11 +1,11 @@
-# hakoll
+# tillsyn
 
 A local-first Kanban TUI built with Bubble Tea v2, Bubbles v2, and Lip Gloss v2.
 
-`hakoll` is named after the Swedish informal phrase `ha koll` ("keep an eye on").
-The project/repo name is `hakoll`, and the runtime command name is `koll`.
+`tillsyn` uses the Swedish word `tillsyn` ("oversight/supervision").
+The project/repo name is `tillsyn`, and the runtime command name is `till`.
 
-`hakoll` is designed as a better human-visible planning and verification surface than ad-hoc markdown checklists. The primary direction is human + coding-agent collaboration with explicit state, auditability, and clear completion gates, while still remaining useful as a standalone personal TUI task manager.
+`tillsyn` is designed as a better human-visible planning and verification surface than ad-hoc markdown checklists. The primary direction is human + coding-agent collaboration with explicit state, auditability, and clear completion gates, while still remaining useful as a standalone personal TUI task manager.
 A core product purpose is maintaining one DB-backed source of truth for planning/execution state instead of fragmented markdown files.
 
 Current scope:
@@ -35,7 +35,7 @@ Contributor workflow and CI policy: `CONTRIBUTING.md`
 
 ## Active Status (2026-02-27)
 Implemented now:
-- Use `hakoll` as the canonical local planning/verification source while collaborating with an agent in terminal/chat.
+- Use `tillsyn` as the canonical local planning/verification source while collaborating with an agent in terminal/chat.
 - Keep collaborative validation notes in `COLLABORATIVE_POST_FIX_VALIDATION_WORKSHEET.md`.
 - Use `MCP_FULL_TESTER_AGENT_RUNBOOK.md` for MCP full-sweep execution protocol and evidence contract.
 - Local-only TUI + SQLite workflows (including startup bootstrap, project picker, threads/comments, and import/export snapshots).
@@ -57,20 +57,20 @@ Wave-locked MCP/HTTP direction (implemented and in active dogfooding closeout):
 - Attention/blocker signaling direction is node-scoped with user-action visibility and paginated scope queries for user/agent coordination.
 - Transport-level lease/scope request contracts enforce non-user mutation guardrails.
 - MCP tool surface now includes:
-  - bootstrap guidance: `koll.get_bootstrap_guide`
-  - projects: `koll.list_projects`, `koll.create_project`, `koll.update_project`
-  - tasks/work graph: `koll.list_tasks`, `koll.create_task`, `koll.update_task`, `koll.move_task`, `koll.delete_task`, `koll.restore_task`, `koll.reparent_task`, `koll.list_child_tasks`, `koll.search_task_matches`
-  - capture/attention: `koll.capture_state`, `koll.list_attention_items`, `koll.raise_attention_item`, `koll.resolve_attention_item`
-  - change/dependency context: `koll.list_project_change_events`, `koll.get_project_dependency_rollup`
-  - kinds/allowlists: `koll.list_kind_definitions`, `koll.upsert_kind_definition`, `koll.set_project_allowed_kinds`, `koll.list_project_allowed_kinds`
-  - capability leases: `koll.issue_capability_lease`, `koll.heartbeat_capability_lease`, `koll.renew_capability_lease`, `koll.revoke_capability_lease`, `koll.revoke_all_capability_leases`
-  - comments: `koll.create_comment`, `koll.list_comments_by_target`
-  - empty-instance `capture_state` now returns deterministic `bootstrap_required` signaling, and agents can call `koll.get_bootstrap_guide` for next steps.
+  - bootstrap guidance: `till.get_bootstrap_guide`
+  - projects: `till.list_projects`, `till.create_project`, `till.update_project`
+  - tasks/work graph: `till.list_tasks`, `till.create_task`, `till.update_task`, `till.move_task`, `till.delete_task`, `till.restore_task`, `till.reparent_task`, `till.list_child_tasks`, `till.search_task_matches`
+  - capture/attention: `till.capture_state`, `till.list_attention_items`, `till.raise_attention_item`, `till.resolve_attention_item`
+  - change/dependency context: `till.list_project_change_events`, `till.get_project_dependency_rollup`
+  - kinds/allowlists: `till.list_kind_definitions`, `till.upsert_kind_definition`, `till.set_project_allowed_kinds`, `till.list_project_allowed_kinds`
+  - capability leases: `till.issue_capability_lease`, `till.heartbeat_capability_lease`, `till.renew_capability_lease`, `till.revoke_capability_lease`, `till.revoke_all_capability_leases`
+  - comments: `till.create_comment`, `till.list_comments_by_target`
+  - empty-instance `capture_state` now returns deterministic `bootstrap_required` signaling, and agents can call `till.get_bootstrap_guide` for next steps.
   - parity/guardrail notes:
     - `capture_state.state_hash` is stable across MCP/HTTP calls for unchanged underlying state (timestamp jitter excluded from hash input);
-    - `koll.revoke_all_capability_leases` fails closed on invalid/unknown scope tuples;
-    - `koll.create_comment` fails closed when the target does not exist in the referenced project;
-    - `koll.update_task` title-only updates preserve existing priority when `priority` is omitted.
+    - `till.revoke_all_capability_leases` fails closed on invalid/unknown scope tuples;
+    - `till.create_comment` fails closed when the target does not exist in the referenced project;
+    - `till.update_task` title-only updates preserve existing priority when `priority` is omitted.
 
 Roadmap-only in the active wave (explicitly deferred):
 - advanced import/export transport closure concerns (branch/commit-aware divergence reconciliation and conflict tooling),
@@ -89,7 +89,7 @@ just run
 Or build once and run the binary:
 ```bash
 just build
-./koll
+./till
 ```
 
 ## Startup Behavior
@@ -102,7 +102,7 @@ just build
 ## CLI Commands
 Export current data:
 ```bash
-./koll export --out /tmp/koll.json
+./till export --out /tmp/till.json
 ```
 
 Snapshot export includes:
@@ -113,31 +113,31 @@ Snapshot export includes:
 
 Import snapshot:
 ```bash
-./koll import --in /tmp/koll.json
+./till import --in /tmp/till.json
 ```
 
 Include only active records in export:
 ```bash
-./koll export --out /tmp/koll-active.json --include-archived=false
+./till export --out /tmp/till-active.json --include-archived=false
 ```
 
 ## Config
-`koll` loads TOML config from platform defaults, or from `--config` / `KOLL_CONFIG`.
+`till` loads TOML config from platform defaults, or from `--config` / `TILL_CONFIG`.
 
 Database path precedence:
 1. `--db`
-2. `KOLL_DB_PATH`
+2. `TILL_DB_PATH`
 3. TOML `database.path`
 4. platform default path
 
 Path resolution controls:
-- `--app` / `KOLL_APP_NAME` to namespace paths (default `hakoll`)
-- `--dev` / `KOLL_DEV_MODE` to use `<app>-dev` path roots
-- `koll paths` prints the resolved config/data/db paths for the current environment
+- `--app` / `TILL_APP_NAME` to namespace paths (default `tillsyn`)
+- `--dev` / `TILL_DEV_MODE` to use `<app>-dev` path roots
+- `till paths` prints the resolved config/data/db paths for the current environment
 - `identity.default_actor_type` (`user|agent|system`) + `identity.display_name` are defaults for new thread comment ownership
 - `paths.search_roots` stores one active default path used by bootstrap and path-pickers
 - task resource attachments require a configured per-project root mapping (`project_roots`)
-- dev mode logging writes to workspace-local `.hakoll/log/` when `logging.dev_file.enabled = true`
+- dev mode logging writes to workspace-local `.tillsyn/log/` when `logging.dev_file.enabled = true`
   - relative dev log dirs are anchored to the nearest workspace root marker (`go.mod` or `.git`)
 - logging level is controlled by TOML `logging.level` (`debug|info|warn|error|fatal`)
 
@@ -176,7 +176,7 @@ level = "info"
 
 [logging.dev_file]
 enabled = true
-dir = ".hakoll/log"
+dir = ".tillsyn/log"
 ```
 
 Full template: `config.example.toml`
@@ -215,11 +215,11 @@ Command palette highlights:
 - Open project thread from command palette with `thread-project` (`project-thread` alias).
 - Open selected work-item thread with `thread-item` (`item-thread` / `task-thread` aliases), or `c` from task info.
 - Supported thread targets: project, task, subtask, phase, decision, and note.
-- New comments use configured identity defaults; invalid/empty identity safely falls back to `[user] koll-user`.
+- New comments use configured identity defaults; invalid/empty identity safely falls back to `[user] tillsyn-user`.
 
 ## Fang Context
 Fang is Charmbracelet's experimental batteries-included wrapper for Cobra CLIs.
-`hakoll` does not currently integrate Fang or Cobra for CLI command execution.
+`tillsyn` does not currently integrate Fang or Cobra for CLI command execution.
 Current usage is Fang-inspired help copy/style in the in-app command reference overlay.
 
 ## Developer Workflow

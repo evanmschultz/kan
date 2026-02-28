@@ -21,7 +21,7 @@ const (
 	DeleteModeArchive DeleteMode = "archive"
 	DeleteModeHard    DeleteMode = "hard"
 	defaultLogLevel              = "info"
-	defaultDevLogDir             = ".hakoll/log"
+	defaultDevLogDir             = ".tillsyn/log"
 	defaultActorType             = "user"
 )
 

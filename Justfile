@@ -4,7 +4,7 @@ set windows-shell := ["C:/Program Files/Git/bin/bash.exe", "-eu", "-o", "pipefai
 # Verify required source files still exist before running broader gates.
 [private]
 verify-sources:
-  @git ls-files --error-unmatch cmd/koll/main.go cmd/koll/main_test.go >/dev/null
+  @git ls-files --error-unmatch cmd/till/main.go cmd/till/main_test.go >/dev/null
 
 # Format all tracked Go files in place.
 fmt:
@@ -52,21 +52,21 @@ test-golden:
 test-golden-update:
   @go test ./internal/tui -run 'Golden' -update
 
-# Build the local koll binary at ./koll.
+# Build the local till binary at ./till.
 build:
-  @go build -o ./koll ./cmd/koll
+  @go build -o ./till ./cmd/till
 
-# Run koll directly from source.
+# Run till directly from source.
 run:
-  @go run ./cmd/koll
+  @go run ./cmd/till
 
 # Initialize a dev config file at the resolved --dev config path if missing.
 init-dev-config:
-  @./koll --dev init-dev-config
+  @./till --dev init-dev-config
 
 # Delete the resolved --dev data directory (db/config/logs under that root).
 clean-dev:
-  @data_dir="$(./koll --dev paths | awk -F': ' '/^data_dir:/{print $2}')"; \
+  @data_dir="$(./till --dev paths | awk -F': ' '/^data_dir:/{print $2}')"; \
   if [ -z "$data_dir" ]; then \
     echo "could not resolve dev data directory"; \
     exit 1; \

@@ -1,10 +1,10 @@
-# koll example configuration
+# tillsyn example configuration
 #
 # Resolution order:
 # 1) CLI flags (--config, --db, --app, --dev)
-# 2) Environment (KOLL_CONFIG, KOLL_DB_PATH, KOLL_APP_NAME, KOLL_DEV_MODE)
+# 2) Environment (TILL_CONFIG, TILL_DB_PATH, TILL_APP_NAME, TILL_DEV_MODE)
 # 3) This TOML file
-# 4) Platform defaults (use `koll paths` to print active paths)
+# 4) Platform defaults (use `till paths` to print active paths)
 #
 # Dev mode stores data under "<app>-dev" so local builds do not clash with released installs.
 
@@ -64,7 +64,7 @@ level = "info"
 # When true in --dev mode, runtime logs are also written to a local file sink.
 enabled = true
 # Relative paths are resolved from the current workspace directory.
-dir = ".hakoll/log"
+dir = ".tillsyn/log"
 
 [project_roots]
 # Machine-local root mappings by project slug. Keep these in TOML so DB exports stay portable.
@@ -79,7 +79,7 @@ enforce_allowed = false
 
 [labels.projects]
 # Per-project suggested labels, keyed by project slug.
-inbox = ["koll", "roadmap", "ux"]
+inbox = ["till", "roadmap", "ux"]
 
 [keys]
 command_palette = ":"

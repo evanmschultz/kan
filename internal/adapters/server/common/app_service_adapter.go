@@ -10,8 +10,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/hylla/hakoll/internal/app"
-	"github.com/hylla/hakoll/internal/domain"
+	"github.com/hylla/tillsyn/internal/app"
+	"github.com/hylla/tillsyn/internal/domain"
 )
 
 // AppServiceAdapter maps transport contracts onto app.Service capture_state and attention APIs.
@@ -115,7 +115,7 @@ func (a *AppServiceAdapter) RaiseAttentionItem(ctx context.Context, in RaiseAtte
 		Summary:            req.Summary,
 		BodyMarkdown:       req.BodyMarkdown,
 		RequiresUserAction: req.RequiresUserAction,
-		CreatedBy:          "hakoll-serve",
+		CreatedBy:          "tillsyn-serve",
 		CreatedType:        domain.ActorTypeUser,
 	})
 	if err != nil {
@@ -360,25 +360,25 @@ func buildResumeHintsFromFollowUps(in app.CaptureStateFollowUpPointers) []Resume
 	hints := make([]ResumeHint, 0, 3)
 	if pointer := strings.TrimSpace(in.ListAttentionItems); pointer != "" {
 		hints = append(hints, ResumeHint{
-			Rel:  "koll.list_attention_items",
+			Rel:  "till.list_attention_items",
 			Note: pointer,
 		})
 	}
 	if pointer := strings.TrimSpace(in.ListProjectChangeEvents); pointer != "" {
 		hints = append(hints, ResumeHint{
-			Rel:  "koll.list_project_change_events",
+			Rel:  "till.list_project_change_events",
 			Note: pointer,
 		})
 	}
 	if pointer := strings.TrimSpace(in.ListChildTasks); pointer != "" {
 		hints = append(hints, ResumeHint{
-			Rel:  "koll.list_child_tasks",
+			Rel:  "till.list_child_tasks",
 			Note: pointer,
 		})
 	}
 	if len(hints) == 0 {
 		hints = append(hints, ResumeHint{
-			Rel:  "koll.capture_state",
+			Rel:  "till.capture_state",
 			Note: "request view=full for expanded, summary-safe context",
 		})
 	}

@@ -23,14 +23,14 @@ type Options struct {
 
 // DefaultPaths returns default paths.
 func DefaultPaths() (Paths, error) {
-	return DefaultPathsWithOptions(Options{AppName: "hakoll"})
+	return DefaultPathsWithOptions(Options{AppName: "tillsyn"})
 }
 
 // DefaultPathsWithOptions returns default paths with options.
 func DefaultPathsWithOptions(opts Options) (Paths, error) {
 	appName := strings.TrimSpace(opts.AppName)
 	if appName == "" {
-		appName = "hakoll"
+		appName = "tillsyn"
 	}
 	if opts.DevMode {
 		appName += "-dev"

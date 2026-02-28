@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hylla/hakoll/internal/domain"
+	"github.com/hylla/tillsyn/internal/domain"
 )
 
 // CaptureStateService builds summary-first capture_state responses from app read models.
@@ -108,11 +108,11 @@ func (s *CaptureStateService) CaptureState(ctx context.Context, in CaptureStateR
 		WarningsOverview: warningsOverview,
 		ResumeHints: []ResumeHint{
 			{
-				Rel:  "koll.capture_state",
+				Rel:  "till.capture_state",
 				Note: "request view=full for expanded, summary-safe context",
 			},
 			{
-				Rel:  "koll.list_attention_items",
+				Rel:  "till.list_attention_items",
 				Note: "list unresolved attention records when available",
 			},
 		},

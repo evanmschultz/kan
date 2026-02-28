@@ -1,15 +1,15 @@
 version: 2
 
-project_name: hakoll
+project_name: tillsyn
 
 before:
   hooks:
     - go mod tidy
 
 builds:
-  - id: koll
-    main: ./cmd/koll
-    binary: koll
+  - id: till
+    main: ./cmd/till
+    binary: till
     goos:
       - linux
       - darwin

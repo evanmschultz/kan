@@ -135,7 +135,7 @@ func NewTask(in TaskInput, now time.Time) (Task, error) {
 		return Task{}, ErrInvalidActorType
 	}
 	if strings.TrimSpace(in.CreatedByActor) == "" {
-		in.CreatedByActor = "hakoll-user"
+		in.CreatedByActor = "tillsyn-user"
 	}
 	if strings.TrimSpace(in.UpdatedByActor) == "" {
 		in.UpdatedByActor = in.CreatedByActor
@@ -218,7 +218,7 @@ func (t *Task) UpdatePlanningMetadata(metadata TaskMetadata, actorID string, act
 	if actorID == "" {
 		actorID = t.UpdatedByActor
 		if actorID == "" {
-			actorID = "hakoll-user"
+			actorID = "tillsyn-user"
 		}
 	}
 	t.UpdatedByActor = actorID

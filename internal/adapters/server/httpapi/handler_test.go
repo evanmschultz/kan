@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hylla/hakoll/internal/adapters/server/common"
+	"github.com/hylla/tillsyn/internal/adapters/server/common"
 )
 
 // stubCaptureStateReader provides deterministic capture-state responses for handler tests.

@@ -7,8 +7,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/hylla/hakoll/internal/app"
-	"github.com/hylla/hakoll/internal/domain"
+	"github.com/hylla/tillsyn/internal/app"
+	"github.com/hylla/tillsyn/internal/domain"
 )
 
 // TestWithMutationGuardContext validates actor-type and lease tuple normalization/guarding.

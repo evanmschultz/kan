@@ -6,7 +6,7 @@ Set Width 1200
 Set Height 720
 Set Framerate 30
 
-Type "KOLL_DB_PATH=/tmp/koll-vhs-board.db ./koll"
+Type "TILL_DB_PATH=/tmp/till-vhs-board.db ./till"
 Enter
 Sleep 1s
 Type "?"

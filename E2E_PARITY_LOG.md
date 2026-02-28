@@ -1,8 +1,8 @@
-# E2E Parity Log (hakoll/koll)
+# E2E Parity Log (tillsyn/till)
 
 ## Session
 - Date: 2026-02-28
-- Runtime: user-started `./koll serve` on `127.0.0.1:5437`
+- Runtime: user-started `./till serve` on `127.0.0.1:5437`
 - Known seed data: project `User_Project` exists by design
 
 ## Independent Checks (Assistant)
@@ -15,7 +15,7 @@
 - Result: PASS (`2025-06-18` negotiated; 30 tools discovered)
 
 3. Existing project lookup
-- Probe: `tools/call koll.list_projects(include_archived=true)`
+- Probe: `tools/call till.list_projects(include_archived=true)`
 - Result: PASS (`User_Project` found; expected)
 
 4. HTTP/MCP parity: capture_state

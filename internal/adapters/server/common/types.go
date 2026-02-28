@@ -6,7 +6,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/hylla/hakoll/internal/domain"
+	"github.com/hylla/tillsyn/internal/domain"
 )
 
 // ScopeTypeProject identifies project-level scope for capture and attention operations.

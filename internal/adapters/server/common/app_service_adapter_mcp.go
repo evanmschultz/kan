@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hylla/hakoll/internal/app"
-	"github.com/hylla/hakoll/internal/domain"
+	"github.com/hylla/tillsyn/internal/app"
+	"github.com/hylla/tillsyn/internal/domain"
 )
 
 // GetBootstrapGuide returns summary-first onboarding guidance for empty-instance flows.
@@ -27,15 +27,15 @@ func (a *AppServiceAdapter) GetBootstrapGuide(_ context.Context) (BootstrapGuide
 			"Capability lease issuance and guardrailed non-user mutations",
 		},
 		NextSteps: []string{
-			"Create a project with koll.create_project",
-			"Create level-scoped work items with koll.create_task",
-			"Call koll.capture_state to reorient and continue safely",
+			"Create a project with till.create_project",
+			"Create level-scoped work items with till.create_task",
+			"Call till.capture_state to reorient and continue safely",
 		},
 		Recommended: []string{
-			"koll.list_projects",
-			"koll.create_project",
-			"koll.create_task",
-			"koll.capture_state",
+			"till.list_projects",
+			"till.create_project",
+			"till.create_task",
+			"till.capture_state",
 		},
 		RoadmapNotice: "Import/export transport-closure and advanced conflict tooling remain roadmap-only for this wave.",
 	}, nil

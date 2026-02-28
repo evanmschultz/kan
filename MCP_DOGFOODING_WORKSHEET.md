@@ -21,7 +21,7 @@ Commands:
 
 ```bash
 just build
-./koll serve --help
+./till serve --help
 ```
 
 Expected:
@@ -33,8 +33,8 @@ Expected:
 ### USER NOTES M0.1-N1
 
 - Pass/Fail (set one: pass|fail|blocked): fail
-- Evidence (required): `.tmp/phase0-collab-20260227_141800/just_build.txt`, `.tmp/phase0-collab-20260227_141800/help_koll.txt`, `.tmp/phase0-collab-20260227_141800/help_koll_serve.txt`, `.tmp/phase0-collab-20260227_141800/phase0_preflight_summary.md`
-- Notes: Build succeeded, but help-surface validation failed. `./koll --help` returned `error: flag: help requested`, and `./koll serve --help` entered startup/open-db flow instead of printing stable help. Remediation requirement: implement a Charm/Fang-based help surface for usable, styled CLI help output.
+- Evidence (required): `.tmp/phase0-collab-20260227_141800/just_build.txt`, `.tmp/phase0-collab-20260227_141800/help_till.txt`, `.tmp/phase0-collab-20260227_141800/help_till_serve.txt`, `.tmp/phase0-collab-20260227_141800/phase0_preflight_summary.md`
+- Notes: Build succeeded, but help-surface validation failed. `./till --help` returned `error: flag: help requested`, and `./till serve --help` entered startup/open-db flow instead of printing stable help. Remediation requirement: implement a Charm/Fang-based help surface for usable, styled CLI help output.
 
 ---
 
@@ -42,16 +42,16 @@ Expected:
 
 Actions:
 
-1. Start `koll` in a fresh DB/config pair.
+1. Start `till` in a fresh DB/config pair.
 2. Bind locally only.
 3. Keep terminal output for evidence capture.
 
 Command template (adjust flags to match `--help` output):
 
 ```bash
-KOLL_DB_PATH=/tmp/koll-mcp-dogfood.db \
-KOLL_CONFIG=/tmp/koll-mcp-dogfood.toml \
-./koll serve --http 127.0.0.1:8080 --api-endpoint /api/v1 --mcp-endpoint /mcp
+TILL_DB_PATH=/tmp/till-mcp-dogfood.db \
+TILL_CONFIG=/tmp/till-mcp-dogfood.toml \
+./till serve --http 127.0.0.1:8080 --api-endpoint /api/v1 --mcp-endpoint /mcp
 ```
 
 Expected:
@@ -64,7 +64,7 @@ Expected:
 
 - Pass/Fail (set one: pass|fail|blocked): pass
 - Evidence (required): `.tmp/phase0-collab-20260227_141800/manual/m0_section0_evidence_20260227.md`, `.tmp/phase0-collab-20260227_141800/port_18080_listener.txt`, `.tmp/phase0-collab-20260227_141800/healthz.headers`, `.tmp/phase0-collab-20260227_141800/healthz.txt`, `.tmp/phase0-collab-20260227_141800/readyz.headers`, `.tmp/phase0-collab-20260227_141800/readyz.txt`
-- Notes: User launched serve successfully with `./koll serve --http 127.0.0.1:18080 --api-endpoint /api/v1 --mcp-endpoint /mcp` and observed expected startup/runtime logs through command-flow start. Validation was run against the active dev runtime path (not an isolated `/tmp` config/db pair), but startup/health expectations for this check were satisfied.
+- Notes: User launched serve successfully with `./till serve --http 127.0.0.1:18080 --api-endpoint /api/v1 --mcp-endpoint /mcp` and observed expected startup/runtime logs through command-flow start. Validation was run against the active dev runtime path (not an isolated `/tmp` config/db pair), but startup/health expectations for this check were satisfied.
 
 ---
 
@@ -81,7 +81,7 @@ Actions:
 Command:
 
 ```bash
-KOLL_DB_PATH=/tmp/koll-mcp-dogfood.db KOLL_CONFIG=/tmp/koll-mcp-dogfood.toml just run
+TILL_DB_PATH=/tmp/till-mcp-dogfood.db TILL_CONFIG=/tmp/till-mcp-dogfood.toml just run
 ```
 
 Expected:
@@ -357,7 +357,7 @@ Expected:
 ## Final Sign-off
 
 - Overall result (set one): `fail`
-- Blocking defects: help discoverability path failures (`./koll --help`, `./koll serve --help`) plus required Charm/Fang help redesign, missing first-launch config bootstrap requirement (copy `config.example.toml` when config is absent), restore-surface contract mismatch (`koll_restore_task` currently fails guardrail tuple path and may require generalized restore design review with explicit node/scope arg), and unresolved manual TUI/fixture-dependent sections.
+- Blocking defects: help discoverability path failures (`./till --help`, `./till serve --help`) plus required Charm/Fang help redesign, missing first-launch config bootstrap requirement (copy `config.example.toml` when config is absent), restore-surface contract mismatch (`till_restore_task` currently fails guardrail tuple path and may require generalized restore design review with explicit node/scope arg), and unresolved manual TUI/fixture-dependent sections.
 - Non-blocking defects: environment warning during `just build` (`go` stat-cache write permission warning) did not fail build.
 - Required user actions before next wave checkpoint: complete remaining Phase 0 manual/transport sections (1 through 5), especially full C9/C11/C12/C13 detail, archived/search/keybinding checks, and panel/search parity checks, then attach evidence paths under `.tmp/phase0-collab-20260227_141800/manual/`.
 - Tester(s): Codex (agent) + evanschultz (user pending manual steps)

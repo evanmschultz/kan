@@ -1,13 +1,13 @@
 .DS_Store
 coverage.out
 dist/
-/koll
-/koll.exe
+/till
+/till.exe
 bin/
 .artifacts/
 .tmp/
 .go-cache
 .go-mod-cache/
 .go-build-cache/
-.hakoll/
+.tillsyn/
 .codex/

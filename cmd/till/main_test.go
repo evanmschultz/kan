@@ -14,16 +14,16 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	serveradapter "github.com/hylla/hakoll/internal/adapters/server"
-	"github.com/hylla/hakoll/internal/app"
-	"github.com/hylla/hakoll/internal/config"
-	"github.com/hylla/hakoll/internal/domain"
-	"github.com/hylla/hakoll/internal/platform"
+	serveradapter "github.com/hylla/tillsyn/internal/adapters/server"
+	"github.com/hylla/tillsyn/internal/app"
+	"github.com/hylla/tillsyn/internal/config"
+	"github.com/hylla/tillsyn/internal/domain"
+	"github.com/hylla/tillsyn/internal/platform"
 )
 
 // TestMain sets deterministic environment defaults for CLI tests.
 func TestMain(m *testing.M) {
-	_ = os.Setenv("KOLL_DEV_MODE", "false")
+	_ = os.Setenv("TILL_DEV_MODE", "false")
 	os.Exit(m.Run())
 }
 
@@ -95,7 +95,7 @@ func TestRunVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run(version) error = %v", err)
 	}
-	if !strings.Contains(out.String(), "koll") {
+	if !strings.Contains(out.String(), "till") {
 		t.Fatalf("expected version output, got %q", out.String())
 	}
 }
@@ -109,7 +109,7 @@ func TestRunStartsProgram(t *testing.T) {
 		return fakeProgram{}
 	}
 
-	dbPath := filepath.Join(t.TempDir(), "hakoll.db")
+	dbPath := filepath.Join(t.TempDir(), "tillsyn.db")
 	cfgPath := filepath.Join(t.TempDir(), "config.toml")
 	writeBootstrapReadyConfig(t, cfgPath, t.TempDir())
 	err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath}, io.Discard, io.Discard)
@@ -125,7 +125,7 @@ func TestRunTUIStartupDoesNotCreateDefaultProject(t *testing.T) {
 	programFactory = func(_ tea.Model) program { return fakeProgram{} }
 
 	tmp := t.TempDir()
-	dbPath := filepath.Join(tmp, "hakoll.db")
+	dbPath := filepath.Join(tmp, "tillsyn.db")
 	cfgPath := filepath.Join(tmp, "config.toml")
 	writeBootstrapReadyConfig(t, cfgPath, t.TempDir())
 	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath}, io.Discard, io.Discard); err != nil {
@@ -182,7 +182,7 @@ func TestRunBootstrapModalPersistsMissingFields(t *testing.T) {
 
 	workspace := t.TempDir()
 	t.Chdir(workspace)
-	dbPath := filepath.Join(workspace, "hakoll.db")
+	dbPath := filepath.Join(workspace, "tillsyn.db")
 	cfgPath := filepath.Join(workspace, "config.toml")
 
 	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath}, io.Discard, io.Discard); err != nil {
@@ -219,7 +219,7 @@ func TestRunRootHelp(t *testing.T) {
 		t.Fatalf("run(--help) error = %v", err)
 	}
 	output := strings.ToLower(out.String())
-	if !strings.Contains(output, "usage") || !strings.Contains(output, "koll [command]") {
+	if !strings.Contains(output, "usage") || !strings.Contains(output, "till [command]") {
 		t.Fatalf("expected root usage output, got %q", out.String())
 	}
 	for _, want := range []string{"serve", "export", "import", "paths", "init-dev-config"} {
@@ -246,22 +246,22 @@ func TestRunSubcommandHelp(t *testing.T) {
 		{
 			name: "serve",
 			args: []string{"serve", "--help"},
-			want: []string{"koll serve", "--http", "--api-endpoint", "--mcp-endpoint"},
+			want: []string{"till serve", "--http", "--api-endpoint", "--mcp-endpoint"},
 		},
 		{
 			name: "export",
 			args: []string{"export", "--help"},
-			want: []string{"koll export", "--out", "--include-archived"},
+			want: []string{"till export", "--out", "--include-archived"},
 		},
 		{
 			name: "import",
 			args: []string{"import", "--help"},
-			want: []string{"koll import", "--in"},
+			want: []string{"till import", "--in"},
 		},
 		{
 			name: "init-dev-config",
 			args: []string{"init-dev-config", "--help"},
-			want: []string{"koll init-dev-config", "create the dev config file"},
+			want: []string{"till init-dev-config", "create the dev config file"},
 		},
 	}
 
@@ -305,8 +305,8 @@ func TestRunServeCommandWiresDefaults(t *testing.T) {
 	}
 
 	tmp := t.TempDir()
-	dbPath := filepath.Join(tmp, "hakoll.db")
-	cfgPath := filepath.Join(tmp, "hakoll.toml")
+	dbPath := filepath.Join(tmp, "tillsyn.db")
+	cfgPath := filepath.Join(tmp, "tillsyn.toml")
 	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "serve"}, io.Discard, io.Discard); err != nil {
 		t.Fatalf("run(serve) error = %v", err)
 	}
@@ -339,8 +339,8 @@ func TestRunServeCommandWiresFlags(t *testing.T) {
 	}
 
 	tmp := t.TempDir()
-	dbPath := filepath.Join(tmp, "hakoll.db")
-	cfgPath := filepath.Join(tmp, "hakoll.toml")
+	dbPath := filepath.Join(tmp, "tillsyn.db")
+	cfgPath := filepath.Join(tmp, "tillsyn.toml")
 	args := []string{
 		"--db", dbPath,
 		"--config", cfgPath,
@@ -373,8 +373,8 @@ func TestRunServeCommandPropagatesErrors(t *testing.T) {
 	}
 
 	tmp := t.TempDir()
-	dbPath := filepath.Join(tmp, "hakoll.db")
-	cfgPath := filepath.Join(tmp, "hakoll.toml")
+	dbPath := filepath.Join(tmp, "tillsyn.db")
+	cfgPath := filepath.Join(tmp, "tillsyn.toml")
 	err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "serve"}, io.Discard, io.Discard)
 	if err == nil {
 		t.Fatal("expected serve command error")
@@ -387,7 +387,7 @@ func TestRunServeCommandPropagatesErrors(t *testing.T) {
 // TestRunExportCommandWritesSnapshot verifies behavior for the covered scenario.
 func TestRunExportCommandWritesSnapshot(t *testing.T) {
 	tmp := t.TempDir()
-	dbPath := filepath.Join(tmp, "hakoll.db")
+	dbPath := filepath.Join(tmp, "tillsyn.db")
 	cfgPath := filepath.Join(tmp, "missing.toml")
 	outPath := filepath.Join(tmp, "snapshot.json")
 	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "export", "--out", outPath}, io.Discard, io.Discard); err != nil {
@@ -414,7 +414,7 @@ func TestRunExportCommandWritesSnapshot(t *testing.T) {
 // TestRunImportCommandReadsSnapshot verifies behavior for the covered scenario.
 func TestRunImportCommandReadsSnapshot(t *testing.T) {
 	tmp := t.TempDir()
-	dbPath := filepath.Join(tmp, "hakoll.db")
+	dbPath := filepath.Join(tmp, "tillsyn.db")
 	cfgPath := filepath.Join(tmp, "missing.toml")
 
 	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
@@ -505,7 +505,7 @@ func TestRunExportToStdoutAndImportErrors(t *testing.T) {
 	programFactory = func(_ tea.Model) program { return fakeProgram{} }
 
 	tmp := t.TempDir()
-	dbPath := filepath.Join(tmp, "hakoll.db")
+	dbPath := filepath.Join(tmp, "tillsyn.db")
 	cfgPath := filepath.Join(tmp, "config.toml")
 	writeBootstrapReadyConfig(t, cfgPath, t.TempDir())
 	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath}, io.Discard, io.Discard); err != nil {
@@ -543,8 +543,8 @@ func TestRunConfigAndDBEnvOverrides(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	t.Setenv("KOLL_CONFIG", cfgPath)
-	t.Setenv("KOLL_DB_PATH", dbPath)
+	t.Setenv("TILL_CONFIG", cfgPath)
+	t.Setenv("TILL_DB_PATH", dbPath)
 
 	err := run(context.Background(), []string{"export", "--out", filepath.Join(tmp, "out.json")}, io.Discard, io.Discard)
 	if err != nil {
@@ -577,15 +577,15 @@ level = "info"
 	}
 
 	var out strings.Builder
-	if err := run(context.Background(), []string{"--app", "hakoll-init", "init-dev-config"}, &out, io.Discard); err != nil {
+	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init-dev-config"}, &out, io.Discard); err != nil {
 		t.Fatalf("run(init-dev-config) error = %v", err)
 	}
 
-	paths, err := platform.DefaultPathsWithOptions(platform.Options{AppName: "hakoll-init", DevMode: true})
+	paths, err := platform.DefaultPathsWithOptions(platform.Options{AppName: "tillsyn-init", DevMode: true})
 	if err != nil {
 		t.Fatalf("DefaultPathsWithOptions() error = %v", err)
 	}
-	if got := strings.TrimSpace(out.String()); got != fmt.Sprintf("created dev config: %s", paths.ConfigPath) {
+	if got := strings.TrimSpace(out.String()); got != fmt.Sprintf("created dev config: %s", shellEscapePath(paths.ConfigPath)) {
 		t.Fatalf("unexpected init-dev-config output %q", got)
 	}
 
@@ -616,7 +616,7 @@ func TestRunInitDevConfigUpdatesExistingConfig(t *testing.T) {
 		t.Fatalf("WriteFile(config.example.toml) error = %v", err)
 	}
 
-	paths, err := platform.DefaultPathsWithOptions(platform.Options{AppName: "hakoll-init", DevMode: true})
+	paths, err := platform.DefaultPathsWithOptions(platform.Options{AppName: "tillsyn-init", DevMode: true})
 	if err != nil {
 		t.Fatalf("DefaultPathsWithOptions() error = %v", err)
 	}
@@ -635,10 +635,10 @@ display_name = "Lane User"
 	}
 
 	var out strings.Builder
-	if err := run(context.Background(), []string{"--app", "hakoll-init", "init-dev-config"}, &out, io.Discard); err != nil {
+	if err := run(context.Background(), []string{"--app", "tillsyn-init", "init-dev-config"}, &out, io.Discard); err != nil {
 		t.Fatalf("run(init-dev-config existing) error = %v", err)
 	}
-	if got := strings.TrimSpace(out.String()); got != fmt.Sprintf("dev config already exists: %s", paths.ConfigPath) {
+	if got := strings.TrimSpace(out.String()); got != fmt.Sprintf("dev config already exists: %s", shellEscapePath(paths.ConfigPath)) {
 		t.Fatalf("unexpected init-dev-config output %q", got)
 	}
 
@@ -661,12 +661,12 @@ display_name = "Lane User"
 // TestRunPathsCommand verifies behavior for the covered scenario.
 func TestRunPathsCommand(t *testing.T) {
 	var out strings.Builder
-	err := run(context.Background(), []string{"--app", "hakollx", "--dev", "paths"}, &out, io.Discard)
+	err := run(context.Background(), []string{"--app", "tillsynx", "--dev", "paths"}, &out, io.Discard)
 	if err != nil {
 		t.Fatalf("run(paths) error = %v", err)
 	}
 	output := out.String()
-	if !strings.Contains(output, "app: hakollx") {
+	if !strings.Contains(output, "app: tillsynx") {
 		t.Fatalf("expected app name in paths output, got %q", output)
 	}
 	if !strings.Contains(output, "dev_mode: true") {
@@ -674,27 +674,36 @@ func TestRunPathsCommand(t *testing.T) {
 	}
 }
 
+// TestShellEscapePath verifies init-dev-config path output is shell-token safe.
+func TestShellEscapePath(t *testing.T) {
+	in := "/Users/me/Library/Application Support/tillsyn-dev/config.toml"
+	want := "/Users/me/Library/Application\\ Support/tillsyn-dev/config.toml"
+	if got := shellEscapePath(in); got != want {
+		t.Fatalf("shellEscapePath() = %q, want %q", got, want)
+	}
+}
+
 // TestWritePathsOutputPlain verifies non-terminal writers receive script-stable plain output.
 func TestWritePathsOutputPlain(t *testing.T) {
 	var out strings.Builder
 	err := writePathsOutput(&out, rootCommandOptions{
-		appName: "hakollx",
+		appName: "tillsynx",
 		devMode: true,
 	}, platform.Paths{
-		ConfigPath: "/tmp/hakollx/config.toml",
-		DataDir:    "/tmp/hakollx",
-		DBPath:     "/tmp/hakollx/hakollx.db",
+		ConfigPath: "/tmp/tillsynx/config.toml",
+		DataDir:    "/tmp/tillsynx",
+		DBPath:     "/tmp/tillsynx/tillsynx.db",
 	})
 	if err != nil {
 		t.Fatalf("writePathsOutput() error = %v", err)
 	}
 	got := out.String()
 	for _, want := range []string{
-		"app: hakollx",
+		"app: tillsynx",
 		"dev_mode: true",
-		"config: /tmp/hakollx/config.toml",
-		"data_dir: /tmp/hakollx",
-		"db: /tmp/hakollx/hakollx.db",
+		"config: /tmp/tillsynx/config.toml",
+		"data_dir: /tmp/tillsynx",
+		"db: /tmp/tillsynx/tillsynx.db",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("expected %q in plain output, got %q", want, got)
@@ -710,12 +719,12 @@ func TestWritePathsOutputStyled(t *testing.T) {
 
 	var out strings.Builder
 	err := writePathsOutput(&out, rootCommandOptions{
-		appName: "hakollx",
+		appName: "tillsynx",
 		devMode: false,
 	}, platform.Paths{
-		ConfigPath: "/tmp/hakollx/config.toml",
-		DataDir:    "/tmp/hakollx",
-		DBPath:     "/tmp/hakollx/hakollx.db",
+		ConfigPath: "/tmp/tillsynx/config.toml",
+		DataDir:    "/tmp/tillsynx",
+		DBPath:     "/tmp/tillsynx/tillsynx.db",
 	})
 	if err != nil {
 		t.Fatalf("writePathsOutput(styled) error = %v", err)
@@ -724,7 +733,7 @@ func TestWritePathsOutputStyled(t *testing.T) {
 	if !strings.Contains(got, "Resolved Paths") {
 		t.Fatalf("expected styled heading in output, got %q", got)
 	}
-	if !strings.Contains(got, "app") || !strings.Contains(got, "hakollx") {
+	if !strings.Contains(got, "app") || !strings.Contains(got, "tillsynx") {
 		t.Fatalf("expected app row in styled output, got %q", got)
 	}
 }
@@ -743,14 +752,14 @@ func TestSupportsStyledOutput(t *testing.T) {
 
 // TestParseBoolEnv verifies behavior for the covered scenario.
 func TestParseBoolEnv(t *testing.T) {
-	t.Setenv("KOLL_BOOL_TEST", "true")
-	got, ok := parseBoolEnv("KOLL_BOOL_TEST")
+	t.Setenv("TILL_BOOL_TEST", "true")
+	got, ok := parseBoolEnv("TILL_BOOL_TEST")
 	if !ok || !got {
 		t.Fatalf("expected true bool env parse, got value=%t ok=%t", got, ok)
 	}
 
-	t.Setenv("KOLL_BOOL_TEST", "not-bool")
-	_, ok = parseBoolEnv("KOLL_BOOL_TEST")
+	t.Setenv("TILL_BOOL_TEST", "not-bool")
+	_, ok = parseBoolEnv("TILL_BOOL_TEST")
 	if ok {
 		t.Fatal("expected invalid bool env to return ok=false")
 	}
@@ -758,7 +767,7 @@ func TestParseBoolEnv(t *testing.T) {
 
 // TestStartupBootstrapRequired verifies startup bootstrap requirement detection from config values.
 func TestStartupBootstrapRequired(t *testing.T) {
-	cfg := config.Default("/tmp/hakoll.db")
+	cfg := config.Default("/tmp/tillsyn.db")
 	cfg.Identity.DisplayName = ""
 	cfg.Paths.SearchRoots = []string{"/tmp/code"}
 	if !startupBootstrapRequired(cfg) {
@@ -804,14 +813,14 @@ func TestRunDevModeCreatesWorkspaceLogFile(t *testing.T) {
 	workspace := t.TempDir()
 	t.Chdir(workspace)
 
-	dbPath := filepath.Join(workspace, "hakoll.db")
+	dbPath := filepath.Join(workspace, "tillsyn.db")
 	cfgPath := filepath.Join(workspace, "config.toml")
 	writeBootstrapReadyConfig(t, cfgPath, workspace)
 	if err := run(context.Background(), []string{"--dev", "--db", dbPath, "--config", cfgPath}, io.Discard, io.Discard); err != nil {
 		t.Fatalf("run() error = %v", err)
 	}
 
-	logDir := filepath.Join(workspace, ".hakoll", "log")
+	logDir := filepath.Join(workspace, ".tillsyn", "log")
 	entries, err := os.ReadDir(logDir)
 	if err != nil {
 		t.Fatalf("ReadDir() error = %v", err)
@@ -840,7 +849,7 @@ func TestRunTUIModeWritesRuntimeLogsToFileOnly(t *testing.T) {
 	workspace := t.TempDir()
 	t.Chdir(workspace)
 
-	dbPath := filepath.Join(workspace, "hakoll.db")
+	dbPath := filepath.Join(workspace, "tillsyn.db")
 	cfgPath := filepath.Join(workspace, "config.toml")
 	writeBootstrapReadyConfig(t, cfgPath, workspace)
 	var stderr bytes.Buffer
@@ -852,7 +861,7 @@ func TestRunTUIModeWritesRuntimeLogsToFileOnly(t *testing.T) {
 		t.Fatalf("expected no runtime stderr output in TUI mode, got %q", got)
 	}
 
-	logDir := filepath.Join(workspace, ".hakoll", "log")
+	logDir := filepath.Join(workspace, ".tillsyn", "log")
 	entries, err := os.ReadDir(logDir)
 	if err != nil {
 		t.Fatalf("ReadDir() error = %v", err)
@@ -886,7 +895,7 @@ func TestWorkspaceRootFromUsesNearestMarker(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	nested := filepath.Join(root, "cmd", "koll")
+	nested := filepath.Join(root, "cmd", "till")
 	if err := os.MkdirAll(nested, 0o755); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
 	}
@@ -902,7 +911,7 @@ func TestDevLogFilePathResolvesAgainstWorkspaceRoot(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	nested := filepath.Join(root, "cmd", "koll")
+	nested := filepath.Join(root, "cmd", "till")
 	if err := os.MkdirAll(nested, 0o755); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
 	}
@@ -916,11 +925,11 @@ func TestDevLogFilePathResolvesAgainstWorkspaceRoot(t *testing.T) {
 	t.Cleanup(func() {
 		_ = os.Chdir(prev)
 	})
-	got, err := devLogFilePath(".hakoll/log", "hakoll", time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC))
+	got, err := devLogFilePath(".tillsyn/log", "tillsyn", time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatalf("devLogFilePath() error = %v", err)
 	}
-	wantPrefix := filepath.Join(root, ".hakoll", "log")
+	wantPrefix := filepath.Join(root, ".tillsyn", "log")
 	normalize := func(p string) string {
 		return strings.TrimPrefix(filepath.Clean(p), "/private")
 	}
@@ -932,8 +941,8 @@ func TestDevLogFilePathResolvesAgainstWorkspaceRoot(t *testing.T) {
 // TestRunRejectsInvalidLoggingLevelFromConfig verifies behavior for the covered scenario.
 func TestRunRejectsInvalidLoggingLevelFromConfig(t *testing.T) {
 	tmp := t.TempDir()
-	dbPath := filepath.Join(tmp, "hakoll.db")
-	cfgPath := filepath.Join(tmp, "hakoll.toml")
+	dbPath := filepath.Join(tmp, "tillsyn.db")
+	cfgPath := filepath.Join(tmp, "tillsyn.toml")
 	cfgContent := "[logging]\nlevel = \"verbose\"\n"
 	if err := os.WriteFile(cfgPath, []byte(cfgContent), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
@@ -957,17 +966,17 @@ func TestEnsureLoggingSectionDebug(t *testing.T) {
 	}{
 		{
 			name: "replace existing level",
-			in:   "[logging]\nlevel = \"info\"\n\n[database]\npath = \"/tmp/hakoll.db\"\n",
+			in:   "[logging]\nlevel = \"info\"\n\n[database]\npath = \"/tmp/tillsyn.db\"\n",
 			want: []string{"[logging]", "level = \"debug\"", "[database]"},
 		},
 		{
 			name: "append missing level",
-			in:   "[logging]\n# comment\n\n[database]\npath = \"/tmp/hakoll.db\"\n",
+			in:   "[logging]\n# comment\n\n[database]\npath = \"/tmp/tillsyn.db\"\n",
 			want: []string{"[logging]", "level = \"debug\"", "[database]"},
 		},
 		{
 			name: "append missing section",
-			in:   "[database]\npath = \"/tmp/hakoll.db\"\n",
+			in:   "[database]\npath = \"/tmp/tillsyn.db\"\n",
 			want: []string{"[database]", "[logging]", "level = \"debug\""},
 		},
 	}
@@ -991,7 +1000,7 @@ func TestEnsureLoggingSectionDebug(t *testing.T) {
 // TestLoadRuntimeConfigMapsRuntimeFields verifies behavior for the covered scenario.
 func TestLoadRuntimeConfigMapsRuntimeFields(t *testing.T) {
 	tmp := t.TempDir()
-	cfgPath := filepath.Join(tmp, "hakoll.toml")
+	cfgPath := filepath.Join(tmp, "tillsyn.toml")
 	content := `
 [database]
 path = "/tmp/from-config.db"
@@ -1102,7 +1111,7 @@ redo = "U"
 
 // TestPersistProjectRootRoundTrip verifies behavior for the covered scenario.
 func TestPersistProjectRootRoundTrip(t *testing.T) {
-	cfgPath := filepath.Join(t.TempDir(), "hakoll.toml")
+	cfgPath := filepath.Join(t.TempDir(), "tillsyn.toml")
 
 	if err := persistProjectRoot(cfgPath, "Inbox", "/tmp/inbox"); err != nil {
 		t.Fatalf("persistProjectRoot() error = %v", err)
@@ -1129,7 +1138,7 @@ func TestPersistProjectRootRoundTrip(t *testing.T) {
 
 // TestPersistIdentityRoundTrip verifies behavior for the covered scenario.
 func TestPersistIdentityRoundTrip(t *testing.T) {
-	cfgPath := filepath.Join(t.TempDir(), "hakoll.toml")
+	cfgPath := filepath.Join(t.TempDir(), "tillsyn.toml")
 
 	if err := persistIdentity(cfgPath, "Lane User", "agent"); err != nil {
 		t.Fatalf("persistIdentity() error = %v", err)
@@ -1148,7 +1157,7 @@ func TestPersistIdentityRoundTrip(t *testing.T) {
 
 // TestPersistSearchRootsRoundTrip verifies behavior for the covered scenario.
 func TestPersistSearchRootsRoundTrip(t *testing.T) {
-	cfgPath := filepath.Join(t.TempDir(), "hakoll.toml")
+	cfgPath := filepath.Join(t.TempDir(), "tillsyn.toml")
 
 	if err := persistSearchRoots(cfgPath, []string{"/tmp/code", "/tmp/docs", "/tmp/code"}); err != nil {
 		t.Fatalf("persistSearchRoots() error = %v", err)
@@ -1166,9 +1175,9 @@ func TestPersistSearchRootsRoundTrip(t *testing.T) {
 
 // TestPersistAllowedLabelsRoundTrip verifies behavior for the covered scenario.
 func TestPersistAllowedLabelsRoundTrip(t *testing.T) {
-	cfgPath := filepath.Join(t.TempDir(), "hakoll.toml")
+	cfgPath := filepath.Join(t.TempDir(), "tillsyn.toml")
 
-	if err := persistAllowedLabels(cfgPath, "Inbox", []string{"Bug", "chore", "bug"}, []string{"Roadmap", "koll", "roadmap"}); err != nil {
+	if err := persistAllowedLabels(cfgPath, "Inbox", []string{"Bug", "chore", "bug"}, []string{"Roadmap", "till", "roadmap"}); err != nil {
 		t.Fatalf("persistAllowedLabels() error = %v", err)
 	}
 	cfg, err := config.Load(cfgPath, config.Default("/tmp/default.db"))
@@ -1184,7 +1193,7 @@ func TestPersistAllowedLabelsRoundTrip(t *testing.T) {
 			t.Fatalf("unexpected global label at %d: got %q want %q", i, cfg.Labels.Global[i], wantGlobal[i])
 		}
 	}
-	wantProject := []string{"koll", "roadmap"}
+	wantProject := []string{"roadmap", "till"}
 	gotProject := cfg.Labels.Projects["inbox"]
 	if len(gotProject) != len(wantProject) {
 		t.Fatalf("unexpected persisted project labels %#v", cfg.Labels.Projects)
@@ -1213,9 +1222,9 @@ func TestPersistAllowedLabelsRoundTrip(t *testing.T) {
 // TestRuntimeLoggerCanMuteConsoleSink verifies console output can be suppressed while other sinks remain active.
 func TestRuntimeLoggerCanMuteConsoleSink(t *testing.T) {
 	var console bytes.Buffer
-	cfg := config.Default("/tmp/hakoll.db").Logging
+	cfg := config.Default("/tmp/tillsyn.db").Logging
 
-	logger, err := newRuntimeLogger(&console, "koll", false, cfg, func() time.Time {
+	logger, err := newRuntimeLogger(&console, "till", false, cfg, func() time.Time {
 		return time.Date(2026, 2, 23, 12, 0, 0, 0, time.UTC)
 	})
 	if err != nil {

@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hylla/hakoll/internal/adapters/server/common"
-	"github.com/hylla/hakoll/internal/domain"
+	"github.com/hylla/tillsyn/internal/adapters/server/common"
+	"github.com/hylla/tillsyn/internal/domain"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -197,7 +197,7 @@ func initializeRequest() map[string]any {
 		"params": map[string]any{
 			"protocolVersion": mcp.LATEST_PROTOCOL_VERSION,
 			"clientInfo": map[string]any{
-				"name":    "hakoll-test",
+				"name":    "tillsyn-test",
 				"version": "1.0.0",
 			},
 		},
@@ -247,7 +247,7 @@ func TestHandlerUsesStatelessTransport(t *testing.T) {
 	}
 }
 
-// TestHandlerRegistersCaptureStateTool verifies MCP tool discovery includes koll.capture_state.
+// TestHandlerRegistersCaptureStateTool verifies MCP tool discovery includes till.capture_state.
 func TestHandlerRegistersCaptureStateTool(t *testing.T) {
 	capture := &stubCaptureStateReader{
 		captureState: common.CaptureState{
@@ -281,10 +281,10 @@ func TestHandlerRegistersCaptureStateTool(t *testing.T) {
 		name, _ := toolMap["name"].(string)
 		toolNames = append(toolNames, name)
 	}
-	if !slices.Contains(toolNames, "koll.capture_state") {
-		t.Fatalf("tool list missing koll.capture_state: %#v", toolNames)
+	if !slices.Contains(toolNames, "till.capture_state") {
+		t.Fatalf("tool list missing till.capture_state: %#v", toolNames)
 	}
-	if slices.Contains(toolNames, "koll.list_attention_items") {
+	if slices.Contains(toolNames, "till.list_attention_items") {
 		t.Fatalf("unexpected attention tool without attention service: %#v", toolNames)
 	}
 }
@@ -325,10 +325,10 @@ func TestHandlerRegistersAttentionToolsWhenAvailable(t *testing.T) {
 		toolNames = append(toolNames, name)
 	}
 	for _, required := range []string{
-		"koll.capture_state",
-		"koll.list_attention_items",
-		"koll.raise_attention_item",
-		"koll.resolve_attention_item",
+		"till.capture_state",
+		"till.list_attention_items",
+		"till.raise_attention_item",
+		"till.resolve_attention_item",
 	} {
 		if !slices.Contains(toolNames, required) {
 			t.Fatalf("tool list missing %q: %#v", required, toolNames)
@@ -371,10 +371,10 @@ func TestHandlerRegistersProjectToolsWhenAvailable(t *testing.T) {
 		toolNames = append(toolNames, name)
 	}
 	for _, required := range []string{
-		"koll.capture_state",
-		"koll.list_projects",
-		"koll.create_project",
-		"koll.update_project",
+		"till.capture_state",
+		"till.list_projects",
+		"till.create_project",
+		"till.update_project",
 	} {
 		if !slices.Contains(toolNames, required) {
 			t.Fatalf("tool list missing %q: %#v", required, toolNames)
@@ -408,7 +408,7 @@ func TestHandlerProjectToolCall(t *testing.T) {
 	defer server.Close()
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
-	_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3, "koll.list_projects", map[string]any{
+	_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3, "till.list_projects", map[string]any{
 		"include_archived": true,
 	}))
 	structured := toolResultStructured(t, callResp.Result)
@@ -448,7 +448,7 @@ func TestHandlerCaptureStateToolCall(t *testing.T) {
 		"id":      3,
 		"method":  "tools/call",
 		"params": map[string]any{
-			"name": "koll.capture_state",
+			"name": "till.capture_state",
 			"arguments": map[string]any{
 				"project_id": "p1",
 				"view":       "full",
@@ -492,7 +492,7 @@ func TestNormalizeConfig(t *testing.T) {
 			name: "defaults",
 			in:   Config{},
 			want: Config{
-				ServerName:    "hakoll",
+				ServerName:    "tillsyn",
 				ServerVersion: "dev",
 				EndpointPath:  "/mcp",
 			},
@@ -500,12 +500,12 @@ func TestNormalizeConfig(t *testing.T) {
 		{
 			name: "trimmed values and slash prefix",
 			in: Config{
-				ServerName:    " hakoll-server ",
+				ServerName:    " tillsyn-server ",
 				ServerVersion: " v1.2.3 ",
 				EndpointPath:  "custom/path",
 			},
 			want: Config{
-				ServerName:    "hakoll-server",
+				ServerName:    "tillsyn-server",
 				ServerVersion: "v1.2.3",
 				EndpointPath:  "/custom/path",
 			},
@@ -513,12 +513,12 @@ func TestNormalizeConfig(t *testing.T) {
 		{
 			name: "endpoint trim of repeated slashes",
 			in: Config{
-				ServerName:    "hakoll",
+				ServerName:    "tillsyn",
 				ServerVersion: "dev",
 				EndpointPath:  "///mcp///",
 			},
 			want: Config{
-				ServerName:    "hakoll",
+				ServerName:    "tillsyn",
 				ServerVersion: "dev",
 				EndpointPath:  "/mcp",
 			},
@@ -650,7 +650,7 @@ func TestHandlerCaptureStateToolCallErrorPaths(t *testing.T) {
 	defer server.Close()
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
-	_, missingArgResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(2, "koll.capture_state", map[string]any{}))
+	_, missingArgResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(2, "till.capture_state", map[string]any{}))
 	if isError, _ := missingArgResp.Result["isError"].(bool); !isError {
 		t.Fatalf("isError = %v, want true", missingArgResp.Result["isError"])
 	}
@@ -658,7 +658,7 @@ func TestHandlerCaptureStateToolCallErrorPaths(t *testing.T) {
 		t.Fatalf("error text = %q, want required project_id message", got)
 	}
 
-	_, mappedErrResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3, "koll.capture_state", map[string]any{
+	_, mappedErrResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3, "till.capture_state", map[string]any{
 		"project_id": "p1",
 	}))
 	if isError, _ := mappedErrResp.Result["isError"].(bool); !isError {
@@ -721,7 +721,7 @@ func TestHandlerAttentionToolCalls(t *testing.T) {
 	defer server.Close()
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
-	_, listResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(2, "koll.list_attention_items", map[string]any{
+	_, listResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(2, "till.list_attention_items", map[string]any{
 		"project_id": "p1",
 		"scope_type": "project",
 		"scope_id":   "p1",
@@ -745,7 +745,7 @@ func TestHandlerAttentionToolCalls(t *testing.T) {
 		t.Fatalf("list state = %q, want open", attention.lastList.State)
 	}
 
-	_, raiseResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3, "koll.raise_attention_item", map[string]any{
+	_, raiseResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3, "till.raise_attention_item", map[string]any{
 		"project_id":           "p1",
 		"scope_type":           "project",
 		"scope_id":             "p1",
@@ -780,7 +780,7 @@ func TestHandlerAttentionToolCalls(t *testing.T) {
 		t.Fatalf("raise requires_user_action = false, want true")
 	}
 
-	_, resolveResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(4, "koll.resolve_attention_item", map[string]any{
+	_, resolveResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(4, "till.resolve_attention_item", map[string]any{
 		"id":          "a1",
 		"resolved_by": "tester",
 		"reason":      "approved",
@@ -818,7 +818,7 @@ func TestHandlerAttentionToolCallErrorMapping(t *testing.T) {
 	defer server.Close()
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
-	_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(2, "koll.list_attention_items", map[string]any{
+	_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(2, "till.list_attention_items", map[string]any{
 		"project_id": "p1",
 	}))
 	if isError, _ := callResp.Result["isError"].(bool); !isError {

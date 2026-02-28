@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hylla/hakoll/internal/adapters/server/common"
-	"github.com/hylla/hakoll/internal/adapters/server/httpapi"
-	"github.com/hylla/hakoll/internal/adapters/server/mcpapi"
+	"github.com/hylla/tillsyn/internal/adapters/server/common"
+	"github.com/hylla/tillsyn/internal/adapters/server/httpapi"
+	"github.com/hylla/tillsyn/internal/adapters/server/mcpapi"
 )
 
 // defaultBindAddress defines the localhost-first serve default.
@@ -125,7 +125,7 @@ func normalizeConfig(cfg Config) (Config, error) {
 
 	cfg.ServerName = strings.TrimSpace(cfg.ServerName)
 	if cfg.ServerName == "" {
-		cfg.ServerName = "hakoll"
+		cfg.ServerName = "tillsyn"
 	}
 	cfg.ServerVersion = strings.TrimSpace(cfg.ServerVersion)
 	if cfg.ServerVersion == "" {

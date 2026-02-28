@@ -19,8 +19,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/atotto/clipboard"
-	"github.com/hylla/hakoll/internal/app"
-	"github.com/hylla/hakoll/internal/domain"
+	"github.com/hylla/tillsyn/internal/app"
+	"github.com/hylla/tillsyn/internal/domain"
 )
 
 // Service represents service data used by this package.
@@ -112,7 +112,7 @@ const (
 	activityLogViewWindow = 14
 	defaultHighlightColor = "212"
 	// headerMarkText defines the boxed brand wordmark shown in the board header.
-	headerMarkText = "HA KOLL"
+	headerMarkText = "TILLSYN"
 	// tuiOuterHorizontalPadding keeps a small symmetric outer gutter around the whole TUI.
 	tuiOuterHorizontalPadding = 1
 	// boardColumnGapWidth is the horizontal spacing between adjacent board columns.
@@ -678,7 +678,7 @@ func NewModel(svc Service, opts ...Option) Model {
 		allowedLabelProject:      map[string][]string{},
 		searchRoots:              []string{},
 		projectRoots:             map[string]string{},
-		identityDisplayName:      "koll-user",
+		identityDisplayName:      "tillsyn-user",
 		identityDefaultActorType: string(domain.ActorTypeUser),
 		bootstrapActorIndex:      0,
 		bootstrapRoots:           []string{},
@@ -1093,7 +1093,7 @@ func (m Model) View() tea.View {
 		helpStyle := lipgloss.NewStyle().Foreground(muted)
 		statusStyle := lipgloss.NewStyle().Foreground(dim)
 		sections := []string{
-			titleStyle.Render("koll"),
+			titleStyle.Render("tillsyn"),
 			"",
 			"No projects yet.",
 			"Press N to create your first project.",
@@ -2938,7 +2938,7 @@ func commandPaletteItems() []commandPaletteItem {
 		{Command: "highlight-color", Aliases: []string{"set-highlight", "focus-color"}, Description: "set focused-row highlight color"},
 		{Command: "activity-log", Aliases: []string{"log"}, Description: "open recent activity modal"},
 		{Command: "help", Aliases: []string{}, Description: "open help modal"},
-		{Command: "quit", Aliases: []string{"exit"}, Description: "quit koll"},
+		{Command: "quit", Aliases: []string{"exit"}, Description: "quit tillsyn"},
 	}
 }
 
@@ -8037,7 +8037,7 @@ func (m *Model) appendActivity(entry activityEntry) {
 	if strings.TrimSpace(entry.ActorID) == "" {
 		entry.ActorID = strings.TrimSpace(m.identityDisplayName)
 		if entry.ActorID == "" {
-			entry.ActorID = "hakoll-user"
+			entry.ActorID = "tillsyn-user"
 		}
 	}
 	entry.Metadata = copyActivityMetadata(entry.Metadata)
@@ -9086,7 +9086,7 @@ func (m Model) displayActivityOwner(entry activityEntry) (domain.ActorType, stri
 	actorID := strings.TrimSpace(entry.ActorID)
 	if actorType == domain.ActorTypeUser {
 		switch strings.ToLower(actorID) {
-		case "hakoll-user", "koll-user":
+		case "tillsyn-user":
 			if name := strings.TrimSpace(m.identityDisplayName); name != "" {
 				actorID = name
 			}
@@ -9240,7 +9240,7 @@ func (m Model) renderHelpOverlay(accent, muted, dim color.Color, _ lipgloss.Styl
 		width = 72
 	}
 	screenTitle, screenHelp := m.helpOverlayScreenTitleAndLines()
-	title := lipgloss.NewStyle().Bold(true).Foreground(accent).Render("HA KOLL Help")
+	title := lipgloss.NewStyle().Bold(true).Foreground(accent).Render("TILLSYN Help")
 	subtitle := lipgloss.NewStyle().Foreground(muted).Render("screen: " + screenTitle)
 	lines := []string{title, subtitle, ""}
 	for _, line := range screenHelp {

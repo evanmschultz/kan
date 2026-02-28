@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hylla/hakoll/internal/domain"
+	"github.com/hylla/tillsyn/internal/domain"
 )
 
 // fakeRepo represents fake repo data used by this package.
@@ -955,7 +955,7 @@ func TestUpdateProject(t *testing.T) {
 		Name:        "Platform",
 		Description: "new desc",
 		Metadata: domain.ProjectMetadata{
-			Owner: "team-hakoll",
+			Owner: "team-tillsyn",
 			Tags:  []string{"go", "Go"},
 		},
 	})
@@ -965,7 +965,7 @@ func TestUpdateProject(t *testing.T) {
 	if updated.Name != "Platform" || updated.Description != "new desc" {
 		t.Fatalf("unexpected updated project %#v", updated)
 	}
-	if updated.Metadata.Owner != "team-hakoll" || len(updated.Metadata.Tags) != 1 || updated.Metadata.Tags[0] != "go" {
+	if updated.Metadata.Owner != "team-tillsyn" || len(updated.Metadata.Tags) != 1 || updated.Metadata.Tags[0] != "go" {
 		t.Fatalf("unexpected metadata %#v", updated.Metadata)
 	}
 }
@@ -1378,8 +1378,8 @@ func TestCreateAndListCommentsByTarget(t *testing.T) {
 	if second.ActorType != domain.ActorTypeUser {
 		t.Fatalf("expected default actor type user, got %q", second.ActorType)
 	}
-	if second.AuthorName != "hakoll-user" {
-		t.Fatalf("expected default author name hakoll-user, got %q", second.AuthorName)
+	if second.AuthorName != "tillsyn-user" {
+		t.Fatalf("expected default author name tillsyn-user, got %q", second.AuthorName)
 	}
 
 	comments, err := svc.ListCommentsByTarget(context.Background(), ListCommentsByTargetInput{

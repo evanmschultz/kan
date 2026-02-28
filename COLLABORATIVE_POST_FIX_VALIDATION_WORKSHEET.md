@@ -31,20 +31,20 @@ Run ledger policy (locked for this validation pass):
 3. Server/TUI launched against clean validation DB snapshot.
 4. Debug logging can be enabled without manual TOML edits (CLI flag and/or env override), or this remains an explicit FAIL item.
 5. Logging discoverability check captured from help output:
-   - `./koll --help`
-   - `./koll serve --help`
+   - `./till --help`
+   - `./till serve --help`
 
 Record command/evidence:
 - gates evidence: `.tmp/collab-post-fix-20260225_143243/just_check.txt`, `.tmp/collab-post-fix-20260225_143243/just_ci.txt`, `.tmp/collab-post-fix-20260225_143243/just_test_golden.txt` (PASS)
-- runtime command: user-launched `./koll serve --http 127.0.0.1:18080 --api-endpoint /api/v1 --mcp-endpoint /mcp` (listener evidence: `.tmp/collab-post-fix-20260225_143243/port_18080_listener.txt`)
+- runtime command: user-launched `./till serve --http 127.0.0.1:18080 --api-endpoint /api/v1 --mcp-endpoint /mcp` (listener evidence: `.tmp/collab-post-fix-20260225_143243/port_18080_listener.txt`)
 - health check evidence: `.tmp/collab-post-fix-20260225_143243/healthz.txt`, `.tmp/collab-post-fix-20260225_143243/readyz.txt` (both `{"status":"ok"}`)
-- help output evidence: `.tmp/collab-post-fix-20260225_143243/help_koll.txt`, `.tmp/collab-post-fix-20260225_143243/help_koll_serve.txt`
+- help output evidence: `.tmp/collab-post-fix-20260225_143243/help_till.txt`, `.tmp/collab-post-fix-20260225_143243/help_till_serve.txt`
 - initial-empty-project evidence: `.tmp/collab-post-fix-20260225_143243/precondition_initial_projects_empty.txt`
 
 Precondition status:
 1. Implementation merge present: PASS (`git log -1 => 368b908`).
 2. Full gates passed: PASS.
-3. Clean validation DB snapshot: PASS (inferred from initial `koll_list_projects => []` before automated setup mutations).
+3. Clean validation DB snapshot: PASS (inferred from initial `till_list_projects => []` before automated setup mutations).
 4. Debug logging enablement without manual TOML edits: FAIL (manual config edit required).
 5. Help-output capture: PASS (captured, but content quality fails in Section 6).
 
@@ -68,7 +68,7 @@ Precondition status:
     - cross-project update on `a4dd0ea4-93a0-4529-a8ba-2bef09d0f95f` failed with `guardrail_failed ... mutation lease is invalid`
     - status: PASS
   - attribution separation:
-    - user-created task: `CreatedByActor=koll-user`, `UpdatedByType=user`
+    - user-created task: `CreatedByActor=till-user`, `UpdatedByType=user`
     - agent-created task: `CreatedByActor=orchestrator-main`, `UpdatedByType=agent`
     - status: PASS
   - real worker scope probe:
@@ -119,11 +119,11 @@ Precondition status:
 5. Help output clearly documents debug logging activation path (`--log-level` and/or env/config route).
 
 - Result: FAIL
-- Evidence: `.tmp/collab-post-fix-20260225_143243/help_koll.txt`, `.tmp/collab-post-fix-20260225_143243/help_koll_serve.txt`, `.tmp/collab-post-fix-20260225_143243/runtime_log_full.log`, `.tmp/collab-post-fix-20260225_143243/runtime_log_mcp_filter.txt`, `.tmp/collab-post-fix-20260225_143243/runtime_log_gatekeeping_ops_search.txt`, `.tmp/collab-post-fix-20260225_143243/user_stdout_logging_observation.txt`
+- Evidence: `.tmp/collab-post-fix-20260225_143243/help_till.txt`, `.tmp/collab-post-fix-20260225_143243/help_till_serve.txt`, `.tmp/collab-post-fix-20260225_143243/runtime_log_full.log`, `.tmp/collab-post-fix-20260225_143243/runtime_log_mcp_filter.txt`, `.tmp/collab-post-fix-20260225_143243/runtime_log_gatekeeping_ops_search.txt`, `.tmp/collab-post-fix-20260225_143243/user_stdout_logging_observation.txt`
 - Detailed outcomes:
   - logging help discoverability:
-    - `./koll --help` produced `error: flag: help requested` (no usable help text)
-    - `./koll serve --help` attempted startup/open path and failed on runtime path instead of printing subcommand help
+    - `./till --help` produced `error: flag: help requested` (no usable help text)
+    - `./till serve --help` attempted startup/open path and failed on runtime path instead of printing subcommand help
     - status: FAIL
   - runtime logs exist:
     - `charmbracelet/log` output is present in file sink for startup/command flow
@@ -133,13 +133,13 @@ Precondition status:
     - status: FAIL
   - stdout vs file sink parity:
     - user observed guardrail mutation errors on serve stdout/stderr (`lease project mismatch`, `lease not found`)
-    - same operation-level signals were not reliably mirrored into `.hakoll/log` file sink
+    - same operation-level signals were not reliably mirrored into `.tillsyn/log` file sink
     - status: FAIL
   - notifications panel bubbling:
     - requires manual TUI validation
     - status: BLOCKED
 - Locked issue:
-  - guardrail/MCP mutation errors are observable on serve stdout/stderr but are not reliably mirrored into `.hakoll/log` file sink; sink parity must be fixed.
+  - guardrail/MCP mutation errors are observable on serve stdout/stderr but are not reliably mirrored into `.tillsyn/log` file sink; sink parity must be fixed.
   - requested notifications-panel redesign process (ASCII-art proposal + clarifying questions before implementation) was not executed prior to this run; this is a process miss and remains required before building the new panel design.
 
 ## 7) Final Post-Fix Verdict
@@ -148,7 +148,7 @@ Precondition status:
 - Remaining blockers:
   1. Manual TUI regression sweep (Sections 4 and 5) not executed yet; required user-driven validation remains.
   2. Logging/help discoverability gaps remain (no usable CLI help path for debug activation; MCP mutation errors currently split between stdout and file sink, with missing file-sink parity for key MCP operations).
-  3. MCP `koll_restore_task` fails guardrail path (`mutation lease is required`) and currently exposes no actor/lease tuple fields to satisfy guardrails.
+  3. MCP `till_restore_task` fails guardrail path (`mutation lease is required`) and currently exposes no actor/lease tuple fields to satisfy guardrails.
 - Follow-up actions:
   1. Run full manual TUI post-fix validation section-by-section and record PASS/FAIL per item in this worksheet with screenshots/log evidence.
   2. Implement/fix logging discoverability + MCP operation logging visibility, then rerun Section 6 and re-check final verdict.
@@ -162,36 +162,36 @@ Automated sweep completed without manual TUI input.
 - Evidence: MCP call transcript in this run, `.tmp/collab-post-fix-20260225_143243/export_snapshot_after_sweep_project.json`, `.tmp/collab-post-fix-20260225_143243/columns.tsv`, `.tmp/collab-post-fix-20260225_143243/cleanup_notes.md`
 - Tool/behavior matrix:
   - PASS:
-    - `koll_get_bootstrap_guide`
-    - `koll_list_kind_definitions`
-    - `koll_upsert_kind_definition`
-    - `koll_create_project`
-    - `koll_list_projects`
-    - `koll_issue_capability_lease`
-    - `koll_create_task`
-    - `koll_list_tasks`
-    - `koll_list_child_tasks`
-    - `koll_update_task`
-    - `koll_move_task`
-    - `koll_reparent_task` (valid parent path)
-    - `koll_delete_task` (archive and hard modes)
-    - `koll_search_task_matches`
-    - `koll_create_comment`
-    - `koll_list_comments_by_target`
-    - `koll_raise_attention_item` (valid kind)
-    - `koll_list_attention_items`
-    - `koll_resolve_attention_item`
-    - `koll_set_project_allowed_kinds`
-    - `koll_list_project_allowed_kinds`
-    - `koll_update_project`
-    - `koll_get_project_dependency_rollup`
-    - `koll_list_project_change_events`
-    - `koll_heartbeat_capability_lease`
-    - `koll_renew_capability_lease`
-    - `koll_revoke_capability_lease`
-    - `koll_revoke_all_capability_leases`
+    - `till_get_bootstrap_guide`
+    - `till_list_kind_definitions`
+    - `till_upsert_kind_definition`
+    - `till_create_project`
+    - `till_list_projects`
+    - `till_issue_capability_lease`
+    - `till_create_task`
+    - `till_list_tasks`
+    - `till_list_child_tasks`
+    - `till_update_task`
+    - `till_move_task`
+    - `till_reparent_task` (valid parent path)
+    - `till_delete_task` (archive and hard modes)
+    - `till_search_task_matches`
+    - `till_create_comment`
+    - `till_list_comments_by_target`
+    - `till_raise_attention_item` (valid kind)
+    - `till_list_attention_items`
+    - `till_resolve_attention_item`
+    - `till_set_project_allowed_kinds`
+    - `till_list_project_allowed_kinds`
+    - `till_update_project`
+    - `till_get_project_dependency_rollup`
+    - `till_list_project_change_events`
+    - `till_heartbeat_capability_lease`
+    - `till_renew_capability_lease`
+    - `till_revoke_capability_lease`
+    - `till_revoke_all_capability_leases`
   - FAIL:
-    - `koll_restore_task`
+    - `till_restore_task`
       - response: `guardrail_failed ... mutation lease is required`
       - MCP surface currently does not provide actor/lease tuple fields for restore, creating a contract mismatch with guardrails.
   - Expected edge validation errors (not counted as failures):
@@ -251,7 +251,7 @@ Legend:
 | REQ-007 | No silent failures for key operations | PARTIAL |
 | REQ-008 | Debug logging activation path ergonomic without manual config edits | MISSING |
 | REQ-009 | Help output clearly documents debug logging activation path | MISSING |
-| REQ-010 | Stdout/stderr guardrail logs mirrored to `.hakoll/log` file sink (sink parity) | MISSING |
+| REQ-010 | Stdout/stderr guardrail logs mirrored to `.tillsyn/log` file sink (sink parity) | MISSING |
 | REQ-011 | `v` must not break typing in text inputs | IMPLEMENTED |
 | REQ-012 | Typing keys preserved in inputs; emoji support in text fields | IMPLEMENTED |
 | REQ-013 | Selection mode moved off `v` to control chord direction | IMPLEMENTED |
@@ -283,7 +283,7 @@ Highest-risk unresolved items (priority):
 1. REQ-001: no external mutation auto-refresh in TUI (stale board risk).
 2. REQ-002/003: requested two-part notifications workflow (global count + quick-nav + drill-in) absent.
 3. REQ-010: stdout/file sink parity gap for MCP guardrail logs.
-4. REQ-027: `koll_restore_task` MCP contract mismatch (guardrail requires lease, tool path lacks required tuple).
+4. REQ-027: `till_restore_task` MCP contract mismatch (guardrail requires lease, tool path lacks required tuple).
 5. REQ-019/021: archive-key and project archived UX policy mismatches still open.
 
 ## 11) TUI Carry-Forward (Migrated From Retired Worksheet)
@@ -321,8 +321,8 @@ Run artifact root:
 |---|---|---|---|
 | P0-T01 Manual TUI validation for C4/C6/C9/C10/C11/C12/C13 | IN_PROGRESS | `.tmp/phase0-collab-20260227_141800/manual/m0_section0_evidence_20260227.md`, `.tmp/phase0-collab-20260227_141800/manual/checklist.md` | User supplied initial manual findings: C4 fail (`esc` back-stack behavior), C6 fail (notifications UX/navigation goals unmet), C10 fail (emoji input not working). Remaining C9/C11/C12/C13 detail still pending completion evidence. |
 | P0-T02 Archived/search/keybinding targeted checks | BLOCKED | `.tmp/phase0-collab-20260227_141800/phase0_manual_steps.md`, `.tmp/phase0-collab-20260227_141800/manual/checklist.md` | Requires manual UX verification in running TUI session. |
-| P0-T03 Focused MCP rerun (`koll_restore_task`, `capture_state`) | FAIL | `.tmp/phase0-collab-20260227_141800/mcp_focused_checks.md`, `.tmp/phase0-collab-20260227_141800/http_capture_state_project.json` | `capture_state` readiness passes; `koll_restore_task` still fails guardrail path (`mutation lease is required`). |
-| P0-T04 Logging/help discoverability evidence capture | FAIL | `.tmp/phase0-collab-20260227_141800/phase0_preflight_summary.md`, `.tmp/phase0-collab-20260227_141800/help_koll.txt`, `.tmp/phase0-collab-20260227_141800/help_koll_serve.txt`, `.tmp/phase0-collab-20260227_141800/runtime_log_focus_filter.txt` | Help output path remains broken; operation-level log parity remains insufficient in this probe. Remediation requirements now include Charm/Fang-based help UX and first-launch config bootstrap behavior (copy default example config when missing). |
+| P0-T03 Focused MCP rerun (`till_restore_task`, `capture_state`) | FAIL | `.tmp/phase0-collab-20260227_141800/mcp_focused_checks.md`, `.tmp/phase0-collab-20260227_141800/http_capture_state_project.json` | `capture_state` readiness passes; `till_restore_task` still fails guardrail path (`mutation lease is required`). |
+| P0-T04 Logging/help discoverability evidence capture | FAIL | `.tmp/phase0-collab-20260227_141800/phase0_preflight_summary.md`, `.tmp/phase0-collab-20260227_141800/help_till.txt`, `.tmp/phase0-collab-20260227_141800/help_till_serve.txt`, `.tmp/phase0-collab-20260227_141800/runtime_log_focus_filter.txt` | Help output path remains broken; operation-level log parity remains insufficient in this probe. Remediation requirements now include Charm/Fang-based help UX and first-launch config bootstrap behavior (copy default example config when missing). |
 | P0-T05 Fill blank checkpoints/sign-offs in `MCP_DOGFOODING_WORKSHEET.md` | PASS | `MCP_DOGFOODING_WORKSHEET.md` + run artifacts under `.tmp/phase0-collab-20260227_141800/` | Completed: all USER NOTES rows and final sign-off fields now have explicit `pass`/`fail`/`blocked` values with evidence paths. |
 | P0-T06 Update this worksheet with final evidence and verdict | BLOCKED | `COLLABORATIVE_POST_FIX_VALIDATION_WORKSHEET.md`, `.tmp/phase0-collab-20260227_141800/phase0_manual_steps.md` | Worksheet updated with current evidence and blockers, but final closeout verdict is blocked on pending user-driven manual collaborative checks. |
 
@@ -336,21 +336,21 @@ Run artifact root:
 
 ### 12.3 Immediate blockers called out
 
-1. `./koll --help` and `./koll serve --help` do not provide expected discoverable help output in this run.
-2. `koll_restore_task` remains unusable in current MCP surface due guardrail tuple mismatch.
+1. `./till --help` and `./till serve --help` do not provide expected discoverable help output in this run.
+2. `till_restore_task` remains unusable in current MCP surface due guardrail tuple mismatch.
 3. Remaining TUI-centric collaborative checks require explicit user interaction and cannot be auto-validated by agent-only execution.
 
 ### 12.4 User-Directed Additions And Process Contract
 
 Additional remediation requirements captured from user direction:
 1. First-launch bootstrap behavior:
-   - when launching `koll` for the first time and config file is missing, copy from the default example config (`config.example.toml`) instead of creating a short/minimal config stub.
+   - when launching `till` for the first time and config file is missing, copy from the default example config (`config.example.toml`) instead of creating a short/minimal config stub.
 2. Help/CLI UX behavior:
    - replace current failing `--help` behavior with a designed help surface using Charm/Fang so help output is readable, attractive, and discoverable.
-3. `koll_restore_task` contract remediation:
+3. `till_restore_task` contract remediation:
    - close the mutation guardrail mismatch by aligning MCP restore transport with actor/lease tuple expectations enforced by the service guardrail path.
 4. Restore tool-surface design review:
-   - evaluate whether restore should be exposed as a generalized `restore` operation with explicit node/scope type argument, rather than only `koll_restore_task`,
+   - evaluate whether restore should be exposed as a generalized `restore` operation with explicit node/scope type argument, rather than only `till_restore_task`,
    - ensure whichever restore surface is chosen includes and uses the required guardrail tuple fields consistently (`actor_type`, `agent_name`, `agent_instance_id`, `lease_token`) and resolves id/name-pair gatekeeping requirements.
 
 Execution/process contract for remaining Phase 0 testing:
@@ -366,13 +366,13 @@ Execution/process contract for remaining Phase 0 testing:
    - propose fix options,
    - add agreed proposals to active markdown only after user+agent consensus.
 
-### 12.5 `koll_restore_task` Mutation Guardrail Root-Cause Summary (Explorer Audit)
+### 12.5 `till_restore_task` Mutation Guardrail Root-Cause Summary (Explorer Audit)
 
 Observed failure:
-- `koll_restore_task` returns `guardrail_failed ... mutation lease is required` for agent-attributed archived tasks.
+- `till_restore_task` returns `guardrail_failed ... mutation lease is required` for agent-attributed archived tasks.
 
 Code-level explanation:
-1. MCP `koll.restore_task` currently accepts only `task_id` and calls restore without actor/lease tuple.
+1. MCP `till.restore_task` currently accepts only `task_id` and calls restore without actor/lease tuple.
 2. Restore path in MCP/common surfaces does not carry actor lease data like update/move/delete paths.
 3. Restore adapter path does not attach mutation guard context before invoking service restore.
 4. Service restore enforces mutation guard using persisted `UpdatedByType`; for non-user actor types this requires a valid lease tuple.
@@ -389,7 +389,7 @@ Primary evidence references from explorer review:
 
 M0.2 runtime launch:
 1. User launched:
-   - `./koll serve --http 127.0.0.1:18080 --api-endpoint /api/v1 --mcp-endpoint /mcp`
+   - `./till serve --http 127.0.0.1:18080 --api-endpoint /api/v1 --mcp-endpoint /mcp`
 2. User-observed startup sequence reported successful service initialization and serve command flow start.
 3. User verdict: PASS (`works! pass!`).
 
@@ -457,7 +457,7 @@ M2.2 scope mismatch / ambiguity rejection:
 2. Cross-project lease mismatch failed closed as expected.
 3. Scope mismatch probe still accepted (`scope_type=task`, `scope_id=<project_id>`), creating persisted item before cleanup.
 4. Revalidated again on 2026-02-28 after app-layer and scope-mapping fixes; mismatch was still accepted (`attention_id=5956394b-f73a-4522-8530-ec53ec00082c`) before cleanup.
-5. Runtime caveat: local `./koll` binary mtime initially predated source edits, so rerun may have exercised a stale process; binary has since been rebuilt and now needs a fresh `serve` restart for definitive validation.
+5. Runtime caveat: local `./till` binary mtime initially predated source edits, so rerun may have exercised a stale process; binary has since been rebuilt and now needs a fresh `serve` restart for definitive validation.
 6. Post-restart verification on 2026-02-28: mismatch probe now failed closed with `not_found`, and no persistence side effect was observed.
 7. Result: PASS for fail-closed behavior (diagnostic specificity follow-up remains).
 

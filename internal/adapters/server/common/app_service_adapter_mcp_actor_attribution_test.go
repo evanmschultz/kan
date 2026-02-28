@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hylla/hakoll/internal/adapters/storage/sqlite"
-	"github.com/hylla/hakoll/internal/app"
-	"github.com/hylla/hakoll/internal/domain"
+	"github.com/hylla/tillsyn/internal/adapters/storage/sqlite"
+	"github.com/hylla/tillsyn/internal/app"
+	"github.com/hylla/tillsyn/internal/domain"
 )
 
 // newActorAttributionAdapterFixture builds one adapter fixture with seeded project/task rows.

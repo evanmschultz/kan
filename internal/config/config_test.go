@@ -10,8 +10,8 @@ import (
 
 // TestDefaultConfig verifies behavior for the covered scenario.
 func TestDefaultConfig(t *testing.T) {
-	cfg := Default("/tmp/hakoll.db")
-	if cfg.Database.Path != "/tmp/hakoll.db" {
+	cfg := Default("/tmp/tillsyn.db")
+	if cfg.Database.Path != "/tmp/tillsyn.db" {
 		t.Fatalf("unexpected db path %q", cfg.Database.Path)
 	}
 	if cfg.Delete.DefaultMode != DeleteModeArchive {
@@ -41,8 +41,8 @@ func TestDefaultConfig(t *testing.T) {
 	if !cfg.Logging.DevFile.Enabled {
 		t.Fatal("expected dev file logging enabled by default")
 	}
-	if cfg.Logging.DevFile.Dir != ".hakoll/log" {
-		t.Fatalf("expected default dev file log dir .hakoll/log, got %q", cfg.Logging.DevFile.Dir)
+	if cfg.Logging.DevFile.Dir != ".tillsyn/log" {
+		t.Fatalf("expected default dev file log dir .tillsyn/log, got %q", cfg.Logging.DevFile.Dir)
 	}
 	if cfg.Identity.DisplayName != "" {
 		t.Fatalf("expected empty default identity display name, got %q", cfg.Identity.DisplayName)
@@ -57,7 +57,7 @@ func TestDefaultConfig(t *testing.T) {
 
 // TestLoadMissingFileUsesDefaults verifies behavior for the covered scenario.
 func TestLoadMissingFileUsesDefaults(t *testing.T) {
-	defaults := Default("/tmp/hakoll.db")
+	defaults := Default("/tmp/tillsyn.db")
 	cfg, err := Load(filepath.Join(t.TempDir(), "missing.toml"), defaults)
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
@@ -73,7 +73,7 @@ func TestLoadFileOverridesDefaults(t *testing.T) {
 	path := filepath.Join(dir, "config.toml")
 	content := `
 [database]
-path = "/custom/hakoll.db"
+path = "/custom/tillsyn.db"
 
 [delete]
 default_mode = "hard"
@@ -102,7 +102,7 @@ show_due_summary = false
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if cfg.Database.Path != "/custom/hakoll.db" {
+	if cfg.Database.Path != "/custom/tillsyn.db" {
 		t.Fatalf("unexpected db path %q", cfg.Database.Path)
 	}
 	if cfg.Delete.DefaultMode != DeleteModeHard {
@@ -128,7 +128,7 @@ func TestLoadIdentityAndPathsOverrides(t *testing.T) {
 	path := filepath.Join(dir, "config.toml")
 	content := `
 [database]
-path = "/custom/hakoll.db"
+path = "/custom/tillsyn.db"
 
 [identity]
 display_name = "  Evan Schultz  "
@@ -190,7 +190,7 @@ func TestLoadRejectsInvalidDeleteMode(t *testing.T) {
 	path := filepath.Join(dir, "config.toml")
 	content := `
 [database]
-path = "/custom/hakoll.db"
+path = "/custom/tillsyn.db"
 
 [delete]
 default_mode = "weird"
@@ -221,7 +221,7 @@ func TestLoadBoardSearchAndKeysOverrides(t *testing.T) {
 	path := filepath.Join(dir, "config.toml")
 	content := `
 [database]
-path = "/custom/hakoll.db"
+path = "/custom/tillsyn.db"
 
 [board]
 show_wip_warnings = false
@@ -287,7 +287,7 @@ redo = "U"
 
 // TestValidateRejectsUnknownSearchState verifies behavior for the covered scenario.
 func TestValidateRejectsUnknownSearchState(t *testing.T) {
-	cfg := Default("/tmp/hakoll.db")
+	cfg := Default("/tmp/tillsyn.db")
 	cfg.Search.States = []string{"todo", "unknown"}
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("expected unknown search state validation error")
@@ -296,7 +296,7 @@ func TestValidateRejectsUnknownSearchState(t *testing.T) {
 
 // TestValidateRejectsInvalidDueSoonWindow verifies behavior for the covered scenario.
 func TestValidateRejectsInvalidDueSoonWindow(t *testing.T) {
-	cfg := Default("/tmp/hakoll.db")
+	cfg := Default("/tmp/tillsyn.db")
 	cfg.UI.DueSoonWindows = []string{"bogus"}
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("expected invalid due-soon duration error")
@@ -305,7 +305,7 @@ func TestValidateRejectsInvalidDueSoonWindow(t *testing.T) {
 
 // TestValidateRejectsInvalidLoggingLevel verifies behavior for the covered scenario.
 func TestValidateRejectsInvalidLoggingLevel(t *testing.T) {
-	cfg := Default("/tmp/hakoll.db")
+	cfg := Default("/tmp/tillsyn.db")
 	cfg.Logging.Level = "verbose"
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("expected invalid logging level validation error")
@@ -314,7 +314,7 @@ func TestValidateRejectsInvalidLoggingLevel(t *testing.T) {
 
 // TestValidateRejectsInvalidIdentityActorType verifies behavior for the covered scenario.
 func TestValidateRejectsInvalidIdentityActorType(t *testing.T) {
-	cfg := Default("/tmp/hakoll.db")
+	cfg := Default("/tmp/tillsyn.db")
 	cfg.Identity.DefaultActorType = "robot"
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("expected invalid identity actor type validation error")
@@ -323,7 +323,7 @@ func TestValidateRejectsInvalidIdentityActorType(t *testing.T) {
 
 // TestDueSoonDurationsNormalizes verifies behavior for the covered scenario.
 func TestDueSoonDurationsNormalizes(t *testing.T) {
-	cfg := Default("/tmp/hakoll.db")
+	cfg := Default("/tmp/tillsyn.db")
 	cfg.UI.DueSoonWindows = []string{"2h", "30m", "2h", "bad", "0s"}
 	got := cfg.DueSoonDurations()
 	want := []time.Duration{30 * time.Minute, 2 * time.Hour}
@@ -343,7 +343,7 @@ func TestLoadProjectRootsAndLabels(t *testing.T) {
 	path := filepath.Join(dir, "config.toml")
 	content := `
 [database]
-path = "/custom/hakoll.db"
+path = "/custom/tillsyn.db"
 
 [project_roots]
 Inbox = "/Users/test/code/inbox"
@@ -353,7 +353,7 @@ global = ["Planning", "Bug", "planning"]
 enforce_allowed = true
 
 [labels.projects]
-inbox = ["koll", "Roadmap", "koll"]
+inbox = ["till", "Roadmap", "till"]
 `
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
@@ -370,7 +370,7 @@ inbox = ["koll", "Roadmap", "koll"]
 		t.Fatalf("expected enforce_allowed true, got %#v", cfg.Labels)
 	}
 	allowed := cfg.AllowedLabels("inbox")
-	want := []string{"bug", "koll", "planning", "roadmap"}
+	want := []string{"bug", "planning", "roadmap", "till"}
 	if len(allowed) != len(want) {
 		t.Fatalf("unexpected allowed labels %#v", allowed)
 	}
@@ -383,7 +383,7 @@ inbox = ["koll", "Roadmap", "koll"]
 
 // TestValidateRejectsEmptyProjectRoot verifies behavior for the covered scenario.
 func TestValidateRejectsEmptyProjectRoot(t *testing.T) {
-	cfg := Default("/tmp/hakoll.db")
+	cfg := Default("/tmp/tillsyn.db")
 	cfg.ProjectRoots["inbox"] = ""
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("expected error for empty project root")
@@ -598,7 +598,7 @@ legacy = ["ops"]
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	if err := UpsertAllowedLabels(path, "Inbox", []string{"Bug", "chore", "bug"}, []string{"Roadmap", "koll", "roadmap"}); err != nil {
+	if err := UpsertAllowedLabels(path, "Inbox", []string{"Bug", "chore", "bug"}, []string{"Roadmap", "till", "roadmap"}); err != nil {
 		t.Fatalf("UpsertAllowedLabels() error = %v", err)
 	}
 	cfg, err := Load(path, Default("/tmp/default.db"))
@@ -614,7 +614,7 @@ legacy = ["ops"]
 			t.Fatalf("unexpected global label at %d: got %q want %q", i, cfg.Labels.Global[i], wantGlobal[i])
 		}
 	}
-	wantInbox := []string{"koll", "roadmap"}
+	wantInbox := []string{"roadmap", "till"}
 	gotInbox := cfg.Labels.Projects["inbox"]
 	if len(gotInbox) != len(wantInbox) {
 		t.Fatalf("unexpected inbox labels %#v", cfg.Labels.Projects)
