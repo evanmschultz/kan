@@ -24,6 +24,7 @@ import (
 	"github.com/hylla/hakoll/internal/platform"
 	"github.com/hylla/hakoll/internal/tui"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 // version stores a package-level helper value.
@@ -43,6 +44,9 @@ var programFactory = func(m tea.Model) program {
 var serveCommandRunner = func(ctx context.Context, cfg serveradapter.Config, deps serveradapter.Dependencies) error {
 	return serveradapter.Run(ctx, cfg, deps)
 }
+
+// supportsStyledOutputFunc allows tests to force styled output mode.
+var supportsStyledOutputFunc = supportsStyledOutput
 
 // main handles main.
 func main() {
@@ -99,7 +103,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 
 	serveOpts := serveCommandOptions{
-		httpBind:    "127.0.0.1:8080",
+		httpBind:    "127.0.0.1:5437",
 		apiEndpoint: "/api/v1",
 		mcpEndpoint: "/mcp",
 	}
@@ -200,6 +204,10 @@ func writeVersion(stdout io.Writer) error {
 
 // writePathsOutput renders resolved paths using Fang-aligned styling.
 func writePathsOutput(stdout io.Writer, opts rootCommandOptions, paths platform.Paths) error {
+	if !supportsStyledOutputFunc(stdout) {
+		return writePathsPlain(stdout, opts, paths)
+	}
+
 	isDark := lipgloss.HasDarkBackground(os.Stdin, os.Stdout)
 	colors := fang.DefaultColorScheme(lipgloss.LightDark(isDark))
 	titleStyle := lipgloss.NewStyle().
@@ -232,7 +240,7 @@ func writePathsOutput(stdout io.Writer, opts rootCommandOptions, paths platform.
 	lines := make([]string, 0, len(rows)+1)
 	lines = append(lines, titleStyle.Render("Resolved Paths"))
 	for _, row := range rows {
-		paddedKey := fmt.Sprintf("%-*s", maxKeyWidth, row.key)
+		paddedKey := fmt.Sprintf("%-*s:", maxKeyWidth, row.key)
 		line := lipgloss.JoinHorizontal(
 			lipgloss.Left,
 			keyStyle.Render(paddedKey),
@@ -245,6 +253,38 @@ func writePathsOutput(stdout io.Writer, opts rootCommandOptions, paths platform.
 		return fmt.Errorf("write paths output: %w", err)
 	}
 	return nil
+}
+
+// writePathsPlain renders resolved paths in stable key/value text for scripts.
+func writePathsPlain(stdout io.Writer, opts rootCommandOptions, paths platform.Paths) error {
+	if _, err := fmt.Fprintf(stdout, "app: %s\n", opts.appName); err != nil {
+		return fmt.Errorf("write paths app output: %w", err)
+	}
+	if _, err := fmt.Fprintf(stdout, "dev_mode: %t\n", opts.devMode); err != nil {
+		return fmt.Errorf("write paths dev output: %w", err)
+	}
+	if _, err := fmt.Fprintf(stdout, "config: %s\n", paths.ConfigPath); err != nil {
+		return fmt.Errorf("write paths config output: %w", err)
+	}
+	if _, err := fmt.Fprintf(stdout, "data_dir: %s\n", paths.DataDir); err != nil {
+		return fmt.Errorf("write paths data output: %w", err)
+	}
+	if _, err := fmt.Fprintf(stdout, "db: %s\n", paths.DBPath); err != nil {
+		return fmt.Errorf("write paths db output: %w", err)
+	}
+	return nil
+}
+
+// supportsStyledOutput reports whether output should include terminal styles.
+func supportsStyledOutput(w io.Writer) bool {
+	if strings.TrimSpace(os.Getenv("NO_COLOR")) != "" {
+		return false
+	}
+	file, ok := w.(*os.File)
+	if !ok {
+		return false
+	}
+	return term.IsTerminal(int(file.Fd()))
 }
 
 // executeCommandFlow runs the runtime setup + command-specific execution path.

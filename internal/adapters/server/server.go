@@ -15,7 +15,7 @@ import (
 )
 
 // defaultBindAddress defines the localhost-first serve default.
-const defaultBindAddress = "127.0.0.1:8080"
+const defaultBindAddress = "127.0.0.1:5437"
 
 // defaultShutdownTimeout bounds graceful shutdown time once context cancellation starts.
 const defaultShutdownTimeout = 5 * time.Second

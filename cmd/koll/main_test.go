@@ -18,6 +18,7 @@ import (
 	"github.com/hylla/hakoll/internal/app"
 	"github.com/hylla/hakoll/internal/config"
 	"github.com/hylla/hakoll/internal/domain"
+	"github.com/hylla/hakoll/internal/platform"
 )
 
 // TestMain sets deterministic environment defaults for CLI tests.
@@ -304,8 +305,8 @@ func TestRunServeCommandWiresDefaults(t *testing.T) {
 	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "serve"}, io.Discard, io.Discard); err != nil {
 		t.Fatalf("run(serve) error = %v", err)
 	}
-	if gotCfg.HTTPBind != "127.0.0.1:8080" {
-		t.Fatalf("serve http bind = %q, want 127.0.0.1:8080", gotCfg.HTTPBind)
+	if gotCfg.HTTPBind != "127.0.0.1:5437" {
+		t.Fatalf("serve http bind = %q, want 127.0.0.1:5437", gotCfg.HTTPBind)
 	}
 	if gotCfg.APIEndpoint != "/api/v1" {
 		t.Fatalf("serve api endpoint = %q, want /api/v1", gotCfg.APIEndpoint)
@@ -557,14 +558,78 @@ func TestRunPathsCommand(t *testing.T) {
 		t.Fatalf("run(paths) error = %v", err)
 	}
 	output := out.String()
-	if !strings.Contains(strings.ToLower(output), "resolved paths") {
-		t.Fatalf("expected titled paths output, got %q", output)
-	}
-	if !strings.Contains(output, "app") || !strings.Contains(output, "hakollx") {
+	if !strings.Contains(output, "app: hakollx") {
 		t.Fatalf("expected app name in paths output, got %q", output)
 	}
-	if !strings.Contains(output, "dev_mode") || !strings.Contains(output, "true") {
+	if !strings.Contains(output, "dev_mode: true") {
 		t.Fatalf("expected dev mode in paths output, got %q", output)
+	}
+}
+
+// TestWritePathsOutputPlain verifies non-terminal writers receive script-stable plain output.
+func TestWritePathsOutputPlain(t *testing.T) {
+	var out strings.Builder
+	err := writePathsOutput(&out, rootCommandOptions{
+		appName: "hakollx",
+		devMode: true,
+	}, platform.Paths{
+		ConfigPath: "/tmp/hakollx/config.toml",
+		DataDir:    "/tmp/hakollx",
+		DBPath:     "/tmp/hakollx/hakollx.db",
+	})
+	if err != nil {
+		t.Fatalf("writePathsOutput() error = %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{
+		"app: hakollx",
+		"dev_mode: true",
+		"config: /tmp/hakollx/config.toml",
+		"data_dir: /tmp/hakollx",
+		"db: /tmp/hakollx/hakollx.db",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected %q in plain output, got %q", want, got)
+		}
+	}
+}
+
+// TestWritePathsOutputStyled verifies styled rendering can be forced in tests.
+func TestWritePathsOutputStyled(t *testing.T) {
+	orig := supportsStyledOutputFunc
+	supportsStyledOutputFunc = func(io.Writer) bool { return true }
+	t.Cleanup(func() { supportsStyledOutputFunc = orig })
+
+	var out strings.Builder
+	err := writePathsOutput(&out, rootCommandOptions{
+		appName: "hakollx",
+		devMode: false,
+	}, platform.Paths{
+		ConfigPath: "/tmp/hakollx/config.toml",
+		DataDir:    "/tmp/hakollx",
+		DBPath:     "/tmp/hakollx/hakollx.db",
+	})
+	if err != nil {
+		t.Fatalf("writePathsOutput(styled) error = %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "Resolved Paths") {
+		t.Fatalf("expected styled heading in output, got %q", got)
+	}
+	if !strings.Contains(got, "app") || !strings.Contains(got, "hakollx") {
+		t.Fatalf("expected app row in styled output, got %q", got)
+	}
+}
+
+// TestSupportsStyledOutput verifies non-terminal and NO_COLOR behavior.
+func TestSupportsStyledOutput(t *testing.T) {
+	if supportsStyledOutput(&strings.Builder{}) {
+		t.Fatal("expected non-file writer to disable styles")
+	}
+
+	t.Setenv("NO_COLOR", "1")
+	if supportsStyledOutput(os.Stdout) {
+		t.Fatal("expected NO_COLOR to disable styles")
 	}
 }
 

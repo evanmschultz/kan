@@ -625,3 +625,49 @@ File edits in this checkpoint:
 
 Current status:
 - `paths` output and CLI error surface are now aligned with Fang-style rendering expectations.
+
+### 2026-02-28: init-dev-config Regression Fix (TTY vs Non-TTY Paths Output)
+
+Objective:
+- restore automation compatibility for recipes parsing `koll paths` while keeping styled interactive output.
+
+Commands run and outcomes:
+1. `nl -ba Justfile | sed -n '1,140p'` -> PASS (identified parser dependency on `config: ...` format in `init-dev-config`/`clean-dev`).
+2. Context7 resolve/query for Go terminal package -> unavailable/insufficient for target package.
+3. Fallback doc source: `go doc golang.org/x/term.IsTerminal` -> PASS (`IsTerminal(fd int) bool`).
+4. `just fmt && just test-pkg ./cmd/koll && just ci` -> PASS.
+
+File edits in this checkpoint:
+1. `cmd/koll/main.go`
+   - `paths` now renders styled output only when stdout is a terminal and `NO_COLOR` is unset;
+   - non-TTY output path restored to stable plain `key: value` lines for script parsing;
+   - added small test hook variable for forcing styled mode in tests.
+2. `cmd/koll/main_test.go`
+   - restored plain-output assertions for `run(paths)` on non-TTY writers;
+   - added tests for plain output, styled output path, and `supportsStyledOutput` behavior.
+
+Current status:
+- interactive `koll paths` remains styled;
+- non-interactive/pipe usage remains machine-parseable, fixing `just init-dev-config` and `just clean-dev` parsing behavior.
+
+### 2026-02-28: Default Serve Endpoint Update to 5437
+
+Objective:
+- align default HTTP serve endpoint to `127.0.0.1:5437` (derived from user requirement `e * 2`) across CLI and server fallback behavior.
+
+Commands run and outcomes:
+1. `rg -n "127\\.0\\.0\\.1:8080|8080|defaultBindAddress"` across CLI/server/tests -> PASS (identified all code references).
+2. Checked local `/Users/evanschultz/.codex/config.toml` and TOML search under `/Users/evanschultz/.codex` -> PASS (no endpoint/default binding present; only project trust/mcp server config).
+3. `just fmt && just check && just ci` -> PASS.
+
+File edits in this checkpoint:
+1. `cmd/koll/main.go`
+   - changed default `serve` flag HTTP bind from `127.0.0.1:8080` to `127.0.0.1:5437`.
+2. `internal/adapters/server/server.go`
+   - changed server fallback bind constant to `127.0.0.1:5437`.
+3. `cmd/koll/main_test.go`
+   - updated default serve binding expectation to `127.0.0.1:5437`.
+
+Current status:
+- default endpoint is now consistently `127.0.0.1:5437` in CLI and server fallback paths.
+- repo gates are green (`just check`, `just ci`).
