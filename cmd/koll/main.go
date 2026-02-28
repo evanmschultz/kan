@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -13,6 +12,8 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/fang"
 	charmLog "github.com/charmbracelet/log"
 	"github.com/google/uuid"
 	serveradapter "github.com/hylla/hakoll/internal/adapters/server"
@@ -22,6 +23,7 @@ import (
 	"github.com/hylla/hakoll/internal/config"
 	"github.com/hylla/hakoll/internal/platform"
 	"github.com/hylla/hakoll/internal/tui"
+	"github.com/spf13/cobra"
 )
 
 // version stores a package-level helper value.
@@ -45,12 +47,38 @@ var serveCommandRunner = func(ctx context.Context, cfg serveradapter.Config, dep
 // main handles main.
 func main() {
 	if err := run(context.Background(), os.Args[1:], os.Stdout, os.Stderr); err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
 }
 
-// run runs the requested command flow.
+// rootCommandOptions stores top-level CLI option values.
+type rootCommandOptions struct {
+	configPath  string
+	dbPath      string
+	appName     string
+	devMode     bool
+	showVersion bool
+}
+
+// serveCommandOptions stores serve subcommand option values.
+type serveCommandOptions struct {
+	httpBind    string
+	apiEndpoint string
+	mcpEndpoint string
+}
+
+// exportCommandOptions stores export subcommand option values.
+type exportCommandOptions struct {
+	outPath         string
+	includeArchived bool
+}
+
+// importCommandOptions stores import subcommand option values.
+type importCommandOptions struct {
+	inPath string
+}
+
+// run executes the CLI command tree through Fang+Cobra.
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if stdout == nil {
 		stdout = io.Discard
@@ -59,61 +87,191 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		stderr = io.Discard
 	}
 
-	fs := flag.NewFlagSet("koll", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	var (
-		configPath string
-		dbPath     string
-		appName    string
-		devMode    bool
-		showVer    bool
-	)
-	defaultDevMode := version == "dev"
+	rootOpts := rootCommandOptions{
+		appName: "hakoll",
+		devMode: version == "dev",
+	}
 	if envDev, ok := parseBoolEnv("KOLL_DEV_MODE"); ok {
-		defaultDevMode = envDev
+		rootOpts.devMode = envDev
 	}
 	if envApp := strings.TrimSpace(os.Getenv("KOLL_APP_NAME")); envApp != "" {
-		appName = envApp
-	} else {
-		appName = "hakoll"
-	}
-	fs.StringVar(&configPath, "config", "", "path to config TOML")
-	fs.StringVar(&dbPath, "db", "", "path to sqlite database")
-	fs.StringVar(&appName, "app", appName, "application name for config/data path resolution")
-	fs.BoolVar(&devMode, "dev", defaultDevMode, "use dev mode paths (<app>-dev)")
-	fs.BoolVar(&showVer, "version", false, "show version")
-	if err := fs.Parse(args); err != nil {
-		return err
+		rootOpts.appName = envApp
 	}
 
-	if showVer {
-		_, _ = fmt.Fprintf(stdout, "koll %s\n", version)
-		return nil
+	serveOpts := serveCommandOptions{
+		httpBind:    "127.0.0.1:8080",
+		apiEndpoint: "/api/v1",
+		mcpEndpoint: "/mcp",
+	}
+	exportOpts := exportCommandOptions{
+		outPath:         "-",
+		includeArchived: true,
+	}
+	importOpts := importCommandOptions{}
+
+	rootCmd := &cobra.Command{
+		Use:           "koll",
+		Short:         "Terminal kanban board with HTTP+MCP adapters",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return executeCommandFlow(cmd.Context(), "", rootOpts, serveOpts, exportOpts, importOpts, stdout, stderr)
+		},
+	}
+	rootCmd.SetOut(stdout)
+	rootCmd.SetErr(stderr)
+	rootCmd.SetArgs(args)
+
+	rootCmd.PersistentFlags().StringVar(&rootOpts.configPath, "config", "", "Path to config TOML")
+	rootCmd.PersistentFlags().StringVar(&rootOpts.dbPath, "db", "", "Path to sqlite database")
+	rootCmd.PersistentFlags().StringVar(&rootOpts.appName, "app", rootOpts.appName, "Application name for config/data path resolution")
+	rootCmd.PersistentFlags().BoolVar(&rootOpts.devMode, "dev", rootOpts.devMode, "Use dev mode paths (<app>-dev)")
+	rootCmd.PersistentFlags().BoolVar(&rootOpts.showVersion, "version", false, "Show version")
+
+	serveCmd := &cobra.Command{
+		Use:   "serve",
+		Short: "Start HTTP and MCP endpoints",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return executeCommandFlow(cmd.Context(), "serve", rootOpts, serveOpts, exportOpts, importOpts, stdout, stderr)
+		},
+	}
+	serveCmd.Flags().StringVar(&serveOpts.httpBind, "http", serveOpts.httpBind, "HTTP listen address")
+	serveCmd.Flags().StringVar(&serveOpts.apiEndpoint, "api-endpoint", serveOpts.apiEndpoint, "HTTP API base endpoint")
+	serveCmd.Flags().StringVar(&serveOpts.mcpEndpoint, "mcp-endpoint", serveOpts.mcpEndpoint, "MCP streamable HTTP endpoint")
+
+	exportCmd := &cobra.Command{
+		Use:   "export",
+		Short: "Export a snapshot JSON payload",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return executeCommandFlow(cmd.Context(), "export", rootOpts, serveOpts, exportOpts, importOpts, stdout, stderr)
+		},
+	}
+	exportCmd.Flags().StringVar(&exportOpts.outPath, "out", exportOpts.outPath, "Output file path ('-' for stdout)")
+	exportCmd.Flags().BoolVar(&exportOpts.includeArchived, "include-archived", exportOpts.includeArchived, "Include archived projects/columns/tasks")
+
+	importCmd := &cobra.Command{
+		Use:   "import",
+		Short: "Import a snapshot JSON payload",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return executeCommandFlow(cmd.Context(), "import", rootOpts, serveOpts, exportOpts, importOpts, stdout, stderr)
+		},
+	}
+	importCmd.Flags().StringVar(&importOpts.inPath, "in", "", "Input snapshot JSON file")
+
+	pathsCmd := &cobra.Command{
+		Use:   "paths",
+		Short: "Print resolved config/data/db paths",
+		Args:  cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			if rootOpts.showVersion {
+				return writeVersion(stdout)
+			}
+			paths, err := platform.DefaultPathsWithOptions(platform.Options{
+				AppName: rootOpts.appName,
+				DevMode: rootOpts.devMode,
+			})
+			if err != nil {
+				return err
+			}
+			return writePathsOutput(stdout, rootOpts, paths)
+		},
+	}
+
+	rootCmd.AddCommand(serveCmd, exportCmd, importCmd, pathsCmd)
+	return fang.Execute(
+		ctx,
+		rootCmd,
+		fang.WithoutCompletions(),
+		fang.WithoutManpage(),
+		fang.WithoutVersion(),
+	)
+}
+
+// writeVersion writes the current CLI version to stdout.
+func writeVersion(stdout io.Writer) error {
+	if _, err := fmt.Fprintf(stdout, "koll %s\n", version); err != nil {
+		return fmt.Errorf("write version output: %w", err)
+	}
+	return nil
+}
+
+// writePathsOutput renders resolved paths using Fang-aligned styling.
+func writePathsOutput(stdout io.Writer, opts rootCommandOptions, paths platform.Paths) error {
+	isDark := lipgloss.HasDarkBackground(os.Stdin, os.Stdout)
+	colors := fang.DefaultColorScheme(lipgloss.LightDark(isDark))
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(colors.Title)
+	keyStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(colors.Flag)
+	valueStyle := lipgloss.NewStyle().
+		Foreground(colors.Description)
+
+	rows := []struct {
+		key   string
+		value string
+	}{
+		{key: "app", value: opts.appName},
+		{key: "dev_mode", value: fmt.Sprintf("%t", opts.devMode)},
+		{key: "config", value: paths.ConfigPath},
+		{key: "data_dir", value: paths.DataDir},
+		{key: "db", value: paths.DBPath},
+	}
+
+	maxKeyWidth := 0
+	for _, row := range rows {
+		if len(row.key) > maxKeyWidth {
+			maxKeyWidth = len(row.key)
+		}
+	}
+
+	lines := make([]string, 0, len(rows)+1)
+	lines = append(lines, titleStyle.Render("Resolved Paths"))
+	for _, row := range rows {
+		paddedKey := fmt.Sprintf("%-*s", maxKeyWidth, row.key)
+		line := lipgloss.JoinHorizontal(
+			lipgloss.Left,
+			keyStyle.Render(paddedKey),
+			"  ",
+			valueStyle.Render(row.value),
+		)
+		lines = append(lines, line)
+	}
+	if _, err := fmt.Fprintln(stdout, strings.Join(lines, "\n")); err != nil {
+		return fmt.Errorf("write paths output: %w", err)
+	}
+	return nil
+}
+
+// executeCommandFlow runs the runtime setup + command-specific execution path.
+func executeCommandFlow(
+	ctx context.Context,
+	command string,
+	rootOpts rootCommandOptions,
+	serveOpts serveCommandOptions,
+	exportOpts exportCommandOptions,
+	importOpts importCommandOptions,
+	stdout io.Writer,
+	stderr io.Writer,
+) error {
+	if rootOpts.showVersion {
+		return writeVersion(stdout)
 	}
 
 	paths, err := platform.DefaultPathsWithOptions(platform.Options{
-		AppName: appName,
-		DevMode: devMode,
+		AppName: rootOpts.appName,
+		DevMode: rootOpts.devMode,
 	})
 	if err != nil {
 		return err
 	}
 
-	command := firstArg(fs.Args())
-	switch command {
-	case "paths":
-		_, _ = fmt.Fprintf(stdout, "app: %s\n", appName)
-		_, _ = fmt.Fprintf(stdout, "dev_mode: %t\n", devMode)
-		_, _ = fmt.Fprintf(stdout, "config: %s\n", paths.ConfigPath)
-		_, _ = fmt.Fprintf(stdout, "data_dir: %s\n", paths.DataDir)
-		_, _ = fmt.Fprintf(stdout, "db: %s\n", paths.DBPath)
-		return nil
-	case "", "export", "import", "serve":
-		// Continue.
-	default:
-		return fmt.Errorf("unknown command: %s", command)
-	}
-
+	configPath := rootOpts.configPath
+	dbPath := rootOpts.dbPath
 	dbOverridden := strings.TrimSpace(dbPath) != ""
 	if configPath == "" {
 		if envPath := strings.TrimSpace(os.Getenv("KOLL_CONFIG")); envPath != "" {
@@ -141,7 +299,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	bootstrapRequired := startupBootstrapRequired(cfg)
 
-	logger, err := newRuntimeLogger(stderr, appName, devMode, cfg.Logging, time.Now)
+	logger, err := newRuntimeLogger(stderr, rootOpts.appName, rootOpts.devMode, cfg.Logging, time.Now)
 	if err != nil {
 		return fmt.Errorf("configure runtime logger: %w", err)
 	}
@@ -156,7 +314,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		}
 	}()
 
-	logger.Info("startup configuration resolved", "app", appName, "dev_mode", devMode, "command", command, "bootstrap_required", bootstrapRequired)
+	logger.Info("startup configuration resolved", "app", rootOpts.appName, "dev_mode", rootOpts.devMode, "command", command, "bootstrap_required", bootstrapRequired)
 	logger.Debug("runtime paths resolved", "config_path", configPath, "data_dir", paths.DataDir, "db_path", dbPath)
 	logger.Info("configuration loaded", "config_path", configPath, "db_path", cfg.Database.Path, "log_level", cfg.Logging.Level)
 	if devPath := logger.DevLogPath(); devPath != "" {
@@ -187,7 +345,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		logger.Info("command flow start", "command", "tui")
 	case "serve":
 		logger.Info("command flow start", "command", "serve")
-		if err := runServe(ctx, svc, fs.Args()[1:], appName); err != nil {
+		if err := runServe(ctx, svc, rootOpts.appName, serveOpts); err != nil {
 			logger.Error("command flow failed", "command", "serve", "err", err)
 			return fmt.Errorf("run serve command: %w", err)
 		}
@@ -195,7 +353,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return nil
 	case "export":
 		logger.Info("command flow start", "command", "export")
-		if err := runExport(ctx, svc, fs.Args()[1:], stdout); err != nil {
+		if err := runExport(ctx, svc, exportOpts, stdout); err != nil {
 			logger.Error("command flow failed", "command", "export", "err", err)
 			return fmt.Errorf("run export command: %w", err)
 		}
@@ -203,7 +361,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return nil
 	case "import":
 		logger.Info("command flow start", "command", "import")
-		if err := runImport(ctx, svc, fs.Args()[1:]); err != nil {
+		if err := runImport(ctx, svc, importOpts); err != nil {
 			logger.Error("command flow failed", "command", "import", "err", err)
 			return fmt.Errorf("run import command: %w", err)
 		}
@@ -274,29 +432,12 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 }
 
 // runServe runs the serve subcommand flow.
-func runServe(ctx context.Context, svc *app.Service, args []string, appName string) error {
-	fs := flag.NewFlagSet("koll serve", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	var (
-		httpBind    string
-		apiEndpoint string
-		mcpEndpoint string
-	)
-	fs.StringVar(&httpBind, "http", "127.0.0.1:8080", "HTTP listen address")
-	fs.StringVar(&apiEndpoint, "api-endpoint", "/api/v1", "HTTP API base endpoint")
-	fs.StringVar(&mcpEndpoint, "mcp-endpoint", "/mcp", "MCP streamable HTTP endpoint")
-	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("parse serve flags: %w", err)
-	}
-	if len(fs.Args()) > 0 {
-		return fmt.Errorf("unexpected serve arguments: %v", fs.Args())
-	}
-
+func runServe(ctx context.Context, svc *app.Service, appName string, opts serveCommandOptions) error {
 	appAdapter := servercommon.NewAppServiceAdapter(svc)
 	return serveCommandRunner(ctx, serveradapter.Config{
-		HTTPBind:      httpBind,
-		APIEndpoint:   apiEndpoint,
-		MCPEndpoint:   mcpEndpoint,
+		HTTPBind:      opts.httpBind,
+		APIEndpoint:   opts.apiEndpoint,
+		MCPEndpoint:   opts.mcpEndpoint,
 		ServerName:    appName,
 		ServerVersion: version,
 	}, serveradapter.Dependencies{
@@ -306,23 +447,8 @@ func runServe(ctx context.Context, svc *app.Service, args []string, appName stri
 }
 
 // runExport runs the requested command flow.
-func runExport(ctx context.Context, svc *app.Service, args []string, stdout io.Writer) error {
-	fs := flag.NewFlagSet("koll export", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	var (
-		outPath         string
-		includeArchived bool
-	)
-	fs.StringVar(&outPath, "out", "-", "output file path ('-' for stdout)")
-	fs.BoolVar(&includeArchived, "include-archived", true, "include archived projects/columns/tasks")
-	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("parse export flags: %w", err)
-	}
-	if len(fs.Args()) > 0 {
-		return fmt.Errorf("unexpected export arguments: %v", fs.Args())
-	}
-
-	snap, err := svc.ExportSnapshot(ctx, includeArchived)
+func runExport(ctx context.Context, svc *app.Service, opts exportCommandOptions, stdout io.Writer) error {
+	snap, err := svc.ExportSnapshot(ctx, opts.includeArchived)
 	if err != nil {
 		return fmt.Errorf("export snapshot: %w", err)
 	}
@@ -332,38 +458,28 @@ func runExport(ctx context.Context, svc *app.Service, args []string, stdout io.W
 	}
 	encoded = append(encoded, '\n')
 
-	if outPath == "-" {
+	if opts.outPath == "-" {
 		if _, err := stdout.Write(encoded); err != nil {
 			return fmt.Errorf("write snapshot to stdout: %w", err)
 		}
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(opts.outPath), 0o755); err != nil {
 		return fmt.Errorf("create export output dir: %w", err)
 	}
-	if err := os.WriteFile(outPath, encoded, 0o644); err != nil {
+	if err := os.WriteFile(opts.outPath, encoded, 0o644); err != nil {
 		return fmt.Errorf("write export file: %w", err)
 	}
 	return nil
 }
 
 // runImport runs the requested command flow.
-func runImport(ctx context.Context, svc *app.Service, args []string) error {
-	fs := flag.NewFlagSet("koll import", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	var inPath string
-	fs.StringVar(&inPath, "in", "", "input snapshot JSON file")
-	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("parse import flags: %w", err)
-	}
-	if len(fs.Args()) > 0 {
-		return fmt.Errorf("unexpected import arguments: %v", fs.Args())
-	}
-	if inPath == "" {
+func runImport(ctx context.Context, svc *app.Service, opts importCommandOptions) error {
+	if opts.inPath == "" {
 		return fmt.Errorf("--in is required")
 	}
 
-	content, err := os.ReadFile(inPath)
+	content, err := os.ReadFile(opts.inPath)
 	if err != nil {
 		return fmt.Errorf("read import file: %w", err)
 	}
@@ -375,14 +491,6 @@ func runImport(ctx context.Context, svc *app.Service, args []string) error {
 		return fmt.Errorf("import snapshot: %w", err)
 	}
 	return nil
-}
-
-// firstArg handles first arg.
-func firstArg(args []string) string {
-	if len(args) == 0 {
-		return ""
-	}
-	return args[0]
 }
 
 // startupBootstrapRequired reports whether startup must collect required identity/root settings in TUI.

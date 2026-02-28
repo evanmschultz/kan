@@ -210,6 +210,73 @@ func TestRunInvalidFlag(t *testing.T) {
 	}
 }
 
+// TestRunRootHelp verifies root help output returns usage without error.
+func TestRunRootHelp(t *testing.T) {
+	var out strings.Builder
+	err := run(context.Background(), []string{"--help"}, &out, io.Discard)
+	if err != nil {
+		t.Fatalf("run(--help) error = %v", err)
+	}
+	output := strings.ToLower(out.String())
+	if !strings.Contains(output, "usage") || !strings.Contains(output, "koll [command]") {
+		t.Fatalf("expected root usage output, got %q", out.String())
+	}
+	for _, want := range []string{"serve", "export", "import", "paths"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected %q command in root help, got %q", want, out.String())
+		}
+	}
+}
+
+// TestRunSubcommandHelp verifies subcommand help output returns usage without executing command handlers.
+func TestRunSubcommandHelp(t *testing.T) {
+	origRunner := serveCommandRunner
+	t.Cleanup(func() { serveCommandRunner = origRunner })
+	serveCommandRunner = func(_ context.Context, _ serveradapter.Config, _ serveradapter.Dependencies) error {
+		t.Fatal("serve command runner should not execute for --help")
+		return nil
+	}
+
+	cases := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{
+			name: "serve",
+			args: []string{"serve", "--help"},
+			want: []string{"koll serve", "--http", "--api-endpoint", "--mcp-endpoint"},
+		},
+		{
+			name: "export",
+			args: []string{"export", "--help"},
+			want: []string{"koll export", "--out", "--include-archived"},
+		},
+		{
+			name: "import",
+			args: []string{"import", "--help"},
+			want: []string{"koll import", "--in"},
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			var out strings.Builder
+			err := run(context.Background(), tc.args, &out, io.Discard)
+			if err != nil {
+				t.Fatalf("run(%s --help) error = %v", tc.name, err)
+			}
+			output := strings.ToLower(out.String())
+			for _, want := range tc.want {
+				if !strings.Contains(output, strings.ToLower(want)) {
+					t.Fatalf("expected %q in output, got %q", want, out.String())
+				}
+			}
+		})
+	}
+}
+
 // TestRunUnknownCommand verifies behavior for the covered scenario.
 func TestRunUnknownCommand(t *testing.T) {
 	err := run(context.Background(), []string{"unknown-command"}, io.Discard, io.Discard)
@@ -490,10 +557,13 @@ func TestRunPathsCommand(t *testing.T) {
 		t.Fatalf("run(paths) error = %v", err)
 	}
 	output := out.String()
-	if !strings.Contains(output, "app: hakollx") {
+	if !strings.Contains(strings.ToLower(output), "resolved paths") {
+		t.Fatalf("expected titled paths output, got %q", output)
+	}
+	if !strings.Contains(output, "app") || !strings.Contains(output, "hakollx") {
 		t.Fatalf("expected app name in paths output, got %q", output)
 	}
-	if !strings.Contains(output, "dev_mode: true") {
+	if !strings.Contains(output, "dev_mode") || !strings.Contains(output, "true") {
 		t.Fatalf("expected dev mode in paths output, got %q", output)
 	}
 }

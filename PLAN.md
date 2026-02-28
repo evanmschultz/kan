@@ -566,3 +566,62 @@ File edits in this checkpoint:
 
 Test status:
 - `test_not_applicable` (docs-only changes; no code/test behavior modified).
+
+### 2026-02-28: R-CLI-FANG-01 Integrated (Fang/Cobra CLI Migration)
+
+Objective:
+- replace stdlib `flag` CLI parsing in `cmd/koll` with Fang/Cobra, improve help/error UX, and remove orphaned parser code paths.
+
+Commands/tools run and outcomes:
+1. Context7 `resolve-library-id` + `query-docs` for `/charmbracelet/fang` and `/spf13/cobra` -> PASS (captured Execute/RunE/help/error patterns).
+2. Spawned worker lane `R-CLI-FANG-01` (lock scope: `cmd/koll/**`, `go.mod`, `go.sum`) -> PASS.
+3. Worker lane package check loop:
+   - `just test-pkg ./cmd/koll` baseline -> PASS
+   - post-migration `just test-pkg ./cmd/koll` -> FAIL (missing `go.sum` entry)
+   - dependency fetch for missing checksum + `just fmt` + rerun `just test-pkg ./cmd/koll` -> PASS
+4. Integrator verification:
+   - `just check` -> PASS
+   - `just ci` -> PASS
+5. Runtime smoke:
+   - `./koll --help` -> PASS (styled root help)
+   - `./koll serve --help` -> PASS (styled subcommand help)
+   - `./koll --badflag` -> PASS (styled error + guidance + existing `error: ...` line)
+
+File edits in this checkpoint:
+1. `cmd/koll/main.go`
+   - migrated to Cobra command tree executed by Fang;
+   - removed stdlib `flag` parser flow and related orphaned helpers;
+   - preserved `tui` default, `serve`, `export`, `import`, and `paths` command behavior.
+2. `cmd/koll/main_test.go`
+   - updated/added help coverage for Fang/Cobra output behavior.
+3. `go.mod`, `go.sum`
+   - added Fang/Cobra dependencies and required checksum entries.
+
+Current status:
+- CLI adapter migration is integrated locally and gated (`just check` + `just ci` passing).
+- No remaining orphaned stdlib `flag` parser path in `cmd/koll/main.go`.
+
+### 2026-02-28: Fang Output Refinement (Paths + Error Surface)
+
+Objective:
+- ensure command output/error surfaces are Fang-styled where practical, including `koll paths` presentation and removal of duplicate plain error output.
+
+Commands run and outcomes:
+1. Context7 `query-docs /charmbracelet/fang` (output/error handler styling confirmation) -> PASS.
+2. `go doc github.com/charmbracelet/fang` + `go doc -all github.com/charmbracelet/fang` -> PASS (validated available APIs/Styles surface).
+3. `just fmt && just test-pkg ./cmd/koll` -> PASS.
+4. `just ci` -> PASS.
+5. Runtime smoke:
+   - `./koll paths` -> PASS (styled titled key/value output).
+   - `./koll --badflag` -> PASS (Fang-styled error block, no extra plain `error:` suffix).
+
+File edits in this checkpoint:
+1. `cmd/koll/main.go`
+   - removed duplicate top-level plain error print in `main`;
+   - added `writePathsOutput` using Fang default color scheme + lipgloss rendering;
+   - routed `paths` command through styled renderer.
+2. `cmd/koll/main_test.go`
+   - updated `TestRunPathsCommand` assertions for titled/styled paths output semantics.
+
+Current status:
+- `paths` output and CLI error surface are now aligned with Fang-style rendering expectations.
