@@ -269,6 +269,17 @@ Blockers currently open:
 Current status:
 - Phase 0 remains open until manual collaborative checks are completed and worksheet sign-offs are finalized.
 - `MCP_DOGFOODING_WORKSHEET.md` has no blank sign-off fields; remaining blocked rows now carry explicit blocker statements and evidence paths.
+- Section 0 user execution update recorded:
+  - M0.2 runtime launch marked PASS by user,
+  - M0.3 hierarchy IDs captured via MCP and unresolved user-action fixture item seeded,
+  - early manual findings logged (C4 fail, C6 fail, C10 fail; others pending).
+- Section 1 execution update recorded:
+  - M1.1 (`capture_state` all required scopes) PASS,
+  - M1.2 (`requires_user_action` blocker highlight in summary) PASS.
+- Section 2 execution update recorded:
+  - M2.1 PASS,
+  - M2.2 FAIL (scope mismatch still accepted),
+  - M2.3 PASS.
 
 File edits in this checkpoint:
 1. `MCP_DOGFOODING_WORKSHEET.md`
@@ -280,8 +291,11 @@ File edits in this checkpoint:
 
 Process contract update from user:
 1. Continue section-by-section collaborative test walkthrough and note capture.
-2. Preserve user notes verbatim with full detail in active markdown docs.
+2. Preserve user intent with full detail in active markdown docs; normalize wording only when needed for technically correct terminology.
 3. Final step of testing process will run subagents + Context7 (+ web research as needed) to propose fixes, then record proposals only after explicit user+agent consensus.
+
+Additional restore-surface design requirement:
+1. During fix-proposal phase, evaluate whether restore should be generalized (`restore` + explicit node/scope type arg) versus task-only surface, while ensuring required guardrail tuple fields and id/name gatekeeping semantics are consistently enforced.
 
 ### 2026-02-27: Remote E2EE Architecture + Roadmap Draft
 
@@ -312,6 +326,103 @@ File edits in this checkpoint:
 
 Test status:
 - `test_not_applicable` (docs-only changes; no code/test behavior modified).
+
+### 2026-02-28: Phase 0 Section 2 Post-Fix Rerun (in progress, blocker persists)
+
+Objective:
+- rerun Section 2 guardrail checks after app-layer + scope-mapping fixes, then update worksheets/evidence before deciding next remediation lane.
+
+Commands/tools run and outcomes:
+1. `just test-pkg ./internal/app` -> PASS (`ok ... internal/app (cached)`).
+2. `kan_create_task` probe (`actor_type=agent`, missing tuple) -> PASS expected failure (`invalid_request` requiring guard tuple fields).
+3. `kan_create_task` probe (`actor_type=agent` + malformed lease token) -> PASS expected failure (`guardrail_failed ... mutation lease is invalid`).
+4. `kan_issue_capability_lease` on fixture project -> PASS (issued instance `2c83f1cb-fba9-40e0-b274-84705dc5e73d`).
+5. `kan_raise_attention_item` scope-mismatch probe (`scope_type=task`, `scope_id=<project_id>`) -> FAIL (unexpected acceptance; persisted `5956394b-f73a-4522-8530-ec53ec00082c`).
+6. `kan_create_task` cross-project mismatch probe using fixture-scoped lease -> PASS expected failure (`guardrail_failed ... mutation lease is invalid`).
+7. M2.3 completion contract probe:
+   - created task `d6fe3b4a-369c-4212-b049-90630e71fc1f` in progress,
+   - raised blocker `a264b6fd-15bc-427f-9972-f6f5273807ae`,
+   - move to done blocked (expected),
+   - resolve blocker + retry move -> PASS.
+8. Cleanup:
+   - resolved mismatch probe item `5956394b-f73a-4522-8530-ec53ec00082c`,
+   - hard-deleted probe task `d6fe3b4a-369c-4212-b049-90630e71fc1f`,
+   - revoked lease `2c83f1cb-fba9-40e0-b274-84705dc5e73d`.
+9. Runtime freshness check -> FLAGGED:
+   - `ls -l ./kan internal/app/attention_capture.go internal/app/kind_capability.go`
+   - binary mtime `2026-02-27 14:40` predates modified source mtimes (`17:13`, `17:16`), so the rerun may have exercised a stale running server.
+10. Explorer subagent root-cause pass -> COMPLETED (no edits):
+   - call-chain traced from MCP handler to `Service.RaiseAttentionItem` and `validateCapabilityScopeTuple`,
+   - recommended next step: restart/reload runtime and re-run M2.2 before additional code edits; if still failing, add deterministic tuple guard.
+11. `just build` -> PASS with known non-fatal Go stat-cache warning; rebuilt binary mtime now `2026-02-27 17:34`.
+
+Result summary:
+1. M2.1 PASS.
+2. M2.2 FAIL (still open; fail-closed behavior not enforced for `scope_type=task` + project ID).
+3. M2.3 PASS.
+
+File edits in this checkpoint:
+1. `.tmp/phase0-collab-20260227_141800/manual/section2_guardrail_evidence_20260227.md`
+   - appended 2026-02-28 rerun with IDs, outcomes, and cleanup.
+2. `MCP_DOGFOODING_WORKSHEET.md`
+   - updated M2.1/M2.2/M2.3 notes and final sign-off notes to reflect post-fix rerun outcomes.
+3. `COLLABORATIVE_POST_FIX_VALIDATION_WORKSHEET.md`
+   - updated Section 12.8 with explicit 2026-02-28 rerun status and persisted M2.2 blocker.
+
+Current status:
+- Phase 0 remains open; Section 2 cannot be closed due to persistent M2.2 failure.
+- M2.2 runtime result is currently confounded by stale-binary risk and needs one clean rerun on a refreshed server process.
+- Binary is refreshed locally; next required action is restarting `./kan serve ...` and rerunning M2.2 immediately.
+- Per section-by-section policy, next step is targeted remediation of M2.2 before advancing to later sections.
+
+### 2026-02-28: Section 2 Post-Restart Recheck + CI Gate
+
+Objective:
+- verify M2.2 on a freshly restarted runtime and confirm repo-level gate status before deciding commit readiness.
+
+Commands/tools run and outcomes:
+1. `kan_raise_attention_item` mismatch probe (`scope_type=task`, `scope_id=<project_id>`) -> PASS expected fail-closed (`not_found`, no persistence).
+2. `kan_issue_capability_lease` + cross-project guarded mutation probe -> PASS expected fail-closed (`mutation lease is invalid`), lease revoked.
+3. `kan_list_attention_items` open project scope check -> PASS (no unexpected open items after probe).
+4. `just test-pkg ./internal/app` -> PASS.
+5. `just ci` -> PASS (exit 0; coverage lines still above policy thresholds).
+
+Result summary:
+1. M2.2 fail-closed behavior is now confirmed after restart.
+2. Section 2 gate status: M2.1 PASS, M2.2 PASS, M2.3 PASS.
+3. Phase 0 overall remains open due to separate known blockers (help/first-launch/restore + pending manual collaborative TUI sections).
+
+File edits in this checkpoint:
+1. `.tmp/phase0-collab-20260227_141800/manual/section2_guardrail_evidence_20260227.md`
+   - appended post-restart verification outcome.
+2. `.tmp/phase0-collab-20260227_141800/manual/section2_post_restart_20260228.md`
+   - added focused post-restart probe transcript and gate outcomes.
+3. `MCP_DOGFOODING_WORKSHEET.md`
+   - updated M2.2 to PASS and adjusted final blocking list accordingly.
+4. `COLLABORATIVE_POST_FIX_VALIDATION_WORKSHEET.md`
+   - updated Section 12.8 with post-restart M2.2 PASS evidence.
+
+### 2026-02-27: AGENTS Flow Update (Section-by-Section Fix-As-We-Go)
+
+Objective:
+- align repository agent policy with user-directed collaborative flow:
+  - test one section,
+  - fix findings immediately,
+  - revalidate section before moving forward.
+
+Commands run and outcomes:
+1. `rg -n "Testing Guidelines|Parallel/Subagent Mode|Temporary Next-Step Directive|..." AGENTS.md` -> PASS
+2. `sed -n '1,260p' AGENTS.md` + `sed -n '260,520p' AGENTS.md` -> PASS
+3. Updated `AGENTS.md` to lock section-by-section remediation loop and consensus-before-implementation workflow.
+4. `rg -n "Locked execution flow|section-by-section remediation|..." AGENTS.md` -> PASS (verified insertions)
+
+File edits in this checkpoint:
+1. `AGENTS.md`
+   - added temporary-phase locked execution flow for section-by-section remediation with subagent/context7/web research + consensus + scoped tests + section rerun.
+   - added testing-guideline rules preventing advancement before section revalidation.
+
+Test status:
+- `test_not_applicable` (process/docs-only change).
 
 ### 2026-02-27: Restore Task Guardrail Contract Investigation
 

@@ -379,6 +379,9 @@ func (s *Service) validateCapabilityScopeTuple(ctx context.Context, projectID st
 // capabilityScopeTypeForTask maps one task scope into a capability-scope value.
 func capabilityScopeTypeForTask(task domain.Task) domain.CapabilityScopeType {
 	switch task.Scope {
+	case domain.KindAppliesToProject:
+		// Legacy/manual rows can carry project scope and must never be coerced to task scope.
+		return domain.CapabilityScopeProject
 	case domain.KindAppliesToBranch:
 		return domain.CapabilityScopeBranch
 	case domain.KindAppliesToPhase:

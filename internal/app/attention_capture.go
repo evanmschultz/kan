@@ -108,6 +108,11 @@ func (s *Service) RaiseAttentionItem(ctx context.Context, in RaiseAttentionItemI
 	if err != nil {
 		return domain.AttentionItem{}, err
 	}
+	scopeID, err := s.validateCapabilityScopeTuple(ctx, level.ProjectID, level.ScopeType.ToCapabilityScopeType(), level.ScopeID)
+	if err != nil {
+		return domain.AttentionItem{}, err
+	}
+	level.ScopeID = scopeID
 
 	createdType := normalizeActorTypeInput(in.CreatedType)
 	if err := s.enforceMutationGuard(ctx, level.ProjectID, createdType, level.ScopeType.ToCapabilityScopeType(), level.ScopeID); err != nil {

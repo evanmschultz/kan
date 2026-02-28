@@ -105,6 +105,17 @@ You are a senior Go dev. YOU ALWAYS:
   - testing docs must support collaborative user+agent validation and clearly call out guardrails, blockers, and recovery workflows.
 - Cleanup requirement:
   - after this temporary phase is confirmed complete by the user, explicitly ask how this temporary AGENTS directive should be removed or reduced.
+- Locked execution flow for this temporary phase (section-by-section remediation):
+  - execute collaborative testing one section at a time (do not batch all findings for a later fix wave),
+  - when a section reveals a failure/gap, pause forward testing and run a focused remediation loop for that section:
+    1. spawn subagents to inspect code and gather local context,
+    2. run Context7 research (and web research when needed) to collect fix options,
+    3. present options to user and reach explicit user+agent consensus before implementation,
+    4. implement fixes via scoped worker subagents under lock discipline,
+    5. run package-scoped checks via `just test-pkg <pkg>` for touched packages,
+    6. rerun the same section’s collaborative checks and record fresh evidence,
+    7. only proceed to the next section after the current section is re-validated and documented.
+  - record user findings with complete and accurate intent preservation; normalize terminology only when needed for technical correctness.
 
 ## Parallel/Subagent Mode
 
@@ -179,6 +190,14 @@ You are a senior Go dev. YOU ALWAYS:
 - Coverage below 70% is a hard failure.
 - Build/test execution must go through `just` recipes only.
 - Do not wrap `just` test commands with custom Go cache env vars by default; use plain `just` invocations.
+- During collaborative validation waves, enforce section-by-section progression:
+  - do not advance to the next worksheet section until current-section failures are fixed, tested, and revalidated.
+- For each section remediation:
+  - run subagent code/context investigation first,
+  - run Context7 before edits and again after any failed test/runtime error before the next edit,
+  - propose fixes and confirm consensus with user before implementation,
+  - run `just test-pkg <pkg>` for each touched package,
+  - rerun that section’s manual/transport checks and update worksheet evidence immediately.
 
 ## UX Guardrails
 

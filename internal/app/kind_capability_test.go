@@ -219,6 +219,19 @@ func TestServiceCapabilityLeaseLifecycleAndRevokeAll(t *testing.T) {
 	}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("RevokeAllCapabilityLeases(unknown task scope) error = %v, want ErrNotFound", err)
 	}
+	// Guard against project-scoped root rows being treated as task-scoped tuples.
+	repo.tasks["project-root-item"] = domain.Task{
+		ID:        "project-root-item",
+		ProjectID: project.ID,
+		Scope:     domain.KindAppliesToProject,
+	}
+	if err := svc.RevokeAllCapabilityLeases(context.Background(), RevokeAllCapabilityLeasesInput{
+		ProjectID: project.ID,
+		ScopeType: domain.CapabilityScopeTask,
+		ScopeID:   "project-root-item",
+	}); !errors.Is(err, domain.ErrInvalidCapabilityScope) {
+		t.Fatalf("RevokeAllCapabilityLeases(project root as task scope) error = %v, want ErrInvalidCapabilityScope", err)
+	}
 	if err := svc.RevokeAllCapabilityLeases(context.Background(), RevokeAllCapabilityLeasesInput{
 		ProjectID: project.ID,
 		ScopeType: domain.CapabilityScopeProject,

@@ -92,6 +92,96 @@ func TestServiceRaiseListResolveAttentionItem(t *testing.T) {
 	}
 }
 
+// TestRaiseAttentionItemValidatesScopeEntityConsistency verifies scope_type/scope_id tuple validation.
+func TestRaiseAttentionItemValidatesScopeEntityConsistency(t *testing.T) {
+	repo := newFakeRepo()
+	ids := []string{"p1", "c1", "t1", "attn-project", "attn-task"}
+	nextID := 0
+	now := time.Date(2026, 2, 24, 12, 30, 0, 0, time.UTC)
+	svc := NewService(repo, func() string {
+		id := ids[nextID]
+		nextID++
+		return id
+	}, func() time.Time {
+		return now
+	}, ServiceConfig{})
+
+	project, err := svc.CreateProject(context.Background(), "Attention tuple validation", "")
+	if err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	column, err := svc.CreateColumn(context.Background(), project.ID, "In Progress", 0, 0)
+	if err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+	task, err := svc.CreateTask(context.Background(), CreateTaskInput{
+		ProjectID:      project.ID,
+		ColumnID:       column.ID,
+		Title:          "Validate attention scope tuple",
+		Priority:       domain.PriorityHigh,
+		UpdatedByType:  domain.ActorTypeUser,
+		UpdatedByActor: "user-1",
+		CreatedByActor: "user-1",
+	})
+	if err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+
+	_, err = svc.RaiseAttentionItem(context.Background(), RaiseAttentionItemInput{
+		Level: domain.LevelTupleInput{
+			ProjectID: project.ID,
+			ScopeType: domain.ScopeLevelTask,
+			ScopeID:   project.ID,
+		},
+		Kind:               domain.AttentionKindBlocker,
+		Summary:            "Invalid tuple",
+		RequiresUserAction: true,
+		CreatedBy:          "user-1",
+		CreatedType:        domain.ActorTypeUser,
+	})
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound for mismatched task tuple, got %v", err)
+	}
+
+	projectScoped, err := svc.RaiseAttentionItem(context.Background(), RaiseAttentionItemInput{
+		Level: domain.LevelTupleInput{
+			ProjectID: project.ID,
+			ScopeType: domain.ScopeLevelProject,
+			ScopeID:   project.ID,
+		},
+		Kind:               domain.AttentionKindRiskNote,
+		Summary:            "Project-scoped attention",
+		RequiresUserAction: false,
+		CreatedBy:          "user-1",
+		CreatedType:        domain.ActorTypeUser,
+	})
+	if err != nil {
+		t.Fatalf("RaiseAttentionItem(project) error = %v", err)
+	}
+	if projectScoped.ScopeType != domain.ScopeLevelProject || projectScoped.ScopeID != project.ID {
+		t.Fatalf("unexpected project-scoped attention tuple %#v", projectScoped)
+	}
+
+	taskScoped, err := svc.RaiseAttentionItem(context.Background(), RaiseAttentionItemInput{
+		Level: domain.LevelTupleInput{
+			ProjectID: project.ID,
+			ScopeType: domain.ScopeLevelTask,
+			ScopeID:   task.ID,
+		},
+		Kind:               domain.AttentionKindBlocker,
+		Summary:            "Task-scoped attention",
+		RequiresUserAction: true,
+		CreatedBy:          "user-1",
+		CreatedType:        domain.ActorTypeUser,
+	})
+	if err != nil {
+		t.Fatalf("RaiseAttentionItem(task) error = %v", err)
+	}
+	if taskScoped.ScopeType != domain.ScopeLevelTask || taskScoped.ScopeID != task.ID {
+		t.Fatalf("unexpected task-scoped attention tuple %#v", taskScoped)
+	}
+}
+
 // TestMoveTaskBlocksDoneWhenBlockingAttentionUnresolved verifies completion transition guard behavior.
 func TestMoveTaskBlocksDoneWhenBlockingAttentionUnresolved(t *testing.T) {
 	repo := newFakeRepo()

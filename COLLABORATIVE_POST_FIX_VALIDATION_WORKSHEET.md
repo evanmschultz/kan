@@ -319,7 +319,7 @@ Run artifact root:
 
 | Task | Status | Evidence | Notes |
 |---|---|---|---|
-| P0-T01 Manual TUI validation for C4/C6/C9/C10/C11/C12/C13 | BLOCKED | `.tmp/phase0-collab-20260227_141800/phase0_manual_steps.md`, `.tmp/phase0-collab-20260227_141800/manual/checklist.md` | Requires user-driven TUI execution and screenshot/log capture in this active run. |
+| P0-T01 Manual TUI validation for C4/C6/C9/C10/C11/C12/C13 | IN_PROGRESS | `.tmp/phase0-collab-20260227_141800/manual/m0_section0_evidence_20260227.md`, `.tmp/phase0-collab-20260227_141800/manual/checklist.md` | User supplied initial manual findings: C4 fail (`esc` back-stack behavior), C6 fail (notifications UX/navigation goals unmet), C10 fail (emoji input not working). Remaining C9/C11/C12/C13 detail still pending completion evidence. |
 | P0-T02 Archived/search/keybinding targeted checks | BLOCKED | `.tmp/phase0-collab-20260227_141800/phase0_manual_steps.md`, `.tmp/phase0-collab-20260227_141800/manual/checklist.md` | Requires manual UX verification in running TUI session. |
 | P0-T03 Focused MCP rerun (`kan_restore_task`, `capture_state`) | FAIL | `.tmp/phase0-collab-20260227_141800/mcp_focused_checks.md`, `.tmp/phase0-collab-20260227_141800/http_capture_state_project.json` | `capture_state` readiness passes; `kan_restore_task` still fails guardrail path (`mutation lease is required`). |
 | P0-T04 Logging/help discoverability evidence capture | FAIL | `.tmp/phase0-collab-20260227_141800/phase0_preflight_summary.md`, `.tmp/phase0-collab-20260227_141800/help_kan.txt`, `.tmp/phase0-collab-20260227_141800/help_kan_serve.txt`, `.tmp/phase0-collab-20260227_141800/runtime_log_focus_filter.txt` | Help output path remains broken; operation-level log parity remains insufficient in this probe. Remediation requirements now include Charm/Fang-based help UX and first-launch config bootstrap behavior (copy default example config when missing). |
@@ -349,11 +349,14 @@ Additional remediation requirements captured from user direction:
    - replace current failing `--help` behavior with a designed help surface using Charm/Fang so help output is readable, attractive, and discoverable.
 3. `kan_restore_task` contract remediation:
    - close the mutation guardrail mismatch by aligning MCP restore transport with actor/lease tuple expectations enforced by the service guardrail path.
+4. Restore tool-surface design review:
+   - evaluate whether restore should be exposed as a generalized `restore` operation with explicit node/scope type argument, rather than only `kan_restore_task`,
+   - ensure whichever restore surface is chosen includes and uses the required guardrail tuple fields consistently (`actor_type`, `agent_name`, `agent_instance_id`, `lease_token`) and resolves id/name-pair gatekeeping requirements.
 
 Execution/process contract for remaining Phase 0 testing:
 1. Run collaborative validation section-by-section.
 2. User provides detailed notes/evidence for each section.
-3. Agent records notes verbatim in active markdown worksheets without shortening detail.
+3. Agent records notes completely and accurately in active markdown worksheets, preserving full intent and detail; wording may be normalized to correct domain/library terminology when needed.
 4. Agent updates PASS/FAIL/BLOCKED outcomes immediately after each section handoff.
 5. No move to feature/fix implementation until Phase 0 closeout evidence is complete.
 6. Final step of this testing process:
@@ -381,3 +384,90 @@ Primary evidence references from explorer review:
 3. `internal/adapters/server/common/app_service_adapter_mcp.go`
 4. `internal/app/service.go`
 5. `internal/app/kind_capability.go`
+
+### 12.6 Section 0 User Execution Update (2026-02-27)
+
+M0.2 runtime launch:
+1. User launched:
+   - `./kan serve --http 127.0.0.1:18080 --api-endpoint /api/v1 --mcp-endpoint /mcp`
+2. User-observed startup sequence reported successful service initialization and serve command flow start.
+3. User verdict: PASS (`works! pass!`).
+
+M0.3 fixture + ID capture:
+1. User reported hierarchy creation worked but IDs were not visible in TUI.
+2. Agent captured IDs via MCP:
+   - project: `dd5a30ff-893a-463a-8153-d21ab10a0c88`
+   - branch: `af1ffc21-c23a-48e7-bca8-553894a07665`
+   - phase: `524b6d9a-6425-473b-8ccd-9230c29767f2`
+   - subphase: `69b8c8cd-32c3-4d5f-b740-3d19c1900953`
+   - task: `f56ba6b4-23f7-4f43-b35d-138504a9dfad`
+   - subtask: `a566f8e4-8453-4fea-abdf-cd7a8d6498b8`
+3. Agent seeded unresolved user-action fixture item on same branch scope:
+   - attention id: `1a96a924-84cb-4d70-ace8-43374a4ce322`
+   - kind/state: `approval_required` / `open`
+   - `requires_user_action=true`
+
+Carry-forward UX findings captured from user during Section 0:
+1. Emoji input is not working in text fields (C10 fail).
+2. `esc` navigation still jumps to project tree; expected incremental back-stack behavior with eventual return to project tree only after repeated back steps (C4 fail).
+3. Notifications design and navigation purpose are not satisfied by current implementation:
+   - needs interactive iteration visibility,
+   - needs added small global notifications panel below,
+   - needs user-navigation to panel and fast-jump to attention nodes,
+   - current state does not support that workflow (C6 fail).
+4. Requested navigation-model review:
+   - `i` inspect, `e` edit, `enter` focus subtree, and possible inspect fallback when no subtree exists (C12 discussion item).
+
+Evidence:
+1. `.tmp/phase0-collab-20260227_141800/manual/m0_section0_evidence_20260227.md`
+2. `.tmp/phase0-collab-20260227_141800/manual/checklist.md`
+
+### 12.7 Section 1 Execution Update (2026-02-27)
+
+M1.1 scope-by-scope `capture_state` responses:
+1. Completed for all required levels on seeded hierarchy:
+   - `project`, `branch`, `phase`, `subphase`, `task`, `subtask`.
+2. Result: PASS.
+3. Assertions met:
+   - deterministic summary-first bundles returned,
+   - `scope_path` present for each level,
+   - `resume_hints` present for each level.
+
+M1.2 blocker/user-action highlight verification:
+1. Branch-scope summary correctly surfaced unresolved user-action attention context.
+2. Seeded item `1a96a924-84cb-4d70-ace8-43374a4ce322` was visible with:
+   - `state=open`,
+   - `requires_user_action=true`,
+   - branch overview counts `open_count=1`, `requires_user_action=1`.
+3. Result: PASS.
+
+Evidence:
+1. `.tmp/phase0-collab-20260227_141800/manual/section1_capture_state_evidence_20260227.md`
+
+### 12.8 Section 2 Execution Update (2026-02-27 and 2026-02-28 rerun)
+
+M2.1 non-user mutation without valid lease tuple:
+1. Revalidated on current fixture.
+2. Revalidated again on 2026-02-28 after scope-mapping fix attempt.
+3. Missing/incomplete guard tuple and malformed lease token both failed closed.
+4. Result: PASS.
+
+M2.2 scope mismatch / ambiguity rejection:
+1. Revalidated on current fixture.
+2. Cross-project lease mismatch failed closed as expected.
+3. Scope mismatch probe still accepted (`scope_type=task`, `scope_id=<project_id>`), creating persisted item before cleanup.
+4. Revalidated again on 2026-02-28 after app-layer and scope-mapping fixes; mismatch was still accepted (`attention_id=5956394b-f73a-4522-8530-ec53ec00082c`) before cleanup.
+5. Runtime caveat: local `./kan` binary mtime initially predated source edits, so rerun may have exercised a stale process; binary has since been rebuilt and now needs a fresh `serve` restart for definitive validation.
+6. Post-restart verification on 2026-02-28: mismatch probe now failed closed with `not_found`, and no persistence side effect was observed.
+7. Result: PASS for fail-closed behavior (diagnostic specificity follow-up remains).
+
+M2.3 completion guard with unresolved blockers:
+1. Revalidated on current fixture.
+2. Revalidated again on 2026-02-28 after scope-mapping fix attempt.
+3. `progress -> done` blocked while unresolved blocker existed.
+4. Transition succeeded only after blocker resolution.
+5. Result: PASS.
+
+Evidence:
+1. `.tmp/phase0-collab-20260227_141800/manual/section2_guardrail_evidence_20260227.md`
+2. `.tmp/phase0-collab-20260227_141800/manual/section2_post_restart_20260228.md`
