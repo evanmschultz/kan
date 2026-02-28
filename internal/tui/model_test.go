@@ -3592,13 +3592,13 @@ func TestRenderModeOverlayAndIndexHelpers(t *testing.T) {
 		t.Fatalf("expected large row => last task, got %d", idx)
 	}
 
-	panelWithSelection := m.renderOverviewPanel(p, accent, muted, dim, 30, 0, 0, 0, nil)
+	panelWithSelection := m.renderOverviewPanel(p, accent, muted, dim, 30, 0, 0, 0, nil, false)
 	if !strings.Contains(panelWithSelection, "Selection") {
 		t.Fatalf("expected overview panel selection section, got %q", panelWithSelection)
 	}
 	noneSelected := m
 	noneSelected.selectedColumn = 1
-	panelWithoutSelection := noneSelected.renderOverviewPanel(p, accent, muted, dim, 30, 0, 0, 0, nil)
+	panelWithoutSelection := noneSelected.renderOverviewPanel(p, accent, muted, dim, 30, 0, 0, 0, nil, false)
 	if !strings.Contains(panelWithoutSelection, "no task selected") {
 		t.Fatalf("expected overview panel no-selection hint, got %q", panelWithoutSelection)
 	}
@@ -4174,6 +4174,426 @@ func TestModelActivityLogOverlayLoadFailure(t *testing.T) {
 	out := m.renderModeOverlay(lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), lipgloss.NewStyle(), 96)
 	if !strings.Contains(out, "select task") {
 		t.Fatalf("expected in-memory fallback entry after activity load failure, got %q", out)
+	}
+}
+
+// TestModelRecentActivityPanelShowsOwnerPrefix verifies notices activity rows use owner labels.
+func TestModelRecentActivityPanelShowsOwnerPrefix(t *testing.T) {
+	now := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	svc.changeEvents[p.ID] = []domain.ChangeEvent{
+		{
+			ID:         1,
+			ProjectID:  p.ID,
+			WorkItemID: task.ID,
+			Operation:  domain.ChangeOperationUpdate,
+			ActorID:    "agent-live-sync",
+			ActorType:  domain.ActorTypeAgent,
+			Metadata:   map[string]string{"title": task.Title},
+			OccurredAt: now.Add(time.Minute),
+		},
+	}
+	m := loadReadyModel(t, NewModel(svc))
+	panel := stripANSI(m.renderOverviewPanel(p, lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), 80, 0, 0, 0, nil, false))
+	if !strings.Contains(panel, "agent|agent-live-sync update task") {
+		t.Fatalf("expected owner-prefixed activity row, got %q", panel)
+	}
+}
+
+// TestModelNoticesActivityDetailAndJump verifies notices focus, event detail modal, and jump-to-node flow.
+func TestModelNoticesActivityDetailAndJump(t *testing.T) {
+	now := time.Date(2026, 3, 1, 13, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	first, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "First",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	second, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t2",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  1,
+		Title:     "Second",
+		Priority:  domain.PriorityMedium,
+	}, now.Add(time.Minute))
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{first, second})
+	svc.changeEvents[p.ID] = []domain.ChangeEvent{
+		{
+			ID:         2,
+			ProjectID:  p.ID,
+			WorkItemID: second.ID,
+			Operation:  domain.ChangeOperationUpdate,
+			ActorID:    "user-owner",
+			ActorType:  domain.ActorTypeUser,
+			Metadata:   map[string]string{"title": second.Title},
+			OccurredAt: now.Add(2 * time.Minute),
+		},
+	}
+	m := loadReadyModel(t, NewModel(svc))
+	if task, ok := m.selectedTaskInCurrentColumn(); !ok || task.ID != first.ID {
+		t.Fatalf("expected first task selected before jump, got %#v ok=%t", task, ok)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	if !m.noticesFocused {
+		t.Fatal("expected notices focus after tab")
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeActivityEventInfo {
+		t.Fatalf("expected activity event info modal, got %v", m.mode)
+	}
+	detail := stripANSI(m.renderModeOverlay(lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), lipgloss.NewStyle(), 96))
+	if !strings.Contains(detail, "owner: user • user-owner") {
+		t.Fatalf("expected owner details in event modal, got %q", detail)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeNone {
+		t.Fatalf("expected return to board mode after jump, got %v", m.mode)
+	}
+	if m.noticesFocused {
+		t.Fatal("expected notices focus cleared after jump")
+	}
+	if task, ok := m.selectedTaskInCurrentColumn(); !ok || task.ID != second.ID {
+		t.Fatalf("expected jump to second task node, got %#v ok=%t", task, ok)
+	}
+}
+
+// TestModelActivityEventJumpLoadsArchivedTask verifies jump-to-node can recover archived nodes hidden by board filters.
+func TestModelActivityEventJumpLoadsArchivedTask(t *testing.T) {
+	now := time.Date(2026, 3, 1, 14, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	active, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Active",
+		Priority:  domain.PriorityLow,
+	}, now)
+	archived, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t2",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  1,
+		Title:     "Archived",
+		Priority:  domain.PriorityLow,
+	}, now.Add(time.Minute))
+	archivedAt := now.Add(2 * time.Minute)
+	archived.Archive(archivedAt)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{active, archived})
+	svc.changeEvents[p.ID] = []domain.ChangeEvent{
+		{
+			ID:         3,
+			ProjectID:  p.ID,
+			WorkItemID: archived.ID,
+			Operation:  domain.ChangeOperationArchive,
+			ActorID:    "agent-ops",
+			ActorType:  domain.ActorTypeAgent,
+			Metadata:   map[string]string{"title": archived.Title},
+			OccurredAt: archivedAt,
+		},
+	}
+	m := loadReadyModel(t, NewModel(svc))
+	if m.showArchived {
+		t.Fatal("expected archived filter hidden by default")
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeActivityEventInfo {
+		t.Fatalf("expected activity event info modal, got %v", m.mode)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !m.showArchived {
+		t.Fatal("expected jump flow to enable archived visibility")
+	}
+	if task, ok := m.selectedTaskInCurrentColumn(); !ok || task.ID != archived.ID {
+		t.Fatalf("expected jump to archived node, got %#v ok=%t", task, ok)
+	}
+	if !strings.Contains(m.status, "jumped to activity node") {
+		t.Fatalf("expected success status after archived jump, got %q", m.status)
+	}
+}
+
+// TestModelActivityEventJumpFocusesNestedNode verifies jump-to-node focuses nested activity targets by scoping to parent.
+func TestModelActivityEventJumpFocusesNestedNode(t *testing.T) {
+	now := time.Date(2026, 3, 1, 15, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	branch, _ := domain.NewTask(domain.TaskInput{
+		ID:        "b1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Branch",
+		Priority:  domain.PriorityMedium,
+		Scope:     "branch",
+		Kind:      "branch",
+	}, now)
+	child, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ParentID:  branch.ID,
+		ColumnID:  c.ID,
+		Position:  1,
+		Title:     "Nested Task",
+		Priority:  domain.PriorityMedium,
+	}, now.Add(time.Minute))
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{branch, child})
+	svc.changeEvents[p.ID] = []domain.ChangeEvent{
+		{
+			ID:         1,
+			ProjectID:  p.ID,
+			WorkItemID: child.ID,
+			Operation:  domain.ChangeOperationUpdate,
+			ActorID:    "agent-sync",
+			ActorType:  domain.ActorTypeAgent,
+			Metadata:   map[string]string{"title": child.Title},
+			OccurredAt: now.Add(2 * time.Minute),
+		},
+	}
+	m := loadReadyModel(t, NewModel(svc))
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeActivityEventInfo {
+		t.Fatalf("expected activity event info modal, got %v", m.mode)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeNone {
+		t.Fatalf("expected board mode after jump, got %v", m.mode)
+	}
+	if got := strings.TrimSpace(m.projectionRootTaskID); got != branch.ID {
+		t.Fatalf("expected jump to scope board to parent branch %q, got %q", branch.ID, got)
+	}
+	task, ok := m.selectedTaskInCurrentColumn()
+	if !ok || task.ID != child.ID {
+		t.Fatalf("expected nested task focused after jump, got %#v ok=%t", task, ok)
+	}
+	if !strings.Contains(m.status, "jumped to activity node") {
+		t.Fatalf("expected jump success status, got %q", m.status)
+	}
+}
+
+// TestModelActivityEventMetadataShowsColumnNames verifies move metadata renders column names instead of UUIDs.
+func TestModelActivityEventMetadataShowsColumnNames(t *testing.T) {
+	now := time.Date(2026, 3, 1, 16, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	todo, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	doing, _ := domain.NewColumn("c2", p.ID, "In Progress", 1, 0, now)
+	done, _ := domain.NewColumn("c3", p.ID, "Done", 2, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  done.ID,
+		Position:  0,
+		Title:     "Done Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{todo, doing, done}, []domain.Task{task})
+	svc.changeEvents[p.ID] = []domain.ChangeEvent{
+		{
+			ID:         3,
+			ProjectID:  p.ID,
+			WorkItemID: task.ID,
+			Operation:  domain.ChangeOperationMove,
+			ActorID:    "agent-sync",
+			ActorType:  domain.ActorTypeAgent,
+			Metadata: map[string]string{
+				"from_column_id": todo.ID,
+				"from_position":  "1",
+				"to_column_id":   done.ID,
+				"to_position":    "0",
+				"title":          task.Title,
+			},
+			OccurredAt: now.Add(time.Minute),
+		},
+	}
+	m := loadReadyModel(t, NewModel(svc))
+	if !m.setPanelFocusIndex(len(m.columns), false) {
+		t.Fatal("expected notices panel focus to be available")
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeActivityEventInfo {
+		t.Fatalf("expected activity event info modal, got %v", m.mode)
+	}
+	detail := stripANSI(m.renderModeOverlay(lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), lipgloss.NewStyle(), 96))
+	if !strings.Contains(detail, "column: To Do -> Done") {
+		t.Fatalf("expected human-readable move columns in metadata, got %q", detail)
+	}
+	if strings.Contains(detail, "from_column_id") || strings.Contains(detail, "to_column_id") {
+		t.Fatalf("expected raw column-id keys hidden from metadata block, got %q", detail)
+	}
+	if strings.Contains(detail, "to_position") || strings.Contains(detail, "from_position") {
+		t.Fatalf("expected raw position keys hidden from metadata block, got %q", detail)
+	}
+}
+
+// TestModelDisplayActivityOwnerNormalizesActorLabels verifies notices owner labels use canonical actor type and friendly user identity.
+func TestModelDisplayActivityOwnerNormalizesActorLabels(t *testing.T) {
+	m := Model{identityDisplayName: "EVAN"}
+
+	actorType, actorID := m.displayActivityOwner(activityEntry{
+		ActorType: domain.ActorTypeUser,
+		ActorID:   "hakoll-user",
+	})
+	if actorType != domain.ActorTypeUser {
+		t.Fatalf("expected user actor type, got %q", actorType)
+	}
+	if actorID != "EVAN" {
+		t.Fatalf("expected local identity display name, got %q", actorID)
+	}
+
+	actorType, actorID = m.displayActivityOwner(activityEntry{
+		ActorType: domain.ActorType("AGENT"),
+		ActorID:   "",
+	})
+	if actorType != domain.ActorTypeAgent {
+		t.Fatalf("expected normalized agent actor type, got %q", actorType)
+	}
+	if actorID != "unknown" {
+		t.Fatalf("expected unknown owner fallback, got %q", actorID)
+	}
+}
+
+// TestModelActivityEventTargetDetailsFallbackLabels verifies non-task activity targets render human-facing node/path labels.
+func TestModelActivityEventTargetDetailsFallbackLabels(t *testing.T) {
+	now := time.Date(2026, 3, 1, 16, 30, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	m := Model{
+		projects:        []domain.Project{project},
+		selectedProject: 0,
+	}
+
+	node, path := m.activityEventTargetDetails(activityEntry{Target: "  queued-action  "})
+	if node != "queued-action" {
+		t.Fatalf("expected trimmed target node label, got %q", node)
+	}
+	if path != "Inbox -> queued-action" {
+		t.Fatalf("expected project-scoped target path, got %q", path)
+	}
+
+	node, path = m.activityEventTargetDetails(activityEntry{Target: ""})
+	if node != "-" {
+		t.Fatalf("expected fallback node label for blank target, got %q", node)
+	}
+	if path != "Inbox" {
+		t.Fatalf("expected project-only path for blank target, got %q", path)
+	}
+
+	node, path = (Model{}).activityEventTargetDetails(activityEntry{Target: ""})
+	if node != "-" || path != "-" {
+		t.Fatalf("expected root fallback labels without project context, got node=%q path=%q", node, path)
+	}
+}
+
+// TestModelFormatActivityMetadataFriendlyFallbacks verifies metadata rendering keeps useful labels while hiding raw id noise.
+func TestModelFormatActivityMetadataFriendlyFallbacks(t *testing.T) {
+	m := Model{
+		columns: []domain.Column{
+			{ID: "c1", Name: "To Do"},
+			{ID: "c2", Name: "In Progress"},
+		},
+	}
+	entry := activityEntry{
+		Metadata: map[string]string{
+			"column_id":      "c2",
+			"position":       "0",
+			"changed_fields": "title, due_at",
+			"from_state":     "todo",
+			"to_state":       "archived",
+			"notes":          "manual correction",
+			"work_item_id":   "task-123",
+		},
+	}
+
+	lines := m.formatActivityMetadata(entry)
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "column: In Progress") {
+		t.Fatalf("expected human-readable column label, got %q", joined)
+	}
+	if !strings.Contains(joined, "changed fields: title, due_at") {
+		t.Fatalf("expected changed-fields summary, got %q", joined)
+	}
+	if !strings.Contains(joined, "state: To Do -> Archived") {
+		t.Fatalf("expected lifecycle-state summary, got %q", joined)
+	}
+	if !strings.Contains(joined, "notes: manual correction") {
+		t.Fatalf("expected non-id metadata key rendered, got %q", joined)
+	}
+	if strings.Contains(joined, "work_item_id") || strings.Contains(joined, "position") {
+		t.Fatalf("expected raw id/position keys filtered, got %q", joined)
+	}
+}
+
+// TestModelRecentActivityPanelRefreshesFromPersistedEvents verifies notices-panel activity follows persisted change events on auto-refresh.
+func TestModelRecentActivityPanelRefreshesFromPersistedEvents(t *testing.T) {
+	now := time.Date(2026, 2, 28, 13, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	svc.changeEvents[p.ID] = []domain.ChangeEvent{
+		{
+			ID:         1,
+			ProjectID:  p.ID,
+			WorkItemID: task.ID,
+			Operation:  domain.ChangeOperationCreate,
+			Metadata:   map[string]string{"title": task.Title},
+			OccurredAt: now.Add(time.Minute),
+		},
+	}
+	m := loadReadyModel(t, NewModel(svc))
+	m.autoRefreshInterval = time.Second
+	if got := m.activityLog[len(m.activityLog)-1].Summary; got != "create task" {
+		t.Fatalf("expected initial recent activity from persisted event, got %q", got)
+	}
+
+	svc.changeEvents[p.ID] = append([]domain.ChangeEvent{
+		{
+			ID:         2,
+			ProjectID:  p.ID,
+			WorkItemID: task.ID,
+			Operation:  domain.ChangeOperationUpdate,
+			Metadata:   map[string]string{"title": task.Title},
+			OccurredAt: now.Add(2 * time.Minute),
+		},
+	}, svc.changeEvents[p.ID]...)
+
+	m, cmd := applyAutoRefreshTickMsg(t, m)
+	if !m.autoRefreshInFlight {
+		t.Fatal("expected auto-refresh load to start in board mode")
+	}
+	m = applyAutoRefreshLoadResult(t, m, cmd)
+	if got := m.activityLog[len(m.activityLog)-1].Summary; got != "update task" {
+		t.Fatalf("expected newest persisted event in recent activity after refresh, got %q", got)
+	}
+	panel := stripANSI(m.renderOverviewPanel(p, lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), 80, 0, 0, 0, nil, false))
+	if !strings.Contains(panel, "user|unknown update task") {
+		t.Fatalf("expected notices panel to show refreshed update activity, got %q", panel)
 	}
 }
 
@@ -5574,7 +5994,7 @@ func TestModelViewShowsNoticesPanel(t *testing.T) {
 	if !strings.Contains(rendered, "Agent/User Action") {
 		t.Fatalf("expected notices panel attention section, got\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "g opens full activity") {
+	if !strings.Contains(rendered, "tab/shift+tab panels") {
 		t.Fatalf("expected activity-log hint in notices panel, got\n%s", rendered)
 	}
 	if !strings.Contains(rendered, "work items") {
@@ -6433,6 +6853,176 @@ func TestModelSearchFocusNavigationWithJK(t *testing.T) {
 	}
 }
 
+// TestModelAutoRefreshTickReloadsExternalMutationsInBoardMode verifies board-mode auto-refresh pulls externally written tasks.
+func TestModelAutoRefreshTickReloadsExternalMutationsInBoardMode(t *testing.T) {
+	now := time.Date(2026, 2, 28, 9, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	existing, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-existing",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Existing",
+		Priority:  domain.PriorityLow,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{existing})
+	m := loadReadyModel(t, NewModel(svc))
+	m.autoRefreshInterval = time.Second
+
+	external, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-external",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  1,
+		Title:     "External",
+		Priority:  domain.PriorityMedium,
+	}, now.Add(time.Minute))
+	svc.tasks[p.ID] = append(svc.tasks[p.ID], external)
+
+	m, cmd := applyAutoRefreshTickMsg(t, m)
+	if !m.autoRefreshInFlight {
+		t.Fatal("expected auto-refresh load to be in flight after tick in board mode")
+	}
+	m = applyAutoRefreshLoadResult(t, m, cmd)
+	if m.autoRefreshInFlight {
+		t.Fatal("expected auto-refresh load to complete")
+	}
+	if len(m.tasks) != 2 {
+		t.Fatalf("expected 2 tasks after external refresh, got %d", len(m.tasks))
+	}
+	if _, ok := m.taskByID(external.ID); !ok {
+		t.Fatalf("expected refreshed model to include %q", external.ID)
+	}
+	if m.mode != modeNone {
+		t.Fatalf("expected board mode after refresh, got %v", m.mode)
+	}
+}
+
+// TestModelAutoRefreshTickSkipsInputModes verifies auto-refresh defers while text-entry modals are active.
+func TestModelAutoRefreshTickSkipsInputModes(t *testing.T) {
+	now := time.Date(2026, 2, 28, 10, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	existing, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-existing",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Existing",
+		Priority:  domain.PriorityLow,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{existing})
+	m := loadReadyModel(t, NewModel(svc))
+	m.autoRefreshInterval = time.Second
+	m = applyMsg(t, m, keyRune('n'))
+	if m.mode != modeAddTask {
+		t.Fatalf("expected add-task mode, got %v", m.mode)
+	}
+
+	external, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-external",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  1,
+		Title:     "External",
+		Priority:  domain.PriorityMedium,
+	}, now.Add(time.Minute))
+	svc.tasks[p.ID] = append(svc.tasks[p.ID], external)
+
+	m, _ = applyAutoRefreshTickMsg(t, m)
+	if m.autoRefreshInFlight {
+		t.Fatal("expected auto-refresh to defer while add-task modal is open")
+	}
+	if len(m.tasks) != 1 {
+		t.Fatalf("expected in-memory board to remain stale during modal input, got %d tasks", len(m.tasks))
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.mode != modeNone {
+		t.Fatalf("expected return to board mode after escape, got %v", m.mode)
+	}
+	m, cmd := applyAutoRefreshTickMsg(t, m)
+	if !m.autoRefreshInFlight {
+		t.Fatal("expected auto-refresh to resume after leaving modal input mode")
+	}
+	m = applyAutoRefreshLoadResult(t, m, cmd)
+	if len(m.tasks) != 2 {
+		t.Fatalf("expected deferred external task to appear after board-mode refresh, got %d tasks", len(m.tasks))
+	}
+}
+
+// TestModelAutoRefreshTickPreservesFocusedSubtree verifies focused subtree projections refresh without losing focus.
+func TestModelAutoRefreshTickPreservesFocusedSubtree(t *testing.T) {
+	now := time.Date(2026, 2, 28, 11, 0, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	parent, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-parent",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Parent",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	child, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-child-existing",
+		ProjectID: p.ID,
+		ParentID:  parent.ID,
+		ColumnID:  c.ID,
+		Position:  1,
+		Title:     "Child Existing",
+		Priority:  domain.PriorityLow,
+	}, now.Add(time.Minute))
+	other, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-other-existing",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  2,
+		Title:     "Other Existing",
+		Priority:  domain.PriorityLow,
+	}, now.Add(2*time.Minute))
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{parent, child, other})
+	m := loadReadyModel(t, NewModel(svc))
+	m.autoRefreshInterval = time.Second
+	m.focusTaskByID(parent.ID)
+	m = applyMsg(t, m, keyRune('f'))
+	if m.projectionRootTaskID != parent.ID {
+		t.Fatalf("expected subtree focus root %q, got %q", parent.ID, m.projectionRootTaskID)
+	}
+
+	childExternal, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-child-external",
+		ProjectID: p.ID,
+		ParentID:  parent.ID,
+		ColumnID:  c.ID,
+		Position:  3,
+		Title:     "Child External",
+		Priority:  domain.PriorityMedium,
+	}, now.Add(3*time.Minute))
+	unrelatedExternal, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-unrelated-external",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  4,
+		Title:     "Unrelated External",
+		Priority:  domain.PriorityLow,
+	}, now.Add(4*time.Minute))
+	svc.tasks[p.ID] = append(svc.tasks[p.ID], childExternal, unrelatedExternal)
+
+	m, cmd := applyAutoRefreshTickMsg(t, m)
+	if !m.autoRefreshInFlight {
+		t.Fatal("expected focused subtree refresh to start in board mode")
+	}
+	m = applyAutoRefreshLoadResult(t, m, cmd)
+	if m.projectionRootTaskID != parent.ID {
+		t.Fatalf("expected subtree focus root to remain %q, got %q", parent.ID, m.projectionRootTaskID)
+	}
+	if got := taskIDList(m.currentColumnTasks()); got != "t-child-existing,t-child-external" {
+		t.Fatalf("expected focused subtree children only, got %q", got)
+	}
+}
+
 // TestSortTaskSlicePrefersCreationTime verifies oldest-first ordering regardless of move position churn.
 func TestSortTaskSlicePrefersCreationTime(t *testing.T) {
 	now := time.Date(2026, 2, 22, 12, 0, 0, 0, time.UTC)
@@ -6458,6 +7048,42 @@ func TestSortTaskSlicePrefersCreationTime(t *testing.T) {
 	if tasks[0].ID != older.ID {
 		t.Fatalf("expected oldest task first, got %#v", tasks)
 	}
+}
+
+// applyAutoRefreshTickMsg applies one auto-refresh tick and returns the updated model and resulting command.
+func applyAutoRefreshTickMsg(t *testing.T, m Model) (Model, tea.Cmd) {
+	t.Helper()
+	updated, cmd := m.Update(autoRefreshTickMsg{})
+	out, ok := updated.(Model)
+	if !ok {
+		t.Fatalf("expected Model, got %T", updated)
+	}
+	return out, cmd
+}
+
+// applyAutoRefreshLoadResult executes one auto-refresh load command and applies the returned message.
+func applyAutoRefreshLoadResult(t *testing.T, m Model, cmd tea.Cmd) Model {
+	t.Helper()
+	if cmd == nil {
+		t.Fatal("expected auto-refresh load command")
+	}
+	// Do not execute the follow-up command here to avoid spinning the recurring timer in tests.
+	msg := cmd()
+	updated, _ := m.Update(msg)
+	out, ok := updated.(Model)
+	if !ok {
+		t.Fatalf("expected Model, got %T", updated)
+	}
+	return out
+}
+
+// taskIDList returns comma-separated IDs for deterministic assertions.
+func taskIDList(tasks []domain.Task) string {
+	ids := make([]string, 0, len(tasks))
+	for _, task := range tasks {
+		ids = append(ids, strings.TrimSpace(task.ID))
+	}
+	return strings.Join(ids, ",")
 }
 
 // dependencyCandidateIndexByID finds one dependency-candidate index by task id.

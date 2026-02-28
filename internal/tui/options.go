@@ -208,6 +208,19 @@ func WithUIConfig(cfg UIConfig) Option {
 	}
 }
 
+// WithAutoRefreshInterval returns an option that sets periodic board auto-refresh cadence.
+func WithAutoRefreshInterval(interval time.Duration) Option {
+	return func(m *Model) {
+		if interval <= 0 {
+			m.autoRefreshInterval = 0
+			m.autoRefreshArmed = false
+			m.autoRefreshInFlight = false
+			return
+		}
+		m.autoRefreshInterval = interval
+	}
+}
+
 // WithLabelConfig returns an option that sets label config behavior.
 func WithLabelConfig(cfg LabelConfig) Option {
 	return func(m *Model) {

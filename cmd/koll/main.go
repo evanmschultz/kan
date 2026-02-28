@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -47,6 +49,15 @@ var serveCommandRunner = func(ctx context.Context, cfg serveradapter.Config, dep
 
 // supportsStyledOutputFunc allows tests to force styled output mode.
 var supportsStyledOutputFunc = supportsStyledOutput
+
+// loggingSectionHeaderPattern matches a [logging] TOML section header.
+var loggingSectionHeaderPattern = regexp.MustCompile(`(?m)^\[logging\][ \t]*$`)
+
+// tomlSectionHeaderPattern matches any TOML section header.
+var tomlSectionHeaderPattern = regexp.MustCompile(`(?m)^\[[^\]\r\n]+\][ \t]*$`)
+
+// loggingLevelLinePattern matches a level assignment line inside [logging].
+var loggingLevelLinePattern = regexp.MustCompile(`(?m)^[ \t]*level[ \t]*=[^\r\n]*$`)
 
 // main handles main.
 func main() {
@@ -184,7 +195,16 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		},
 	}
 
-	rootCmd.AddCommand(serveCmd, exportCmd, importCmd, pathsCmd)
+	initDevConfigCmd := &cobra.Command{
+		Use:   "init-dev-config",
+		Short: "Create the dev config file and enforce [logging] level = \"debug\"",
+		Args:  cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return runInitDevConfig(stdout, rootOpts)
+		},
+	}
+
+	rootCmd.AddCommand(serveCmd, exportCmd, importCmd, pathsCmd, initDevConfigCmd)
 	return fang.Execute(
 		ctx,
 		rootCmd,
@@ -273,6 +293,106 @@ func writePathsPlain(stdout io.Writer, opts rootCommandOptions, paths platform.P
 		return fmt.Errorf("write paths db output: %w", err)
 	}
 	return nil
+}
+
+// runInitDevConfig creates the dev config file and enforces debug logging level.
+func runInitDevConfig(stdout io.Writer, opts rootCommandOptions) error {
+	if stdout == nil {
+		stdout = io.Discard
+	}
+
+	paths, err := platform.DefaultPathsWithOptions(platform.Options{
+		AppName: opts.appName,
+		DevMode: true,
+	})
+	if err != nil {
+		return fmt.Errorf("resolve dev paths: %w", err)
+	}
+
+	configPath := paths.ConfigPath
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		return fmt.Errorf("create dev config directory: %w", err)
+	}
+
+	created := false
+	if _, err := os.Stat(configPath); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("stat dev config: %w", err)
+		}
+		templatePath, pathErr := configExamplePath()
+		if pathErr != nil {
+			return pathErr
+		}
+		templateBytes, readErr := os.ReadFile(templatePath)
+		if readErr != nil {
+			return fmt.Errorf("read config example %q: %w", templatePath, readErr)
+		}
+		if writeErr := os.WriteFile(configPath, templateBytes, 0o644); writeErr != nil {
+			return fmt.Errorf("write dev config: %w", writeErr)
+		}
+		created = true
+	}
+
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		return fmt.Errorf("read dev config: %w", err)
+	}
+	updated := ensureLoggingSectionDebug(string(content))
+	if updated != string(content) {
+		if err := os.WriteFile(configPath, []byte(updated), 0o644); err != nil {
+			return fmt.Errorf("write updated dev config: %w", err)
+		}
+	}
+
+	msg := "dev config already exists"
+	if created {
+		msg = "created dev config"
+	}
+	if _, err := fmt.Fprintf(stdout, "%s: %s\n", msg, configPath); err != nil {
+		return fmt.Errorf("write init-dev-config output: %w", err)
+	}
+	return nil
+}
+
+// configExamplePath resolves the repository-local config example path.
+func configExamplePath() (string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("resolve working directory: %w", err)
+	}
+	return filepath.Join(workspaceRootFrom(cwd), "config.example.toml"), nil
+}
+
+// ensureLoggingSectionDebug rewrites TOML content so [logging].level is always "debug".
+func ensureLoggingSectionDebug(content string) string {
+	headerMatch := loggingSectionHeaderPattern.FindStringIndex(content)
+	if headerMatch != nil {
+		sectionBodyStart := headerMatch[1]
+		sectionBodyEnd := len(content)
+		nextSectionMatch := tomlSectionHeaderPattern.FindStringIndex(content[sectionBodyStart:])
+		if nextSectionMatch != nil {
+			sectionBodyEnd = sectionBodyStart + nextSectionMatch[0]
+		}
+
+		sectionBody := content[sectionBodyStart:sectionBodyEnd]
+		updatedBody := sectionBody
+		if loggingLevelLinePattern.MatchString(sectionBody) {
+			updatedBody = loggingLevelLinePattern.ReplaceAllString(sectionBody, `level = "debug"`)
+		} else {
+			if updatedBody != "" && !strings.HasSuffix(updatedBody, "\n") {
+				updatedBody += "\n"
+			}
+			updatedBody += "level = \"debug\"\n"
+		}
+		// Reassemble the file while preserving all non-[logging] content exactly.
+		return content[:sectionBodyStart] + updatedBody + content[sectionBodyEnd:]
+	}
+
+	trimmed := strings.TrimRight(content, "\r\n")
+	if trimmed == "" {
+		return "[logging]\nlevel = \"debug\"\n"
+	}
+	return trimmed + "\n\n[logging]\nlevel = \"debug\"\n"
 }
 
 // supportsStyledOutput reports whether output should include terminal styles.
@@ -415,6 +535,7 @@ func executeCommandFlow(
 		svc,
 		tui.WithLaunchProjectPicker(true),
 		tui.WithStartupBootstrap(bootstrapRequired),
+		tui.WithAutoRefreshInterval(2*time.Second),
 		tui.WithRuntimeConfig(toTUIRuntimeConfig(cfg)),
 		tui.WithReloadConfigCallback(func() (tui.RuntimeConfig, error) {
 			logger.Info("runtime config reload requested", "config_path", configPath)

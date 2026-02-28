@@ -106,8 +106,14 @@ You are a senior Go dev. YOU ALWAYS:
 - Cleanup requirement:
   - after this temporary phase is confirmed complete by the user, explicitly ask how this temporary AGENTS directive should be removed or reduced.
 - Locked execution flow for this temporary phase (section-by-section remediation):
+  - use explicit `test/fix cycle (collab)` checkpoints:
+    1. run one collaborative test step,
+    2. log findings/evidence,
+    3. if fixes are needed, implement and validate that one fix scope,
+    4. commit the validated fix scope before starting the next fix scope.
+  - if the working tree already contains uncommitted edits from a prior `test/fix cycle (collab)`, do not start another fix scope until those edits are either committed or explicitly discarded with user approval.
   - execute collaborative testing one section at a time (do not batch all findings for a later fix wave),
-  - when a section reveals a failure/gap, pause forward testing and run a focused remediation loop for that section:
+  - when a section reveals a failure/gap (bug), immediately log it in `PLAN.md` and the active worksheet, pause forward testing, and run a focused remediation loop for that section:
     1. spawn subagents to inspect code and gather local context,
     2. run Context7 research (and web research when needed) to collect fix options,
     3. present options to user and reach explicit user+agent consensus before implementation,
@@ -191,7 +197,7 @@ You are a senior Go dev. YOU ALWAYS:
 - Build/test execution must go through `just` recipes only.
 - Do not wrap `just` test commands with custom Go cache env vars by default; use plain `just` invocations.
 - During collaborative validation waves, enforce section-by-section progression:
-  - do not advance to the next worksheet section until current-section failures are fixed, tested, and revalidated.
+  - do not advance to the next worksheet section until each current-section bug is logged, fixed, verified (package tests + section rerun), and revalidated.
 - For each section remediation:
   - run subagent code/context investigation first,
   - run Context7 before edits and again after any failed test/runtime error before the next edit,

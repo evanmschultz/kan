@@ -575,6 +575,43 @@ func TestUpdateTask(t *testing.T) {
 	}
 }
 
+// TestUpdateTaskAppliesMutationActorContext verifies context-supplied actor attribution is persisted on updates.
+func TestUpdateTaskAppliesMutationActorContext(t *testing.T) {
+	repo := newFakeRepo()
+	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:             "t1",
+		ProjectID:      "p1",
+		ColumnID:       "c1",
+		Position:       0,
+		Title:          "old",
+		Priority:       domain.PriorityLow,
+		CreatedByActor: "EVAN",
+		UpdatedByActor: "EVAN",
+		UpdatedByType:  domain.ActorTypeUser,
+	}, now)
+	repo.tasks[task.ID] = task
+
+	svc := NewService(repo, nil, func() time.Time { return now.Add(time.Minute) }, ServiceConfig{})
+	ctx := WithMutationActor(context.Background(), MutationActor{
+		ActorID:   "orchestrator-1",
+		ActorType: domain.ActorTypeAgent,
+	})
+	updated, err := svc.UpdateTask(ctx, UpdateTaskInput{
+		TaskID: task.ID,
+		Title:  "new title",
+	})
+	if err != nil {
+		t.Fatalf("UpdateTask() error = %v", err)
+	}
+	if updated.UpdatedByActor != "orchestrator-1" {
+		t.Fatalf("updated actor id = %q, want orchestrator-1", updated.UpdatedByActor)
+	}
+	if updated.UpdatedByType != domain.ActorTypeAgent {
+		t.Fatalf("updated actor type = %q, want %q", updated.UpdatedByType, domain.ActorTypeAgent)
+	}
+}
+
 // TestUpdateTaskPreservesPriorityWhenOmitted verifies update behavior when priority is omitted.
 func TestUpdateTaskPreservesPriorityWhenOmitted(t *testing.T) {
 	repo := newFakeRepo()

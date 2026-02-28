@@ -96,6 +96,12 @@ type DeleteTaskRequest struct {
 	Actor  ActorLeaseTuple
 }
 
+// RestoreTaskRequest stores transport input for restore operations.
+type RestoreTaskRequest struct {
+	TaskID string
+	Actor  ActorLeaseTuple
+}
+
 // ReparentTaskRequest stores transport input for parent-link updates.
 type ReparentTaskRequest struct {
 	TaskID   string
@@ -212,7 +218,7 @@ type TaskService interface {
 	UpdateTask(context.Context, UpdateTaskRequest) (domain.Task, error)
 	MoveTask(context.Context, MoveTaskRequest) (domain.Task, error)
 	DeleteTask(context.Context, DeleteTaskRequest) error
-	RestoreTask(context.Context, string) (domain.Task, error)
+	RestoreTask(context.Context, RestoreTaskRequest) (domain.Task, error)
 	ReparentTask(context.Context, ReparentTaskRequest) (domain.Task, error)
 	ListChildTasks(context.Context, string, string, bool) ([]domain.Task, error)
 }

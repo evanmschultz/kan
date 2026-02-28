@@ -68,6 +68,7 @@ const (
 	modeConfirmAction
 	modeWarning
 	modeActivityLog
+	modeActivityEventInfo
 	modeResourcePicker
 	modeLabelPicker
 	modePathsRoots
@@ -111,7 +112,7 @@ const (
 	activityLogViewWindow = 14
 	defaultHighlightColor = "212"
 	// headerMarkText defines the boxed brand wordmark shown in the board header.
-	headerMarkText = "KOLL"
+	headerMarkText = "HA KOLL"
 	// tuiOuterHorizontalPadding keeps a small symmetric outer gutter around the whole TUI.
 	tuiOuterHorizontalPadding = 1
 	// boardColumnGapWidth is the horizontal spacing between adjacent board columns.
@@ -253,9 +254,15 @@ type confirmAction struct {
 
 // activityEntry describes one recorded user action for the in-app activity log.
 type activityEntry struct {
-	At      time.Time
-	Summary string
-	Target  string
+	At         time.Time
+	Summary    string
+	Target     string
+	EventID    int64
+	WorkItemID string
+	Operation  domain.ChangeOperation
+	ActorID    string
+	ActorType  domain.ActorType
+	Metadata   map[string]string
 }
 
 // historyStepKind identifies one reversible operation in a mutation set.
@@ -390,6 +397,7 @@ type Model struct {
 	taskFormScope            domain.KindAppliesTo
 	pendingProjectID         string
 	pendingFocusTaskID       string
+	pendingActivityJumpTask  string
 
 	lastArchivedTaskID string
 
@@ -415,6 +423,9 @@ type Model struct {
 
 	selectedTaskIDs  map[string]struct{}
 	activityLog      []activityEntry
+	noticesFocused   bool
+	noticesActivity  int
+	activityInfoItem activityEntry
 	undoStack        []historyActionSet
 	redoStack        []historyActionSet
 	nextHistoryID    int
@@ -463,6 +474,10 @@ type Model struct {
 	threadScroll              int
 	threadPendingCommentBody  string
 	threadMarkdown            markdownRenderer
+
+	autoRefreshInterval time.Duration
+	autoRefreshArmed    bool
+	autoRefreshInFlight bool
 }
 
 // loadedMsg carries message data through update handling.
@@ -471,6 +486,7 @@ type loadedMsg struct {
 	selectedProject          int
 	columns                  []domain.Column
 	tasks                    []domain.Task
+	activityEntries          []activityEntry
 	rollup                   domain.DependencyRollup
 	err                      error
 	attentionItemsCount      int
@@ -500,6 +516,15 @@ type actionMsg struct {
 	historyUndo     *historyActionSet
 	historyRedo     *historyActionSet
 	activityItem    *activityEntry
+}
+
+// autoRefreshTickMsg triggers a periodic external-state refresh attempt.
+type autoRefreshTickMsg struct{}
+
+// autoRefreshLoadedMsg carries one background refresh load result.
+type autoRefreshLoadedMsg struct {
+	data loadedMsg
+	err  error
 }
 
 // searchResultsMsg carries message data through update handling.
@@ -671,6 +696,131 @@ func NewModel(svc Service, opts ...Option) Model {
 	return m
 }
 
+// scheduleAutoRefreshTickCmd schedules one refresh tick when auto-refresh is enabled.
+func (m *Model) scheduleAutoRefreshTickCmd() tea.Cmd {
+	if m.autoRefreshInterval <= 0 || m.autoRefreshArmed {
+		return nil
+	}
+	m.autoRefreshArmed = true
+	return tea.Tick(m.autoRefreshInterval, func(time.Time) tea.Msg {
+		return autoRefreshTickMsg{}
+	})
+}
+
+// loadDataForAutoRefreshCmd fetches board data in the background and wraps the result.
+func (m Model) loadDataForAutoRefreshCmd() tea.Cmd {
+	return func() tea.Msg {
+		msg := m.loadData()
+		loaded, ok := msg.(loadedMsg)
+		if !ok {
+			return autoRefreshLoadedMsg{err: fmt.Errorf("auto refresh: unexpected message type %T", msg)}
+		}
+		return autoRefreshLoadedMsg{data: loaded}
+	}
+}
+
+// shouldAutoRefresh reports whether auto-refresh can run without disrupting active input flows.
+func (m Model) shouldAutoRefresh() bool {
+	switch m.mode {
+	case modeNone, modeTaskInfo, modeActivityLog:
+		return true
+	default:
+		return false
+	}
+}
+
+// applyLoadedMsg applies a loaded message and returns any follow-up command.
+func (m *Model) applyLoadedMsg(msg loadedMsg) tea.Cmd {
+	if msg.err != nil {
+		m.err = msg.err
+		return nil
+	}
+	m.err = nil
+	m.projects = msg.projects
+	m.selectedProject = msg.selectedProject
+	m.columns = msg.columns
+	m.tasks = msg.tasks
+	if msg.activityEntries != nil {
+		m.activityLog = append([]activityEntry(nil), msg.activityEntries...)
+	}
+	m.dependencyRollup = msg.rollup
+	m.warnings = buildScopeWarnings(msg.attentionItemsCount, msg.attentionUserActionCount)
+	if len(m.projects) == 0 {
+		m.selectedProject = 0
+		m.selectedColumn = 0
+		m.selectedTask = 0
+		m.projectPickerIndex = 0
+		m.columns = nil
+		m.tasks = nil
+		m.activityLog = []activityEntry{}
+		if m.startupBootstrapRequired {
+			if m.mode != modeBootstrapSettings && m.mode != modeAddProject && m.mode != modeEditProject {
+				return m.startBootstrapSettingsMode(true)
+			}
+			return nil
+		}
+		if m.mode != modeAddProject && m.mode != modeEditProject {
+			m.mode = modeProjectPicker
+			m.status = "project picker"
+		}
+		m.launchPicker = false
+		return nil
+	}
+	if m.pendingProjectID != "" {
+		for idx, project := range m.projects {
+			if project.ID == m.pendingProjectID {
+				m.selectedProject = idx
+				break
+			}
+		}
+		m.pendingProjectID = ""
+	}
+	if m.projectionRootTaskID != "" {
+		if _, ok := m.taskByID(m.projectionRootTaskID); !ok {
+			m.projectionRootTaskID = ""
+			m.status = "focus cleared (parent not found)"
+		}
+	}
+	m.clampSelections()
+	m.retainSelectionForLoadedTasks()
+	m.normalizePanelFocus()
+	if m.pendingFocusTaskID != "" {
+		m.focusTaskByID(m.pendingFocusTaskID)
+		m.pendingFocusTaskID = ""
+	}
+	if pendingJump := strings.TrimSpace(m.pendingActivityJumpTask); pendingJump != "" {
+		if _, ok := m.taskByID(pendingJump); ok {
+			m.prepareActivityJumpContext(pendingJump)
+			if m.focusTaskByID(pendingJump) {
+				m.status = "jumped to activity node"
+			} else {
+				m.status = "activity node unavailable (possibly hard-deleted)"
+			}
+		} else {
+			m.status = "activity node unavailable (possibly hard-deleted)"
+		}
+		m.pendingActivityJumpTask = ""
+	}
+	if m.startupBootstrapRequired {
+		if m.mode != modeBootstrapSettings {
+			return m.startBootstrapSettingsMode(true)
+		}
+		return nil
+	}
+	if m.launchPicker && m.mode == modeNone {
+		m.mode = modeProjectPicker
+		m.projectPickerIndex = m.selectedProject
+		m.status = "project picker"
+		m.launchPicker = false
+		return nil
+	}
+	m.launchPicker = false
+	if m.status == "" || m.status == "loading..." {
+		m.status = "ready"
+	}
+	return nil
+}
+
 // Init handles init.
 func (m Model) Init() tea.Cmd {
 	return m.loadData
@@ -683,79 +833,41 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ready = true
 		m.width = msg.Width
 		m.height = msg.Height
+		m.normalizePanelFocus()
 		return m, nil
 
 	case loadedMsg:
+		m.autoRefreshInFlight = false
+		if cmd := m.applyLoadedMsg(msg); cmd != nil {
+			return m, cmd
+		}
+		return m, m.scheduleAutoRefreshTickCmd()
+
+	case autoRefreshTickMsg:
+		m.autoRefreshArmed = false
+		if m.autoRefreshInterval <= 0 {
+			return m, nil
+		}
+		if m.autoRefreshInFlight || !m.shouldAutoRefresh() {
+			return m, m.scheduleAutoRefreshTickCmd()
+		}
+		m.autoRefreshInFlight = true
+		return m, m.loadDataForAutoRefreshCmd()
+
+	case autoRefreshLoadedMsg:
+		m.autoRefreshInFlight = false
 		if msg.err != nil {
-			m.err = msg.err
-			return m, nil
+			m.status = "auto refresh failed: " + msg.err.Error()
+			return m, m.scheduleAutoRefreshTickCmd()
 		}
-		m.err = nil
-		m.projects = msg.projects
-		m.selectedProject = msg.selectedProject
-		m.columns = msg.columns
-		m.tasks = msg.tasks
-		m.dependencyRollup = msg.rollup
-		m.warnings = buildScopeWarnings(msg.attentionItemsCount, msg.attentionUserActionCount)
-		if len(m.projects) == 0 {
-			m.selectedProject = 0
-			m.selectedColumn = 0
-			m.selectedTask = 0
-			m.projectPickerIndex = 0
-			m.columns = nil
-			m.tasks = nil
-			if m.startupBootstrapRequired {
-				if m.mode != modeBootstrapSettings && m.mode != modeAddProject && m.mode != modeEditProject {
-					return m, m.startBootstrapSettingsMode(true)
-				}
-				return m, nil
-			}
-			if m.mode != modeAddProject && m.mode != modeEditProject {
-				m.mode = modeProjectPicker
-				m.status = "project picker"
-			}
-			m.launchPicker = false
-			return m, nil
+		if msg.data.err != nil {
+			m.status = "auto refresh failed: " + msg.data.err.Error()
+			return m, m.scheduleAutoRefreshTickCmd()
 		}
-		if m.pendingProjectID != "" {
-			for idx, project := range m.projects {
-				if project.ID == m.pendingProjectID {
-					m.selectedProject = idx
-					break
-				}
-			}
-			m.pendingProjectID = ""
+		if cmd := m.applyLoadedMsg(msg.data); cmd != nil {
+			return m, cmd
 		}
-		if m.projectionRootTaskID != "" {
-			if _, ok := m.taskByID(m.projectionRootTaskID); !ok {
-				m.projectionRootTaskID = ""
-				m.status = "focus cleared (parent not found)"
-			}
-		}
-		m.clampSelections()
-		m.retainSelectionForLoadedTasks()
-		if m.pendingFocusTaskID != "" {
-			m.focusTaskByID(m.pendingFocusTaskID)
-			m.pendingFocusTaskID = ""
-		}
-		if m.startupBootstrapRequired {
-			if m.mode != modeBootstrapSettings {
-				return m, m.startBootstrapSettingsMode(true)
-			}
-			return m, nil
-		}
-		if m.launchPicker && m.mode == modeNone {
-			m.mode = modeProjectPicker
-			m.projectPickerIndex = m.selectedProject
-			m.status = "project picker"
-			m.launchPicker = false
-			return m, nil
-		}
-		m.launchPicker = false
-		if m.status == "" || m.status == "loading..." {
-			m.status = "ready"
-		}
-		return m, nil
+		return m, m.scheduleAutoRefreshTickCmd()
 
 	case resourcePickerLoadedMsg:
 		if msg.err != nil {
@@ -1058,6 +1170,7 @@ func (m Model) View() tea.View {
 
 	renderMainArea := func(boardWidth, noticesWidth int) string {
 		columnViews := make([]string, 0, len(m.columns))
+		boardPanelFocused := !m.noticesFocused || noticesWidth <= 0
 		colWidth := m.columnWidthFor(boardWidth)
 		extraBoardWidthPerColumn := 0
 		extraBoardWidthRemainder := 0
@@ -1213,7 +1326,7 @@ func (m Model) View() tea.View {
 			lines := append(append([]string{}, headerLines...), taskLines...)
 			content := fitLines(strings.Join(lines, "\n"), innerHeight)
 			colStyle := normColStyle.Copy().Width(colRenderWidth)
-			if colIdx == m.selectedColumn {
+			if colIdx == m.selectedColumn && boardPanelFocused {
 				colStyle = selColStyle.Copy().Width(colRenderWidth)
 			}
 			// Keep gaps only between columns; avoid trailing right gap after the last column.
@@ -1226,6 +1339,7 @@ func (m Model) View() tea.View {
 		body := lipgloss.JoinHorizontal(lipgloss.Top, columnViews...)
 		mainArea := body
 		if noticesWidth > 0 {
+			noticesFocused := m.noticesFocused && m.isNoticesPanelVisible()
 			overviewPanel := m.renderOverviewPanel(
 				project,
 				accent,
@@ -1236,6 +1350,7 @@ func (m Model) View() tea.View {
 				attentionTotal,
 				attentionBlocked,
 				attentionTop,
+				noticesFocused,
 			)
 			if noticesPanelGapWidth > 0 {
 				overviewPanel = lipgloss.NewStyle().MarginLeft(noticesPanelGapWidth).Render(overviewPanel)
@@ -1405,6 +1520,11 @@ func (m Model) loadData() tea.Msg {
 	if err != nil {
 		return loadedMsg{err: err}
 	}
+	activityEntries := []activityEntry{}
+	events, activityErr := m.svc.ListProjectChangeEvents(context.Background(), projectID, activityLogMaxItems)
+	if activityErr == nil {
+		activityEntries = mapChangeEventsToActivityEntries(events)
+	}
 
 	attentionItems, attentionErr := m.svc.ListAttentionItems(context.Background(), app.ListAttentionItemsInput{
 		Level: domain.LevelTupleInput{
@@ -1430,6 +1550,7 @@ func (m Model) loadData() tea.Msg {
 		selectedProject:          projectIdx,
 		columns:                  columns,
 		tasks:                    tasks,
+		activityEntries:          activityEntries,
 		rollup:                   rollup,
 		attentionItemsCount:      len(attentionItems),
 		attentionUserActionCount: requiresUserAction,
@@ -1473,6 +1594,62 @@ func (m *Model) openActivityLog() tea.Cmd {
 	return m.loadActivityLog
 }
 
+// canJumpToActivityNode reports whether one activity entry references a concrete task node.
+func canJumpToActivityNode(entry activityEntry) bool {
+	return strings.TrimSpace(entry.WorkItemID) != ""
+}
+
+// prepareActivityJumpContext adjusts focus scope so jump targets can be selected in board view.
+func (m *Model) prepareActivityJumpContext(taskID string) bool {
+	task, ok := m.taskByID(strings.TrimSpace(taskID))
+	if !ok {
+		return false
+	}
+	parentID := strings.TrimSpace(task.ParentID)
+	if parentID == "" {
+		m.projectionRootTaskID = ""
+		m.clampSelections()
+		return true
+	}
+	if _, ok := m.taskByID(parentID); !ok {
+		m.projectionRootTaskID = ""
+		m.clampSelections()
+		return true
+	}
+	return m.activateSubtreeFocus(parentID)
+}
+
+// jumpToActivityNode navigates to the task referenced by the current activity-detail entry when available.
+func (m Model) jumpToActivityNode() (tea.Model, tea.Cmd) {
+	workItemID := strings.TrimSpace(m.activityInfoItem.WorkItemID)
+	if workItemID == "" {
+		m.status = "activity event has no node reference"
+		return m, nil
+	}
+	if _, ok := m.taskByID(workItemID); ok {
+		m.mode = modeNone
+		m.noticesFocused = false
+		m.prepareActivityJumpContext(workItemID)
+		if m.focusTaskByID(workItemID) {
+			m.status = "jumped to activity node"
+		} else {
+			m.status = "activity node unavailable (possibly hard-deleted)"
+		}
+		return m, nil
+	}
+	if !m.showArchived {
+		m.mode = modeNone
+		m.noticesFocused = false
+		m.showArchived = true
+		m.pendingFocusTaskID = workItemID
+		m.pendingActivityJumpTask = workItemID
+		m.status = "loading activity node..."
+		return m, m.loadData
+	}
+	m.status = "activity node unavailable (possibly hard-deleted)"
+	return m, nil
+}
+
 // mapChangeEventsToActivityEntries converts newest-first persisted events into modal rows.
 func mapChangeEventsToActivityEntries(events []domain.ChangeEvent) []activityEntry {
 	if len(events) == 0 {
@@ -1513,11 +1690,37 @@ func mapChangeEventToActivityEntry(event domain.ChangeEvent) activityEntry {
 	if target == "" {
 		target = "-"
 	}
-	return activityEntry{
-		At:      event.OccurredAt.UTC(),
-		Summary: summary,
-		Target:  target,
+	actorID := strings.TrimSpace(event.ActorID)
+	if actorID == "" {
+		actorID = "unknown"
 	}
+	actorType := domain.ActorType(strings.TrimSpace(strings.ToLower(string(event.ActorType))))
+	if actorType == "" {
+		actorType = domain.ActorTypeUser
+	}
+	return activityEntry{
+		At:         event.OccurredAt.UTC(),
+		Summary:    summary,
+		Target:     target,
+		EventID:    event.ID,
+		WorkItemID: strings.TrimSpace(event.WorkItemID),
+		Operation:  event.Operation,
+		ActorID:    actorID,
+		ActorType:  actorType,
+		Metadata:   copyActivityMetadata(event.Metadata),
+	}
+}
+
+// copyActivityMetadata deep-copies change-event metadata for local activity rendering.
+func copyActivityMetadata(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return map[string]string{}
+	}
+	out := make(map[string]string, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
 }
 
 // newModalInput constructs modal input.
@@ -2396,6 +2599,110 @@ func wrapIndex(current int, delta int, total int) int {
 		next -= total
 	}
 	return next
+}
+
+// isForwardTabKey reports whether a key press should advance panel/form focus.
+func isForwardTabKey(msg tea.KeyPressMsg) bool {
+	return msg.Code == tea.KeyTab || msg.String() == "tab" || msg.String() == "ctrl+i"
+}
+
+// isBackwardTabKey reports whether a key press should reverse panel/form focus.
+func isBackwardTabKey(msg tea.KeyPressMsg) bool {
+	return msg.String() == "shift+tab" || msg.String() == "backtab"
+}
+
+// isNoticesPanelVisible reports whether the notices panel can be rendered at current width.
+func (m Model) isNoticesPanelVisible() bool {
+	if len(m.columns) == 0 {
+		return false
+	}
+	layoutWidth := max(0, m.width-2*tuiOuterHorizontalPadding)
+	return m.noticesPanelWidth(layoutWidth) > 0
+}
+
+// panelFocusCount returns the number of panel targets available for keyboard focus.
+func (m Model) panelFocusCount() int {
+	count := len(m.columns)
+	if m.isNoticesPanelVisible() {
+		count++
+	}
+	return count
+}
+
+// panelFocusIndex resolves the focused panel index across board columns and notices.
+func (m Model) panelFocusIndex() int {
+	if m.noticesFocused && m.isNoticesPanelVisible() {
+		return len(m.columns)
+	}
+	if len(m.columns) == 0 {
+		return 0
+	}
+	return clamp(m.selectedColumn, 0, len(m.columns)-1)
+}
+
+// setPanelFocusIndex applies panel focus by index and returns true when focus changed.
+func (m *Model) setPanelFocusIndex(idx int, resetTask bool) bool {
+	total := m.panelFocusCount()
+	if total <= 0 {
+		m.noticesFocused = false
+		return false
+	}
+	idx = clamp(idx, 0, total-1)
+	current := m.panelFocusIndex()
+	if m.isNoticesPanelVisible() && idx == len(m.columns) {
+		changed := !m.noticesFocused || current != idx
+		m.noticesFocused = true
+		m.clampNoticesActivitySelection()
+		return changed
+	}
+	if len(m.columns) == 0 {
+		m.noticesFocused = false
+		return false
+	}
+	targetColumn := clamp(idx, 0, len(m.columns)-1)
+	changed := m.noticesFocused || m.selectedColumn != targetColumn
+	m.noticesFocused = false
+	m.selectedColumn = targetColumn
+	if resetTask && changed {
+		m.selectedTask = 0
+	}
+	return changed
+}
+
+// cyclePanelFocus moves keyboard focus across panels.
+func (m *Model) cyclePanelFocus(delta int, wrap bool, resetTask bool) bool {
+	total := m.panelFocusCount()
+	if total <= 0 {
+		return false
+	}
+	current := m.panelFocusIndex()
+	next := current + delta
+	if wrap {
+		next = wrapIndex(current, delta, total)
+	} else {
+		next = clamp(next, 0, total-1)
+	}
+	if next == current {
+		return false
+	}
+	return m.setPanelFocusIndex(next, resetTask)
+}
+
+// normalizePanelFocus keeps panel focus and selections coherent after data/layout updates.
+func (m *Model) normalizePanelFocus() {
+	if len(m.columns) == 0 {
+		m.noticesFocused = false
+		m.selectedColumn = 0
+		m.selectedTask = 0
+		return
+	}
+	m.selectedColumn = clamp(m.selectedColumn, 0, len(m.columns)-1)
+	if !m.isNoticesPanelVisible() {
+		m.noticesFocused = false
+	}
+	if m.noticesFocused {
+		m.clampNoticesActivitySelection()
+	}
 }
 
 // bootstrapActorTypeIndex resolves one actor type to its canonical bootstrap option index.
@@ -4535,6 +4842,11 @@ func (m Model) handleNormalModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.toggleHelpOverlay()
 			return m, nil
 		}
+		if m.noticesFocused {
+			m.noticesFocused = false
+			m.status = "board focus"
+			return m, nil
+		}
 		if m.searchApplied || m.searchQuery != "" {
 			m.searchApplied = false
 			m.searchQuery = ""
@@ -4559,18 +4871,100 @@ func (m Model) handleNormalModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.reload):
 		m.status = "reloading..."
 		return m, m.loadData
+	case isForwardTabKey(msg):
+		if !m.cyclePanelFocus(1, true, true) {
+			m.status = "panel focus unchanged"
+			return m, nil
+		}
+		if m.noticesFocused {
+			m.status = "notices focus"
+		} else {
+			m.status = "board focus"
+		}
+		return m, nil
+	case isBackwardTabKey(msg):
+		if !m.cyclePanelFocus(-1, true, true) {
+			m.status = "panel focus unchanged"
+			return m, nil
+		}
+		if m.noticesFocused {
+			m.status = "notices focus"
+		} else {
+			m.status = "board focus"
+		}
+		return m, nil
 	case key.Matches(msg, m.keys.moveLeft):
-		if m.selectedColumn > 0 {
-			m.selectedColumn--
-			m.selectedTask = 0
+		if m.cyclePanelFocus(-1, false, true) {
+			if m.noticesFocused {
+				m.status = "notices focus"
+			} else {
+				m.status = "board focus"
+			}
 		}
 		return m, nil
 	case key.Matches(msg, m.keys.moveRight):
-		if m.selectedColumn < len(m.columns)-1 {
-			m.selectedColumn++
-			m.selectedTask = 0
+		if m.cyclePanelFocus(1, false, true) {
+			if m.noticesFocused {
+				m.status = "notices focus"
+			} else {
+				m.status = "board focus"
+			}
 		}
 		return m, nil
+	case key.Matches(msg, m.keys.toggleSelectMode):
+		m.toggleMouseSelectionMode()
+		return m, nil
+	}
+
+	if m.noticesFocused {
+		return m.handleNoticesPanelNormalKey(msg)
+	}
+	return m.handleBoardPanelNormalKey(msg)
+}
+
+// handleNoticesPanelNormalKey handles board-mode input while notices panel owns focus.
+func (m Model) handleNoticesPanelNormalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case key.Matches(msg, m.keys.moveDown):
+		entries := m.recentActivityPanelEntries()
+		if len(entries) == 0 {
+			m.status = "no recent activity"
+			return m, nil
+		}
+		if m.noticesActivity < len(entries)-1 {
+			m.noticesActivity++
+		}
+		return m, nil
+	case key.Matches(msg, m.keys.moveUp):
+		entries := m.recentActivityPanelEntries()
+		if len(entries) == 0 {
+			m.status = "no recent activity"
+			return m, nil
+		}
+		if m.noticesActivity > 0 {
+			m.noticesActivity--
+		}
+		return m, nil
+	case msg.Code == tea.KeyEnter || msg.String() == "enter":
+		entry, ok := m.selectedNoticesActivity()
+		if !ok {
+			m.status = "no recent activity"
+			return m, nil
+		}
+		m.activityInfoItem = entry
+		m.mode = modeActivityEventInfo
+		m.status = "activity event"
+		return m, nil
+	case key.Matches(msg, m.keys.activityLog):
+		return m, m.openActivityLog()
+	default:
+		return m, nil
+	}
+}
+
+// handleBoardPanelNormalKey handles board-mode input while a board column owns focus.
+func (m Model) handleBoardPanelNormalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch {
 	case key.Matches(msg, m.keys.moveDown):
 		tasks := m.currentColumnTasks()
 		if len(tasks) > 0 && m.selectedTask < len(tasks)-1 {
@@ -4712,9 +5106,6 @@ func (m Model) handleNormalModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.selectedTask = 0
 		m.clearSelection()
 		return m, m.loadData
-	case key.Matches(msg, m.keys.toggleSelectMode):
-		m.toggleMouseSelectionMode()
-		return m, nil
 	default:
 		return m, nil
 	}
@@ -4735,6 +5126,25 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.toggleHelpOverlay()
 		}
 		return m, nil
+	}
+
+	if m.mode == modeActivityEventInfo {
+		switch {
+		case msg.String() == "esc":
+			m.mode = modeNone
+			if m.isNoticesPanelVisible() {
+				_ = m.setPanelFocusIndex(len(m.columns), false)
+				m.status = "notices focus"
+			} else {
+				m.noticesFocused = false
+				m.status = "board focus"
+			}
+			return m, nil
+		case msg.Code == tea.KeyEnter || msg.String() == "enter" || msg.String() == "g":
+			return m.jumpToActivityNode()
+		default:
+			return m, nil
+		}
 	}
 
 	if m.mode == modeActivityLog {
@@ -7620,6 +8030,17 @@ func (m *Model) appendActivity(entry activityEntry) {
 	if strings.TrimSpace(entry.Target) == "" {
 		entry.Target = "-"
 	}
+	entry.ActorType = domain.ActorType(strings.TrimSpace(strings.ToLower(string(entry.ActorType))))
+	if entry.ActorType == "" {
+		entry.ActorType = domain.ActorTypeUser
+	}
+	if strings.TrimSpace(entry.ActorID) == "" {
+		entry.ActorID = strings.TrimSpace(m.identityDisplayName)
+		if entry.ActorID == "" {
+			entry.ActorID = "hakoll-user"
+		}
+	}
+	entry.Metadata = copyActivityMetadata(entry.Metadata)
 	m.activityLog = append(m.activityLog, entry)
 	if len(m.activityLog) > activityLogMaxItems {
 		m.activityLog = append([]activityEntry(nil), m.activityLog[len(m.activityLog)-activityLogMaxItems:]...)
@@ -8462,10 +8883,10 @@ func taskMatchesHierarchyLevel(task domain.Task, levels ...string) bool {
 	return false
 }
 
-// focusTaskByID focuses task by id.
-func (m *Model) focusTaskByID(taskID string) {
+// focusTaskByID focuses one task by id and reports whether it became selected.
+func (m *Model) focusTaskByID(taskID string) bool {
 	if strings.TrimSpace(taskID) == "" {
-		return
+		return false
 	}
 	var targetColIdx = -1
 	for idx, column := range m.columns {
@@ -8484,7 +8905,9 @@ func (m *Model) focusTaskByID(taskID string) {
 	}
 	if targetColIdx >= 0 {
 		m.clampSelections()
+		return true
 	}
+	return false
 }
 
 // activateSubtreeFocus enters focused scope mode and selects the first visible child when present.
@@ -8613,6 +9036,75 @@ func (m Model) selectedTaskHighlightColor() color.Color {
 	return lipgloss.Color(value)
 }
 
+// canFocusNoticesPanel reports whether the notices panel can accept keyboard focus.
+func (m Model) canFocusNoticesPanel() bool {
+	return m.isNoticesPanelVisible()
+}
+
+// recentActivityPanelEntries returns up to four newest activity entries for notices rendering/navigation.
+func (m Model) recentActivityPanelEntries() []activityEntry {
+	if len(m.activityLog) == 0 {
+		return nil
+	}
+	out := make([]activityEntry, 0, min(4, len(m.activityLog)))
+	for idx := len(m.activityLog) - 1; idx >= 0 && len(out) < 4; idx-- {
+		out = append(out, m.activityLog[idx])
+	}
+	return out
+}
+
+// clampNoticesActivitySelection keeps notices activity selection in bounds for current entries.
+func (m *Model) clampNoticesActivitySelection() {
+	entries := m.recentActivityPanelEntries()
+	m.noticesActivity = clamp(m.noticesActivity, 0, len(entries)-1)
+}
+
+// selectedNoticesActivity returns the currently selected notices-panel activity entry.
+func (m Model) selectedNoticesActivity() (activityEntry, bool) {
+	entries := m.recentActivityPanelEntries()
+	if len(entries) == 0 {
+		return activityEntry{}, false
+	}
+	idx := clamp(m.noticesActivity, 0, len(entries)-1)
+	return entries[idx], true
+}
+
+// normalizeActivityActorType canonicalizes actor types and defaults to user for display.
+func normalizeActivityActorType(actorType domain.ActorType) domain.ActorType {
+	actorType = domain.ActorType(strings.TrimSpace(strings.ToLower(string(actorType))))
+	switch actorType {
+	case domain.ActorTypeUser, domain.ActorTypeAgent, domain.ActorTypeSystem:
+		return actorType
+	default:
+		return domain.ActorTypeUser
+	}
+}
+
+// displayActivityOwner returns display-safe owner fields for activity rendering.
+func (m Model) displayActivityOwner(entry activityEntry) (domain.ActorType, string) {
+	actorType := normalizeActivityActorType(entry.ActorType)
+	actorID := strings.TrimSpace(entry.ActorID)
+	if actorType == domain.ActorTypeUser {
+		switch strings.ToLower(actorID) {
+		case "hakoll-user", "koll-user":
+			if name := strings.TrimSpace(m.identityDisplayName); name != "" {
+				actorID = name
+			}
+		}
+	}
+	if actorID == "" {
+		actorID = "unknown"
+	}
+	return actorType, actorID
+}
+
+// activityOwnerLabel returns a compact owner label used in notices rows.
+func (m Model) activityOwnerLabel(entry activityEntry, width int) string {
+	actorType, actorID := m.displayActivityOwner(entry)
+	label := string(actorType) + "|" + actorID
+	return truncate(label, max(8, width))
+}
+
 // renderOverviewPanel renders the right-side notices panel for board scope context.
 func (m Model) renderOverviewPanel(
 	project domain.Project,
@@ -8620,6 +9112,7 @@ func (m Model) renderOverviewPanel(
 	width int,
 	attentionItems, attentionTotal, attentionBlocked int,
 	attentionTop []string,
+	focused bool,
 ) string {
 	panelWidth := max(24, width)
 	contentWidth := max(12, panelWidth-6)
@@ -8675,22 +9168,34 @@ func (m Model) renderOverviewPanel(
 
 	lines = append(lines, "")
 	lines = append(lines, lipgloss.NewStyle().Bold(true).Foreground(accent).Render("Recent Activity"))
-	if len(m.activityLog) == 0 {
+	activityRows := m.recentActivityPanelEntries()
+	if len(activityRows) == 0 {
 		lines = append(lines, lipgloss.NewStyle().Foreground(muted).Render("(no activity yet)"))
 	} else {
-		rendered := 0
-		for idx := len(m.activityLog) - 1; idx >= 0 && rendered < 4; idx-- {
-			entry := m.activityLog[idx]
-			row := fmt.Sprintf("%s %s", formatActivityTimestamp(entry.At), entry.Summary)
-			lines = append(lines, lipgloss.NewStyle().Foreground(muted).Render(truncate(row, contentWidth)))
-			rendered++
+		selectedIdx := clamp(m.noticesActivity, 0, len(activityRows)-1)
+		selectedStyle := lipgloss.NewStyle().Foreground(accent).Bold(true)
+		normalStyle := lipgloss.NewStyle().Foreground(muted)
+		for idx, entry := range activityRows {
+			owner := m.activityOwnerLabel(entry, max(10, contentWidth/2))
+			row := truncate(owner+" "+entry.Summary, contentWidth)
+			style := normalStyle
+			if focused && idx == selectedIdx {
+				style = selectedStyle
+			}
+			lines = append(lines, style.Render(row))
 		}
 	}
-	lines = append(lines, "", lipgloss.NewStyle().Foreground(muted).Render("g opens full activity log"))
+	lines = append(lines, "")
+	lines = append(lines, lipgloss.NewStyle().Foreground(muted).Render("tab/shift+tab panels • enter details • g full activity log"))
+
+	borderColor := dim
+	if focused {
+		borderColor = accent
+	}
 
 	style := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(dim).
+		BorderForeground(borderColor).
 		Padding(1, 1).
 		Width(panelWidth)
 	return style.Render(strings.Join(lines, "\n"))
@@ -8735,7 +9240,7 @@ func (m Model) renderHelpOverlay(accent, muted, dim color.Color, _ lipgloss.Styl
 		width = 72
 	}
 	screenTitle, screenHelp := m.helpOverlayScreenTitleAndLines()
-	title := lipgloss.NewStyle().Bold(true).Foreground(accent).Render("KOLL Help")
+	title := lipgloss.NewStyle().Bold(true).Foreground(accent).Render("HA KOLL Help")
 	subtitle := lipgloss.NewStyle().Foreground(muted).Render("screen: " + screenTitle)
 	lines := []string{title, subtitle, ""}
 	for _, line := range screenHelp {
@@ -8771,6 +9276,7 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 			"space multi-select; [ / ] move task; d delete; D hard delete; u restore",
 			"f focus subtree; F full board; t toggle archived",
 			"/ search; p project picker; : command palette; . quick actions",
+			"tab/shift+tab cycle focused panel; left/right move adjacent panel; enter opens notices detail",
 			"ctrl+y toggles text selection mode; ctrl+c/ctrl+v copy/paste in text inputs",
 			"z undo; Z redo; g activity log; q quit",
 		}
@@ -8872,6 +9378,11 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 		return "activity log", []string{
 			"esc closes activity log",
 			"z undo and Z redo remain available",
+		}
+	case modeActivityEventInfo:
+		return "activity event", []string{
+			"enter/g jumps to event node when available",
+			"esc returns to notices panel focus",
 		}
 	case modeResourcePicker:
 		if m.resourcePickerBack == modeAddProject || m.resourcePickerBack == modeEditProject || m.resourcePickerBack == modePathsRoots || m.resourcePickerBack == modeBootstrapSettings {
@@ -9458,6 +9969,47 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 			}
 		}
 		lines = append(lines, hintStyle.Render("esc close • undo/redo available"))
+		return style.Render(strings.Join(lines, "\n"))
+
+	case modeActivityEventInfo:
+		style := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(accent).
+			Padding(0, 1)
+		if maxWidth > 0 {
+			style = style.Width(clamp(maxWidth, 54, 110))
+		}
+		titleStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
+		hintStyle := lipgloss.NewStyle().Foreground(muted)
+		entry := m.activityInfoItem
+		actorType, actorID := m.displayActivityOwner(entry)
+		operation := strings.TrimSpace(string(entry.Operation))
+		if operation == "" {
+			operation = "update"
+		}
+		nodeLabel, pathLabel := m.activityEventTargetDetails(entry)
+		lines := []string{
+			titleStyle.Render("Activity Event"),
+			hintStyle.Render("owner: " + string(actorType) + " • " + actorID),
+			hintStyle.Render("when: " + formatActivityTimestampLong(entry.At)),
+			hintStyle.Render("operation: " + operation),
+			hintStyle.Render("summary: " + entry.Summary),
+			hintStyle.Render("node: " + nodeLabel),
+			hintStyle.Render("path: " + pathLabel),
+		}
+		metaLines := m.formatActivityMetadata(entry)
+		if len(metaLines) > 0 {
+			lines = append(lines, "", hintStyle.Render("metadata"))
+			for _, line := range metaLines {
+				lines = append(lines, hintStyle.Render(line))
+			}
+		}
+		lines = append(lines, "")
+		if canJumpToActivityNode(entry) {
+			lines = append(lines, hintStyle.Render("enter/g go to node • esc back"))
+		} else {
+			lines = append(lines, hintStyle.Render("node reference unavailable • esc back"))
+		}
 		return style.Render(strings.Join(lines, "\n"))
 
 	case modeTaskInfo:
@@ -10532,6 +11084,8 @@ func (m Model) modeLabel() string {
 		return "actions"
 	case modeActivityLog:
 		return "activity"
+	case modeActivityEventInfo:
+		return "activity-event"
 	case modeConfirmAction:
 		return "confirm"
 	case modeWarning:
@@ -10586,6 +11140,8 @@ func (m Model) modePrompt() string {
 		return "quick actions: j/k select, enter run, esc close"
 	case modeActivityLog:
 		return "activity log: esc close"
+	case modeActivityEventInfo:
+		return "activity event: enter/g go to node, esc back"
 	case modeConfirmAction:
 		return "confirm action: enter confirm, esc cancel"
 	case modeWarning:
@@ -10634,6 +11190,162 @@ func formatActivityTimestamp(at time.Time) string {
 		return local.Format("01-02 15:04")
 	}
 	return local.Format("15:04:05")
+}
+
+// formatActivityTimestampLong formats activity timestamps for detailed event rendering.
+func formatActivityTimestampLong(at time.Time) string {
+	if at.IsZero() {
+		return "-"
+	}
+	return at.Local().Format(time.RFC3339)
+}
+
+// activityEventTargetDetails resolves user-facing node/path labels for one activity event.
+func (m Model) activityEventTargetDetails(entry activityEntry) (string, string) {
+	if task, ok := m.taskByID(strings.TrimSpace(entry.WorkItemID)); ok {
+		node := fallbackText(strings.TrimSpace(task.Title), "-")
+		return node, m.activityTaskPath(task)
+	}
+	node := fallbackText(strings.TrimSpace(entry.Target), "-")
+	if project, ok := m.currentProject(); ok {
+		projectLabel := projectDisplayName(project)
+		if projectLabel == "" {
+			projectLabel = "(project)"
+		}
+		if node == "-" {
+			return node, projectLabel
+		}
+		return node, projectLabel + " -> " + node
+	}
+	return node, node
+}
+
+// activityTaskPath builds a project-rooted path label for one task.
+func (m Model) activityTaskPath(task domain.Task) string {
+	chain := []string{fallbackText(strings.TrimSpace(task.Title), "(untitled)")}
+	visited := map[string]struct{}{task.ID: {}}
+	parentID := strings.TrimSpace(task.ParentID)
+	for parentID != "" {
+		if _, seen := visited[parentID]; seen {
+			break
+		}
+		parent, ok := m.taskByID(parentID)
+		if !ok {
+			break
+		}
+		visited[parentID] = struct{}{}
+		chain = append(chain, fallbackText(strings.TrimSpace(parent.Title), "(untitled)"))
+		parentID = strings.TrimSpace(parent.ParentID)
+	}
+	slices.Reverse(chain)
+	if project, ok := m.currentProject(); ok {
+		projectLabel := projectDisplayName(project)
+		if projectLabel != "" {
+			chain = append([]string{projectLabel}, chain...)
+		}
+	}
+	return strings.Join(chain, " -> ")
+}
+
+// activityColumnLabel resolves one column id to a display name with id fallback.
+func (m Model) activityColumnLabel(columnID string) string {
+	columnID = strings.TrimSpace(columnID)
+	if columnID == "" {
+		return "-"
+	}
+	for _, column := range m.columns {
+		if column.ID == columnID {
+			label := strings.TrimSpace(column.Name)
+			if label != "" {
+				return label
+			}
+			return columnID
+		}
+	}
+	return columnID
+}
+
+// formatActivityMetadata renders event metadata with human-readable values and concise fallbacks.
+func (m Model) formatActivityMetadata(entry activityEntry) []string {
+	if len(entry.Metadata) == 0 {
+		return nil
+	}
+	lines := make([]string, 0, len(entry.Metadata))
+	consumed := make(map[string]struct{}, len(entry.Metadata))
+	consume := func(keys ...string) {
+		for _, key := range keys {
+			consumed[key] = struct{}{}
+		}
+	}
+
+	columnID := strings.TrimSpace(entry.Metadata["column_id"])
+	fromColumnID := strings.TrimSpace(entry.Metadata["from_column_id"])
+	toColumnID := strings.TrimSpace(entry.Metadata["to_column_id"])
+	if fromColumnID != "" || toColumnID != "" {
+		lines = append(lines, "column: "+m.activityColumnLabel(fromColumnID)+" -> "+m.activityColumnLabel(toColumnID))
+		consume("from_column_id", "to_column_id", "from_position", "to_position")
+	} else if columnID != "" {
+		lines = append(lines, "column: "+m.activityColumnLabel(columnID))
+		consume("column_id", "position")
+	}
+
+	if changed := strings.TrimSpace(entry.Metadata["changed_fields"]); changed != "" {
+		parts := strings.Split(changed, ",")
+		for idx := range parts {
+			parts[idx] = strings.TrimSpace(parts[idx])
+		}
+		lines = append(lines, "changed fields: "+strings.Join(parts, ", "))
+		consume("changed_fields")
+	}
+
+	fromState := strings.TrimSpace(entry.Metadata["from_state"])
+	toState := strings.TrimSpace(entry.Metadata["to_state"])
+	if fromState != "" || toState != "" {
+		lines = append(lines, "state: "+lifecycleStateLabel(domain.LifecycleState(fromState))+" -> "+lifecycleStateLabel(domain.LifecycleState(toState)))
+		consume("from_state", "to_state")
+	}
+
+	consume("title")
+
+	for _, key := range sortedStringKeys(entry.Metadata) {
+		if _, skip := consumed[key]; skip {
+			continue
+		}
+		if strings.HasSuffix(key, "_id") || strings.HasSuffix(key, "_position") {
+			continue
+		}
+		value := strings.TrimSpace(entry.Metadata[key])
+		if value == "" {
+			continue
+		}
+		label := strings.ReplaceAll(strings.TrimSpace(key), "_", " ")
+		lines = append(lines, label+": "+value)
+	}
+	return lines
+}
+
+// fallbackText returns fallback when value is blank.
+func fallbackText(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
+}
+
+// sortedStringKeys returns deterministic ascending keys for map rendering.
+func sortedStringKeys(in map[string]string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(in))
+	for key := range in {
+		if strings.TrimSpace(key) == "" {
+			continue
+		}
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // columnWidth returns column width.

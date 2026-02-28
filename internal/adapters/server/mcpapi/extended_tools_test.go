@@ -15,6 +15,8 @@ import (
 // stubExpandedService provides deterministic responses for expanded MCP tool coverage tests.
 type stubExpandedService struct {
 	stubCaptureStateReader
+	lastUpdateTaskReq  common.UpdateTaskRequest
+	lastRestoreTaskReq common.RestoreTaskRequest
 }
 
 // GetBootstrapGuide returns one deterministic bootstrap payload.
@@ -90,7 +92,8 @@ func (s *stubExpandedService) CreateTask(_ context.Context, _ common.CreateTaskR
 }
 
 // UpdateTask returns one deterministic updated task row.
-func (s *stubExpandedService) UpdateTask(_ context.Context, _ common.UpdateTaskRequest) (domain.Task, error) {
+func (s *stubExpandedService) UpdateTask(_ context.Context, in common.UpdateTaskRequest) (domain.Task, error) {
+	s.lastUpdateTaskReq = in
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
 	return domain.Task{
 		ID:             "t1",
@@ -131,7 +134,8 @@ func (s *stubExpandedService) DeleteTask(_ context.Context, _ common.DeleteTaskR
 }
 
 // RestoreTask returns one deterministic restored row.
-func (s *stubExpandedService) RestoreTask(_ context.Context, _ string) (domain.Task, error) {
+func (s *stubExpandedService) RestoreTask(_ context.Context, in common.RestoreTaskRequest) (domain.Task, error) {
+	s.lastRestoreTaskReq = in
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
 	return domain.Task{
 		ID:             "t1",
@@ -454,6 +458,66 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		if isError, _ := callResp.Result["isError"].(bool); isError {
 			t.Fatalf("tool %q returned isError=true: %#v", tc.name, callResp.Result)
 		}
+	}
+}
+
+// TestHandlerExpandedToolForwardsActorTupleFields verifies actor tuple fields flow through update/restore tool requests.
+func TestHandlerExpandedToolForwardsActorTupleFields(t *testing.T) {
+	service := &stubExpandedService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+	}
+	handler, err := NewHandler(Config{}, service, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	_, updateResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(301, "koll.update_task", map[string]any{
+		"task_id":    "t1",
+		"title":      "Task One Updated",
+		"actor_type": "user",
+		"agent_name": "EVAN",
+	}))
+	if isError, _ := updateResp.Result["isError"].(bool); isError {
+		t.Fatalf("update_task returned isError=true: %#v", updateResp.Result)
+	}
+	if got := service.lastUpdateTaskReq.Actor.ActorType; got != "user" {
+		t.Fatalf("update_task actor_type = %q, want user", got)
+	}
+	if got := service.lastUpdateTaskReq.Actor.AgentName; got != "EVAN" {
+		t.Fatalf("update_task agent_name = %q, want EVAN", got)
+	}
+
+	_, restoreResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(302, "koll.restore_task", map[string]any{
+		"task_id":           "t1",
+		"actor_type":        "agent",
+		"agent_name":        "agent-1",
+		"agent_instance_id": "agent-1",
+		"lease_token":       "lease-1",
+		"override_token":    "override-1",
+	}))
+	if isError, _ := restoreResp.Result["isError"].(bool); isError {
+		t.Fatalf("restore_task returned isError=true: %#v", restoreResp.Result)
+	}
+	if got := service.lastRestoreTaskReq.Actor.ActorType; got != "agent" {
+		t.Fatalf("restore_task actor_type = %q, want agent", got)
+	}
+	if got := service.lastRestoreTaskReq.Actor.AgentName; got != "agent-1" {
+		t.Fatalf("restore_task agent_name = %q, want agent-1", got)
+	}
+	if got := service.lastRestoreTaskReq.Actor.AgentInstanceID; got != "agent-1" {
+		t.Fatalf("restore_task agent_instance_id = %q, want agent-1", got)
+	}
+	if got := service.lastRestoreTaskReq.Actor.LeaseToken; got != "lease-1" {
+		t.Fatalf("restore_task lease_token = %q, want lease-1", got)
+	}
+	if got := service.lastRestoreTaskReq.Actor.OverrideToken; got != "override-1" {
+		t.Fatalf("restore_task override_token = %q, want override-1", got)
 	}
 }
 

@@ -209,11 +209,15 @@ func (a *AppServiceAdapter) DeleteTask(ctx context.Context, in DeleteTaskRequest
 }
 
 // RestoreTask restores one archived task.
-func (a *AppServiceAdapter) RestoreTask(ctx context.Context, taskID string) (domain.Task, error) {
+func (a *AppServiceAdapter) RestoreTask(ctx context.Context, in RestoreTaskRequest) (domain.Task, error) {
 	if a == nil || a.service == nil {
 		return domain.Task{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
 	}
-	task, err := a.service.RestoreTask(ctx, strings.TrimSpace(taskID))
+	ctx, _, err := withMutationGuardContext(ctx, in.Actor)
+	if err != nil {
+		return domain.Task{}, err
+	}
+	task, err := a.service.RestoreTask(ctx, strings.TrimSpace(in.TaskID))
 	if err != nil {
 		return domain.Task{}, mapAppError("restore task", err)
 	}
@@ -513,8 +517,8 @@ func withMutationGuardContext(ctx context.Context, actor ActorLeaseTuple) (conte
 	agentInstanceID := strings.TrimSpace(actor.AgentInstanceID)
 	leaseToken := strings.TrimSpace(actor.LeaseToken)
 	overrideToken := strings.TrimSpace(actor.OverrideToken)
-	hasAnyGuardField := agentName != "" || agentInstanceID != "" || leaseToken != "" || overrideToken != ""
-	if hasAnyGuardField && actorType == domain.ActorTypeUser {
+	hasGuardTuple := agentInstanceID != "" || leaseToken != "" || overrideToken != ""
+	if hasGuardTuple && actorType == domain.ActorTypeUser {
 		// Preserve backward compatibility for guard-aware callers that omitted actor_type.
 		if requestedActorType == "" {
 			actorType = domain.ActorTypeAgent
@@ -523,7 +527,7 @@ func withMutationGuardContext(ctx context.Context, actor ActorLeaseTuple) (conte
 		}
 	}
 
-	if actorType != domain.ActorTypeUser || hasAnyGuardField {
+	if actorType != domain.ActorTypeUser || hasGuardTuple {
 		if agentName == "" || agentInstanceID == "" || leaseToken == "" {
 			return nil, "", fmt.Errorf("agent_name, agent_instance_id, and lease_token are required for non-user or guarded mutations: %w", ErrInvalidCaptureStateRequest)
 		}
@@ -532,6 +536,12 @@ func withMutationGuardContext(ctx context.Context, actor ActorLeaseTuple) (conte
 			AgentInstanceID: agentInstanceID,
 			LeaseToken:      leaseToken,
 			OverrideToken:   overrideToken,
+		})
+	}
+	if agentName != "" {
+		ctx = app.WithMutationActor(ctx, app.MutationActor{
+			ActorID:   agentName,
+			ActorType: actorType,
 		})
 	}
 	return ctx, actorType, nil

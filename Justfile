@@ -62,18 +62,7 @@ run:
 
 # Initialize a dev config file at the resolved --dev config path if missing.
 init-dev-config:
-  @cfg="$(./koll --dev paths | awk -F': ' '/^config:/{print $2}')"; \
-  if [ -z "$cfg" ]; then \
-    echo "could not resolve dev config path"; \
-    exit 1; \
-  fi; \
-  mkdir -p "$(dirname "$cfg")"; \
-  if [ -f "$cfg" ]; then \
-    echo "dev config already exists: $cfg"; \
-  else \
-    cp config.example.toml "$cfg"; \
-    echo "created dev config: $cfg"; \
-  fi
+  @./koll --dev init-dev-config
 
 # Delete the resolved --dev data directory (db/config/logs under that root).
 clean-dev:

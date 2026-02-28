@@ -35,6 +35,15 @@ func TestWithMutationGuardContext(t *testing.T) {
 			wantGuard:     false,
 		},
 		{
+			name: "user actor may provide agent_name attribution without guard tuple",
+			actor: ActorLeaseTuple{
+				ActorType: string(domain.ActorTypeUser),
+				AgentName: "evan",
+			},
+			wantActorType: domain.ActorTypeUser,
+			wantGuard:     false,
+		},
+		{
 			name: "explicit user actor with guard tuple is rejected",
 			actor: ActorLeaseTuple{
 				ActorType:       string(domain.ActorTypeUser),

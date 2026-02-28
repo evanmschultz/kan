@@ -458,13 +458,27 @@ func registerTaskTools(
 				"koll.restore_task",
 				mcp.WithDescription("Restore one archived task/work-item."),
 				mcp.WithString("task_id", mcp.Required(), mcp.Description("Task identifier")),
+				mcp.WithString("actor_type", mcp.Description("user|agent|system"), mcp.Enum("user", "agent", "system")),
+				mcp.WithString("agent_name", mcp.Description("Agent name for guarded calls")),
+				mcp.WithString("agent_instance_id", mcp.Description("Agent instance id for guarded calls")),
+				mcp.WithString("lease_token", mcp.Description("Lease token for guarded calls")),
+				mcp.WithString("override_token", mcp.Description("Optional override token")),
 			),
 			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 				taskID, err := req.RequireString("task_id")
 				if err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
 				}
-				task, err := tasks.RestoreTask(ctx, taskID)
+				task, err := tasks.RestoreTask(ctx, common.RestoreTaskRequest{
+					TaskID: taskID,
+					Actor: common.ActorLeaseTuple{
+						ActorType:       req.GetString("actor_type", ""),
+						AgentName:       req.GetString("agent_name", ""),
+						AgentInstanceID: req.GetString("agent_instance_id", ""),
+						LeaseToken:      req.GetString("lease_token", ""),
+						OverrideToken:   req.GetString("override_token", ""),
+					},
+				})
 				if err != nil {
 					return toolResultFromError(err), nil
 				}

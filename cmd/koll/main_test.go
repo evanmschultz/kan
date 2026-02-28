@@ -222,7 +222,7 @@ func TestRunRootHelp(t *testing.T) {
 	if !strings.Contains(output, "usage") || !strings.Contains(output, "koll [command]") {
 		t.Fatalf("expected root usage output, got %q", out.String())
 	}
-	for _, want := range []string{"serve", "export", "import", "paths"} {
+	for _, want := range []string{"serve", "export", "import", "paths", "init-dev-config"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("expected %q command in root help, got %q", want, out.String())
 		}
@@ -257,6 +257,11 @@ func TestRunSubcommandHelp(t *testing.T) {
 			name: "import",
 			args: []string{"import", "--help"},
 			want: []string{"koll import", "--in"},
+		},
+		{
+			name: "init-dev-config",
+			args: []string{"init-dev-config", "--help"},
+			want: []string{"koll init-dev-config", "create the dev config file"},
 		},
 	}
 
@@ -550,6 +555,109 @@ func TestRunConfigAndDBEnvOverrides(t *testing.T) {
 	}
 }
 
+// TestRunInitDevConfigCreatesDebugConfig verifies init-dev-config creates the dev config and enforces debug logging.
+func TestRunInitDevConfigCreatesDebugConfig(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, ".config"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(tmp, ".local", "share"))
+	t.Chdir(tmp)
+	if err := os.WriteFile(filepath.Join(tmp, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(go.mod) error = %v", err)
+	}
+	const example = `
+[database]
+path = "/tmp/ignored.db"
+
+[logging]
+level = "info"
+`
+	if err := os.WriteFile(filepath.Join(tmp, "config.example.toml"), []byte(example), 0o644); err != nil {
+		t.Fatalf("WriteFile(config.example.toml) error = %v", err)
+	}
+
+	var out strings.Builder
+	if err := run(context.Background(), []string{"--app", "hakoll-init", "init-dev-config"}, &out, io.Discard); err != nil {
+		t.Fatalf("run(init-dev-config) error = %v", err)
+	}
+
+	paths, err := platform.DefaultPathsWithOptions(platform.Options{AppName: "hakoll-init", DevMode: true})
+	if err != nil {
+		t.Fatalf("DefaultPathsWithOptions() error = %v", err)
+	}
+	if got := strings.TrimSpace(out.String()); got != fmt.Sprintf("created dev config: %s", paths.ConfigPath) {
+		t.Fatalf("unexpected init-dev-config output %q", got)
+	}
+
+	content, err := os.ReadFile(paths.ConfigPath)
+	if err != nil {
+		t.Fatalf("ReadFile(config) error = %v", err)
+	}
+	got := string(content)
+	if strings.Count(got, "[logging]") != 1 {
+		t.Fatalf("expected single [logging] section, got\n%s", got)
+	}
+	if !strings.Contains(got, "level = \"debug\"") {
+		t.Fatalf("expected debug logging level in config, got\n%s", got)
+	}
+}
+
+// TestRunInitDevConfigUpdatesExistingConfig verifies init-dev-config rewrites an existing logging section to debug.
+func TestRunInitDevConfigUpdatesExistingConfig(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("HOME", tmp)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, ".config"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(tmp, ".local", "share"))
+	t.Chdir(tmp)
+	if err := os.WriteFile(filepath.Join(tmp, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(go.mod) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "config.example.toml"), []byte("[database]\npath = \"/tmp/default.db\"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(config.example.toml) error = %v", err)
+	}
+
+	paths, err := platform.DefaultPathsWithOptions(platform.Options{AppName: "hakoll-init", DevMode: true})
+	if err != nil {
+		t.Fatalf("DefaultPathsWithOptions() error = %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(paths.ConfigPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll(config dir) error = %v", err)
+	}
+	const existing = `
+[logging]
+level = 'info'
+
+[identity]
+display_name = "Lane User"
+`
+	if err := os.WriteFile(paths.ConfigPath, []byte(existing), 0o644); err != nil {
+		t.Fatalf("WriteFile(existing config) error = %v", err)
+	}
+
+	var out strings.Builder
+	if err := run(context.Background(), []string{"--app", "hakoll-init", "init-dev-config"}, &out, io.Discard); err != nil {
+		t.Fatalf("run(init-dev-config existing) error = %v", err)
+	}
+	if got := strings.TrimSpace(out.String()); got != fmt.Sprintf("dev config already exists: %s", paths.ConfigPath) {
+		t.Fatalf("unexpected init-dev-config output %q", got)
+	}
+
+	content, err := os.ReadFile(paths.ConfigPath)
+	if err != nil {
+		t.Fatalf("ReadFile(config) error = %v", err)
+	}
+	got := string(content)
+	if strings.Count(got, "[logging]") != 1 {
+		t.Fatalf("expected single [logging] section, got\n%s", got)
+	}
+	if !strings.Contains(got, "level = \"debug\"") {
+		t.Fatalf("expected debug logging level in config, got\n%s", got)
+	}
+	if !strings.Contains(got, "[identity]") {
+		t.Fatalf("expected existing config sections to remain, got\n%s", got)
+	}
+}
+
 // TestRunPathsCommand verifies behavior for the covered scenario.
 func TestRunPathsCommand(t *testing.T) {
 	var out strings.Builder
@@ -837,6 +945,46 @@ func TestRunRejectsInvalidLoggingLevelFromConfig(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "invalid logging.level") {
 		t.Fatalf("expected logging level validation error, got %v", err)
+	}
+}
+
+// TestEnsureLoggingSectionDebug verifies TOML logging rewrite behavior across common config shapes.
+func TestEnsureLoggingSectionDebug(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want []string
+	}{
+		{
+			name: "replace existing level",
+			in:   "[logging]\nlevel = \"info\"\n\n[database]\npath = \"/tmp/hakoll.db\"\n",
+			want: []string{"[logging]", "level = \"debug\"", "[database]"},
+		},
+		{
+			name: "append missing level",
+			in:   "[logging]\n# comment\n\n[database]\npath = \"/tmp/hakoll.db\"\n",
+			want: []string{"[logging]", "level = \"debug\"", "[database]"},
+		},
+		{
+			name: "append missing section",
+			in:   "[database]\npath = \"/tmp/hakoll.db\"\n",
+			want: []string{"[database]", "[logging]", "level = \"debug\""},
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			got := ensureLoggingSectionDebug(tc.in)
+			if strings.Count(got, "[logging]") != 1 {
+				t.Fatalf("expected one [logging] section, got\n%s", got)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(got, want) {
+					t.Fatalf("expected %q in rewritten config, got\n%s", want, got)
+				}
+			}
+		})
 	}
 }
 

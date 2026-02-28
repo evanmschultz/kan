@@ -1042,13 +1042,19 @@ func (r *Repository) DeleteTask(ctx context.Context, id string) error {
 	if err := translateNoRows(res); err != nil {
 		return err
 	}
+	actorID := chooseActorID(task.UpdatedByActor, task.CreatedByActor)
+	actorType := normalizeActorType(task.UpdatedByType)
+	if mutationActor, ok := app.MutationActorFromContext(ctx); ok {
+		actorID = chooseActorID(mutationActor.ActorID, actorID)
+		actorType = normalizeActorType(mutationActor.ActorType)
+	}
 
 	err = insertTaskChangeEvent(ctx, tx, domain.ChangeEvent{
 		ProjectID:  task.ProjectID,
 		WorkItemID: task.ID,
 		Operation:  domain.ChangeOperationDelete,
-		ActorID:    chooseActorID(task.UpdatedByActor, task.CreatedByActor),
-		ActorType:  normalizeActorType(task.UpdatedByType),
+		ActorID:    actorID,
+		ActorType:  actorType,
 		Metadata: map[string]string{
 			"column_id": task.ColumnID,
 			"position":  strconv.Itoa(task.Position),

@@ -494,6 +494,7 @@ func (s *Service) MoveTask(ctx context.Context, taskID, toColumnID string, posit
 	if err := task.SetLifecycleState(toState, s.clock()); err != nil {
 		return domain.Task{}, err
 	}
+	applyMutationActorToTask(ctx, &task)
 	if err := s.repo.UpdateTask(ctx, task); err != nil {
 		return domain.Task{}, err
 	}
@@ -521,6 +522,7 @@ func (s *Service) RestoreTask(ctx context.Context, taskID string) (domain.Task, 
 	if err := task.SetLifecycleState(restoredState, s.clock()); err != nil {
 		return domain.Task{}, err
 	}
+	applyMutationActorToTask(ctx, &task)
 	if err := s.repo.UpdateTask(ctx, task); err != nil {
 		return domain.Task{}, err
 	}
@@ -539,6 +541,7 @@ func (s *Service) RenameTask(ctx context.Context, taskID, title string) (domain.
 	if err := task.UpdateDetails(title, task.Description, task.Priority, task.DueAt, task.Labels, s.clock()); err != nil {
 		return domain.Task{}, err
 	}
+	applyMutationActorToTask(ctx, &task)
 	if err := s.repo.UpdateTask(ctx, task); err != nil {
 		return domain.Task{}, err
 	}
@@ -561,6 +564,11 @@ func (s *Service) UpdateTask(ctx context.Context, in UpdateTaskInput) (domain.Ta
 	if err := s.enforceMutationGuard(ctx, task.ProjectID, actorType, domain.CapabilityScopeProject, task.ProjectID); err != nil {
 		return domain.Task{}, err
 	}
+	if updatedBy := strings.TrimSpace(in.UpdatedBy); updatedBy != "" {
+		task.UpdatedByActor = updatedBy
+		task.UpdatedByType = actorType
+	}
+	applyMutationActorToTask(ctx, &task)
 	priority := in.Priority
 	if strings.TrimSpace(string(priority)) == "" {
 		priority = task.Priority
@@ -580,7 +588,7 @@ func (s *Service) UpdateTask(ctx context.Context, in UpdateTaskInput) (domain.Ta
 		if _, validateErr := s.validateTaskKind(ctx, task.ProjectID, domain.KindID(task.Kind), task.Scope, parent, in.Metadata.KindPayload); validateErr != nil {
 			return domain.Task{}, validateErr
 		}
-		if err := task.UpdatePlanningMetadata(*in.Metadata, in.UpdatedBy, actorType, s.clock()); err != nil {
+		if err := task.UpdatePlanningMetadata(*in.Metadata, task.UpdatedByActor, task.UpdatedByType, s.clock()); err != nil {
 			return domain.Task{}, err
 		}
 	}
@@ -606,6 +614,7 @@ func (s *Service) DeleteTask(ctx context.Context, taskID string, mode DeleteMode
 			return err
 		}
 		task.Archive(s.clock())
+		applyMutationActorToTask(ctx, &task)
 		return s.repo.UpdateTask(ctx, task)
 	case DeleteModeHard:
 		task, err := s.repo.GetTask(ctx, taskID)
@@ -814,6 +823,7 @@ func (s *Service) ReparentTask(ctx context.Context, taskID, parentID string) (do
 	if err := task.Reparent(parentID, s.clock()); err != nil {
 		return domain.Task{}, err
 	}
+	applyMutationActorToTask(ctx, &task)
 	if err := s.repo.UpdateTask(ctx, task); err != nil {
 		return domain.Task{}, err
 	}
@@ -1171,6 +1181,21 @@ func normalizeActorTypeInput(actorType domain.ActorType) domain.ActorType {
 		return domain.ActorTypeUser
 	}
 	return actorType
+}
+
+// applyMutationActorToTask applies context-provided mutation actor metadata to a task.
+func applyMutationActorToTask(ctx context.Context, task *domain.Task) {
+	if task == nil {
+		return
+	}
+	actor, ok := MutationActorFromContext(ctx)
+	if !ok {
+		return
+	}
+	if actorID := strings.TrimSpace(actor.ActorID); actorID != "" {
+		task.UpdatedByActor = actorID
+	}
+	task.UpdatedByType = normalizeActorTypeInput(actor.ActorType)
 }
 
 // createDefaultColumns creates default columns.

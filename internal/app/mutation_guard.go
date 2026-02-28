@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"strings"
+
+	"github.com/hylla/hakoll/internal/domain"
 )
 
 // MutationGuard carries the capability-lease tuple required for agent mutations.
@@ -11,6 +13,12 @@ type MutationGuard struct {
 	AgentInstanceID string
 	LeaseToken      string
 	OverrideToken   string
+}
+
+// MutationActor carries normalized caller identity metadata for mutation attribution.
+type MutationActor struct {
+	ActorID   string
+	ActorType domain.ActorType
 }
 
 // WithMutationGuard attaches a normalized mutation guard to context.
@@ -36,6 +44,29 @@ func MutationGuardFromContext(ctx context.Context) (MutationGuard, bool) {
 // mutationGuardContextKey stores context keys for mutation guard values.
 type mutationGuardContextKey struct{}
 
+// WithMutationActor attaches normalized mutation-actor identity metadata to context.
+func WithMutationActor(ctx context.Context, actor MutationActor) context.Context {
+	actor = normalizeMutationActor(actor)
+	return context.WithValue(ctx, mutationActorContextKey{}, actor)
+}
+
+// MutationActorFromContext returns normalized mutation-actor metadata when present.
+func MutationActorFromContext(ctx context.Context) (MutationActor, bool) {
+	raw := ctx.Value(mutationActorContextKey{})
+	actor, ok := raw.(MutationActor)
+	if !ok {
+		return MutationActor{}, false
+	}
+	actor = normalizeMutationActor(actor)
+	if actor.ActorID == "" {
+		return MutationActor{}, false
+	}
+	return actor, true
+}
+
+// mutationActorContextKey stores context keys for mutation actor metadata.
+type mutationActorContextKey struct{}
+
 // WithMutationGuardRequired marks a context as requiring guard validation for non-user actors.
 func WithMutationGuardRequired(ctx context.Context) context.Context {
 	return context.WithValue(ctx, mutationGuardRequiredContextKey{}, true)
@@ -58,4 +89,16 @@ func normalizeMutationGuard(guard MutationGuard) MutationGuard {
 	guard.LeaseToken = strings.TrimSpace(guard.LeaseToken)
 	guard.OverrideToken = strings.TrimSpace(guard.OverrideToken)
 	return guard
+}
+
+// normalizeMutationActor trims and canonicalizes mutation actor metadata.
+func normalizeMutationActor(actor MutationActor) MutationActor {
+	actor.ActorID = strings.TrimSpace(actor.ActorID)
+	actor.ActorType = domain.ActorType(strings.TrimSpace(strings.ToLower(string(actor.ActorType))))
+	switch actor.ActorType {
+	case domain.ActorTypeUser, domain.ActorTypeAgent, domain.ActorTypeSystem:
+	default:
+		actor.ActorType = domain.ActorTypeUser
+	}
+	return actor
 }
