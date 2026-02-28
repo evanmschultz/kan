@@ -1,8 +1,11 @@
-# kan
+# hakoll
 
 A local-first Kanban TUI built with Bubble Tea v2, Bubbles v2, and Lip Gloss v2.
 
-`kan` is designed as a better human-visible planning and verification surface than ad-hoc markdown checklists. The primary direction is human + coding-agent collaboration with explicit state, auditability, and clear completion gates, while still remaining useful as a standalone personal TUI task manager.
+`hakoll` is named after the Swedish informal phrase `ha koll` ("keep an eye on").
+The project/repo name is `hakoll`, and the runtime command name is `koll`.
+
+`hakoll` is designed as a better human-visible planning and verification surface than ad-hoc markdown checklists. The primary direction is human + coding-agent collaboration with explicit state, auditability, and clear completion gates, while still remaining useful as a standalone personal TUI task manager.
 A core product purpose is maintaining one DB-backed source of truth for planning/execution state instead of fragmented markdown files.
 
 Current scope:
