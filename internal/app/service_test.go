@@ -1595,6 +1595,275 @@ func TestCreateTaskMutationGuardRequiredForAgent(t *testing.T) {
 	}
 }
 
+// TestScopedLeaseAllowsLineageMutations verifies branch/phase/task scoped lease behavior in-subtree.
+func TestScopedLeaseAllowsLineageMutations(t *testing.T) {
+	repo := newFakeRepo()
+	ids := []string{
+		"p1", "c1",
+		"branch-1", "phase-1", "task-1",
+		"lease-branch", "lease-token-branch",
+		"lease-phase", "lease-token-phase",
+		"task-2",
+		"lease-task", "lease-token-task",
+		"comment-1",
+	}
+	idx := 0
+	svc := NewService(repo, func() string {
+		id := ids[idx]
+		idx++
+		return id
+	}, func() time.Time {
+		return time.Date(2026, 2, 24, 10, 0, 0, 0, time.UTC)
+	}, ServiceConfig{DefaultDeleteMode: DeleteModeArchive})
+
+	project, err := svc.CreateProject(context.Background(), "Scoped", "")
+	if err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	column, err := svc.CreateColumn(context.Background(), project.ID, "To Do", 0, 0)
+	if err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+	branch, err := svc.CreateTask(context.Background(), CreateTaskInput{
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Kind:      domain.WorkKind("branch"),
+		Scope:     domain.KindAppliesToBranch,
+		Title:     "Branch A",
+		Priority:  domain.PriorityMedium,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask(branch) error = %v", err)
+	}
+	phase, err := svc.CreateTask(context.Background(), CreateTaskInput{
+		ProjectID: project.ID,
+		ParentID:  branch.ID,
+		ColumnID:  column.ID,
+		Kind:      domain.WorkKindPhase,
+		Scope:     domain.KindAppliesToPhase,
+		Title:     "Phase A",
+		Priority:  domain.PriorityMedium,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask(phase) error = %v", err)
+	}
+	task, err := svc.CreateTask(context.Background(), CreateTaskInput{
+		ProjectID: project.ID,
+		ParentID:  phase.ID,
+		ColumnID:  column.ID,
+		Kind:      domain.WorkKindTask,
+		Scope:     domain.KindAppliesToTask,
+		Title:     "Task A1",
+		Priority:  domain.PriorityMedium,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask(task) error = %v", err)
+	}
+
+	branchLease, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+		ProjectID:       project.ID,
+		ScopeType:       domain.CapabilityScopeBranch,
+		ScopeID:         branch.ID,
+		Role:            domain.CapabilityRoleWorker,
+		AgentName:       "branch-agent",
+		AgentInstanceID: "branch-agent",
+	})
+	if err != nil {
+		t.Fatalf("IssueCapabilityLease(branch) error = %v", err)
+	}
+	branchCtx := WithMutationGuard(context.Background(), MutationGuard{
+		AgentName:       branchLease.AgentName,
+		AgentInstanceID: branchLease.InstanceID,
+		LeaseToken:      branchLease.LeaseToken,
+	})
+	if _, err := svc.UpdateTask(branchCtx, UpdateTaskInput{
+		TaskID:      task.ID,
+		Title:       "Task A1",
+		Description: "branch-updated",
+		Priority:    domain.PriorityMedium,
+		UpdatedBy:   "branch-agent",
+		UpdatedType: domain.ActorTypeAgent,
+	}); err != nil {
+		t.Fatalf("UpdateTask(branch scoped) error = %v", err)
+	}
+
+	phaseLease, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+		ProjectID:       project.ID,
+		ScopeType:       domain.CapabilityScopePhase,
+		ScopeID:         phase.ID,
+		Role:            domain.CapabilityRoleWorker,
+		AgentName:       "phase-agent",
+		AgentInstanceID: "phase-agent",
+	})
+	if err != nil {
+		t.Fatalf("IssueCapabilityLease(phase) error = %v", err)
+	}
+	phaseCtx := WithMutationGuard(context.Background(), MutationGuard{
+		AgentName:       phaseLease.AgentName,
+		AgentInstanceID: phaseLease.InstanceID,
+		LeaseToken:      phaseLease.LeaseToken,
+	})
+	if _, err := svc.CreateTask(phaseCtx, CreateTaskInput{
+		ProjectID:      project.ID,
+		ParentID:       phase.ID,
+		ColumnID:       column.ID,
+		Kind:           domain.WorkKindTask,
+		Scope:          domain.KindAppliesToTask,
+		Title:          "Task A2",
+		Priority:       domain.PriorityMedium,
+		CreatedByActor: "phase-agent",
+		UpdatedByActor: "phase-agent",
+		UpdatedByType:  domain.ActorTypeAgent,
+	}); err != nil {
+		t.Fatalf("CreateTask(phase scoped) error = %v", err)
+	}
+
+	taskLease, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+		ProjectID:       project.ID,
+		ScopeType:       domain.CapabilityScopeTask,
+		ScopeID:         task.ID,
+		Role:            domain.CapabilityRoleWorker,
+		AgentName:       "task-agent",
+		AgentInstanceID: "task-agent",
+	})
+	if err != nil {
+		t.Fatalf("IssueCapabilityLease(task) error = %v", err)
+	}
+	taskCtx := WithMutationGuard(context.Background(), MutationGuard{
+		AgentName:       taskLease.AgentName,
+		AgentInstanceID: taskLease.InstanceID,
+		LeaseToken:      taskLease.LeaseToken,
+	})
+	if _, err := svc.CreateComment(taskCtx, CreateCommentInput{
+		ProjectID:    project.ID,
+		TargetType:   domain.CommentTargetTypeTask,
+		TargetID:     task.ID,
+		BodyMarkdown: "task scoped comment",
+		ActorType:    domain.ActorTypeAgent,
+		AuthorName:   "task-agent",
+	}); err != nil {
+		t.Fatalf("CreateComment(task scoped) error = %v", err)
+	}
+}
+
+// TestScopedLeaseRejectsSiblingMutations verifies out-of-scope sibling writes fail closed.
+func TestScopedLeaseRejectsSiblingMutations(t *testing.T) {
+	repo := newFakeRepo()
+	ids := []string{
+		"p1", "c1",
+		"branch-1", "phase-a", "phase-b",
+		"task-a", "task-b",
+		"lease-phase-a", "lease-token-phase-a",
+	}
+	idx := 0
+	svc := NewService(repo, func() string {
+		id := ids[idx]
+		idx++
+		return id
+	}, func() time.Time {
+		return time.Date(2026, 2, 24, 10, 0, 0, 0, time.UTC)
+	}, ServiceConfig{DefaultDeleteMode: DeleteModeArchive})
+
+	project, err := svc.CreateProject(context.Background(), "Scoped Deny", "")
+	if err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	column, err := svc.CreateColumn(context.Background(), project.ID, "To Do", 0, 0)
+	if err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+	branch, err := svc.CreateTask(context.Background(), CreateTaskInput{
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Kind:      domain.WorkKind("branch"),
+		Scope:     domain.KindAppliesToBranch,
+		Title:     "Branch",
+		Priority:  domain.PriorityMedium,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask(branch) error = %v", err)
+	}
+	phaseA, err := svc.CreateTask(context.Background(), CreateTaskInput{
+		ProjectID: project.ID,
+		ParentID:  branch.ID,
+		ColumnID:  column.ID,
+		Kind:      domain.WorkKindPhase,
+		Scope:     domain.KindAppliesToPhase,
+		Title:     "Phase A",
+		Priority:  domain.PriorityMedium,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask(phaseA) error = %v", err)
+	}
+	phaseB, err := svc.CreateTask(context.Background(), CreateTaskInput{
+		ProjectID: project.ID,
+		ParentID:  branch.ID,
+		ColumnID:  column.ID,
+		Kind:      domain.WorkKindPhase,
+		Scope:     domain.KindAppliesToPhase,
+		Title:     "Phase B",
+		Priority:  domain.PriorityMedium,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask(phaseB) error = %v", err)
+	}
+	taskB, err := svc.CreateTask(context.Background(), CreateTaskInput{
+		ProjectID: project.ID,
+		ParentID:  phaseB.ID,
+		ColumnID:  column.ID,
+		Kind:      domain.WorkKindTask,
+		Scope:     domain.KindAppliesToTask,
+		Title:     "Task B1",
+		Priority:  domain.PriorityMedium,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask(taskB) error = %v", err)
+	}
+
+	phaseALease, err := svc.IssueCapabilityLease(context.Background(), IssueCapabilityLeaseInput{
+		ProjectID:       project.ID,
+		ScopeType:       domain.CapabilityScopePhase,
+		ScopeID:         phaseA.ID,
+		Role:            domain.CapabilityRoleWorker,
+		AgentName:       "phase-a-agent",
+		AgentInstanceID: "phase-a-agent",
+	})
+	if err != nil {
+		t.Fatalf("IssueCapabilityLease(phaseA) error = %v", err)
+	}
+	phaseACtx := WithMutationGuard(context.Background(), MutationGuard{
+		AgentName:       phaseALease.AgentName,
+		AgentInstanceID: phaseALease.InstanceID,
+		LeaseToken:      phaseALease.LeaseToken,
+	})
+
+	if _, err := svc.UpdateTask(phaseACtx, UpdateTaskInput{
+		TaskID:      taskB.ID,
+		Title:       "Task B1",
+		Description: "out of scope",
+		Priority:    domain.PriorityMedium,
+		UpdatedBy:   "phase-a-agent",
+		UpdatedType: domain.ActorTypeAgent,
+	}); !errors.Is(err, domain.ErrMutationLeaseInvalid) {
+		t.Fatalf("UpdateTask(out of scope) error = %v, want ErrMutationLeaseInvalid", err)
+	}
+
+	if _, err := svc.CreateTask(phaseACtx, CreateTaskInput{
+		ProjectID:      project.ID,
+		ParentID:       phaseB.ID,
+		ColumnID:       column.ID,
+		Kind:           domain.WorkKindTask,
+		Scope:          domain.KindAppliesToTask,
+		Title:          "Task B2",
+		Priority:       domain.PriorityMedium,
+		CreatedByActor: "phase-a-agent",
+		UpdatedByActor: "phase-a-agent",
+		UpdatedByType:  domain.ActorTypeAgent,
+	}); !errors.Is(err, domain.ErrMutationLeaseInvalid) {
+		t.Fatalf("CreateTask(out of scope) error = %v, want ErrMutationLeaseInvalid", err)
+	}
+}
+
 // TestCreateTaskKindPayloadValidation verifies schema-based runtime validation for dynamic kinds.
 func TestCreateTaskKindPayloadValidation(t *testing.T) {
 	repo := newFakeRepo()

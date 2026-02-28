@@ -1269,3 +1269,135 @@ Commands and outcomes:
 
 Current status:
 - `just init-dev-config` output is now backslash-escaped and directly pasteable as requested.
+
+### 2026-02-28: Level-Scoped Guardrail Enforcement for Task/Comment Mutations
+
+Objective:
+- make mutation guardrails truly level-scoped for agent leases (project/branch/phase/subphase/task/subtask), not project-only for task/comment writes.
+
+Issue observed:
+1. `CreateTask`, `UpdateTask`, `MoveTask`, `DeleteTask`, `RestoreTask`, `ReparentTask`, and `CreateComment` were still enforcing guardrails against `project` scope only.
+2. This blocked intended phase/task scoped leases for subagent flows and produced ambiguous `mutation lease is invalid` failures.
+
+Implementation updates:
+1. `internal/app/mutation_scope.go` (new):
+   - added task-lineage scope resolution helper that derives allowed scope tuples from project + ancestor chain + node scope.
+2. `internal/app/kind_capability.go`:
+   - retained `enforceMutationGuard` API and routed it through new multi-scope enforcement helper.
+   - added `enforceMutationGuardAcrossScopes` to validate one lease tuple against a normalized allowed-scope set.
+   - expanded guardrail mismatch logging to include requested scope tuple set.
+3. `internal/app/service.go`:
+   - replaced project-only guard checks in task/comment mutation flows with lineage-derived scope candidate checks.
+   - create-under-parent now checks parent lineage.
+   - reparent now enforces permission for both the task lineage and destination parent lineage.
+4. `internal/app/service_test.go`:
+   - added `TestScopedLeaseAllowsLineageMutations`.
+   - added `TestScopedLeaseRejectsSiblingMutations`.
+
+Commands and outcomes:
+1. `just test-pkg ./internal/app` -> FAIL (`undefined: domain.WorkKindBranch` in new tests).
+2. Context7 re-check performed before next edit.
+3. `just fmt`.
+4. `just test-pkg ./internal/app` -> FAIL (`"task" does not apply to "branch"` in new tests).
+5. Context7 re-check performed before next edit.
+6. adjusted branch test fixtures to use explicit `kind="branch"` ID with `scope=branch`.
+7. `just fmt`.
+8. `just test-pkg ./internal/app` -> PASS.
+9. `just check` -> PASS.
+10. `just ci` -> PASS.
+
+Current status:
+- level-scoped lease guardrails now authorize by subtree lineage instead of project-only hardcoding for task/comment mutation paths.
+- full repo gates are green (`just check`, `just ci`).
+
+### 2026-02-28: Ownership Attribution Regression During Live MCP Validation (OPEN)
+
+Objective:
+- record critical collaborative test finding before next fix scope.
+
+Issue observed:
+1. Live MCP setup mutations executed without explicit actor lease tuple were attributed as `user` (`tillsyn-user`) instead of agent/orchestrator identity.
+2. This polluted ownership evidence during collaborative guardrail validation and made agent-vs-user provenance unreliable in TUI/Recent Activity.
+
+Status:
+- OPEN (discussion + fix design required before implementation).
+- user reset test data after observing misattribution.
+
+Follow-up requirements (next fix scope):
+1. ensure orchestrator test flow never executes mutation calls without explicit `actor_type=agent` + `agent_name` + `agent_instance_id` + `lease_token`.
+2. evaluate fail-closed transport/runtime option to block mutation requests with implicit user attribution when the caller intends agent orchestration mode.
+3. re-run MCP + subagent guardrail validation with strict ownership assertions and preserve evidence.
+
+### 2026-02-28: Subagent Execution Stall During Live Guardrail Validation (OPEN)
+
+Objective:
+- capture failed live subagent validation run and record next discussion/fix direction.
+
+Run context:
+1. User reset DB/state and restarted server + TUI for clean collaborative verification.
+2. Orchestrator issued explicit project-scoped lease and created branch/phase setup rows with agent attribution.
+3. Orchestrator issued explicit phase-scoped worker leases for two subagents.
+4. Two subagents were spawned with strict prompts (one in-scope create + one out-of-scope create each, no self-lease issuance).
+
+Failure observed:
+1. Both subagents ran for ~5 minutes without completing simple MCP mutation tasks.
+2. User interrupted execution due stall.
+3. This repeated prior behavior seen in earlier attempts (multi-minute stalls for simple actions).
+
+User findings/hypothesis:
+1. likely both prompting/orchestration issue and code/system issue.
+2. current gatekeeping flow feels too fragile/slow for practical collaborative workflows.
+3. discuss and evaluate an `Auth 2.0` model for gatekeeping.
+
+Auth 2.0 discussion backlog (explicit):
+1. re-evaluate stateless per-call tuple model versus session-bound authenticated identity context for subagent flows.
+2. design first-class orchestrator-to-subagent delegation handshake (server-issued, revocable, scope-bound grants) with clearer lifecycle.
+3. add deterministic guardrail stage observability:
+   - lease lookup,
+   - identity match,
+   - scope check,
+   - decision outcome,
+   - latency timing,
+   exposed as structured logs/events.
+4. define hard operational SLOs for automated lanes (for example first mutation within N seconds) and automatic timeout/escalation behavior.
+5. evaluate approval/gating UX for identity+scope grants so operator intent is explicit and auditable.
+
+Required follow-up:
+1. perform focused root-cause investigation for subagent stall:
+   - prompt contract quality,
+   - MCP tool invocation overhead/queueing,
+   - guardrail round-trip behavior under subagent execution.
+2. agree on Auth 2.0 target architecture before implementing broad auth/gatekeeping rewrite.
+3. preserve existing strict fail-closed guarantees while reducing orchestration friction/latency.
+
+### 2026-02-28: Activity Log Entity Labeling Fix (Branch/Phase/Subphase)
+
+Objective:
+- stop labeling every persisted work-item event as `* task` in notices recent activity and activity-log modal.
+
+Issue observed:
+1. branch/phase/subphase operations were displayed as `create task` / `update task` etc.
+2. this affected both notices panel recent activity rows and activity-log modal rows sourced from persisted change events.
+
+Implementation updates:
+1. `internal/adapters/storage/sqlite/repo.go`:
+   - enriched change-event metadata on create/update/delete with:
+     - `item_kind`
+     - `item_scope`
+     - `title` (ensured on update path too).
+2. `internal/tui/model.go`:
+   - replaced hardcoded `* task` summary mapping with `operation + entity` mapping.
+   - added `activityEntityLabel` helper to derive entity from event metadata (`item_scope` -> fallback `item_kind` -> fallback `task`).
+3. `internal/tui/model_test.go`:
+   - updated recent-activity owner-prefix test to verify scope-aware summary rendering (`update phase` when metadata scope is phase).
+
+Commands and outcomes:
+1. Context7 consulted before edits -> PASS.
+2. `just fmt` -> PASS.
+3. `just test-pkg ./internal/adapters/storage/sqlite` -> PASS.
+4. `just test-pkg ./internal/tui` -> PASS.
+5. `just check` -> PASS.
+6. `just ci` -> PASS.
+
+Current status:
+- persisted activity rows now render entity-aware summaries for branch/phase/subphase/task scope events instead of always `task`.

@@ -4199,13 +4199,16 @@ func TestModelRecentActivityPanelShowsOwnerPrefix(t *testing.T) {
 			Operation:  domain.ChangeOperationUpdate,
 			ActorID:    "agent-live-sync",
 			ActorType:  domain.ActorTypeAgent,
-			Metadata:   map[string]string{"title": task.Title},
+			Metadata: map[string]string{
+				"title":      task.Title,
+				"item_scope": "phase",
+			},
 			OccurredAt: now.Add(time.Minute),
 		},
 	}
 	m := loadReadyModel(t, NewModel(svc))
 	panel := stripANSI(m.renderOverviewPanel(p, lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), 80, 0, 0, 0, nil, false))
-	if !strings.Contains(panel, "agent|agent-live-sync update task") {
+	if !strings.Contains(panel, "agent|agent-live-sync update phase") {
 		t.Fatalf("expected owner-prefixed activity row, got %q", panel)
 	}
 }

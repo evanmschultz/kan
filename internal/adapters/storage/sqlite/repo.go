@@ -881,9 +881,11 @@ func (r *Repository) CreateTask(ctx context.Context, t domain.Task) error {
 		ActorID:    chooseActorID(t.CreatedByActor, t.UpdatedByActor),
 		ActorType:  normalizeActorType(t.UpdatedByType),
 		Metadata: map[string]string{
-			"column_id": t.ColumnID,
-			"position":  strconv.Itoa(t.Position),
-			"title":     t.Title,
+			"column_id":  t.ColumnID,
+			"position":   strconv.Itoa(t.Position),
+			"title":      t.Title,
+			"item_kind":  string(t.Kind),
+			"item_scope": string(scope),
 		},
 		OccurredAt: t.CreatedAt,
 	})
@@ -965,6 +967,9 @@ func (r *Repository) UpdateTask(ctx context.Context, t domain.Task) error {
 	}
 
 	op, metadata := classifyTaskTransition(prev, t)
+	metadata["title"] = t.Title
+	metadata["item_kind"] = string(t.Kind)
+	metadata["item_scope"] = string(scope)
 	err = insertTaskChangeEvent(ctx, tx, domain.ChangeEvent{
 		ProjectID:  t.ProjectID,
 		WorkItemID: t.ID,
@@ -1056,9 +1061,11 @@ func (r *Repository) DeleteTask(ctx context.Context, id string) error {
 		ActorID:    actorID,
 		ActorType:  actorType,
 		Metadata: map[string]string{
-			"column_id": task.ColumnID,
-			"position":  strconv.Itoa(task.Position),
-			"title":     task.Title,
+			"column_id":  task.ColumnID,
+			"position":   strconv.Itoa(task.Position),
+			"title":      task.Title,
+			"item_kind":  string(task.Kind),
+			"item_scope": string(task.Scope),
 		},
 		OccurredAt: time.Now().UTC(),
 	})

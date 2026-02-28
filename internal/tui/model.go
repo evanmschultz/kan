@@ -1668,21 +1668,22 @@ func mapChangeEventsToActivityEntries(events []domain.ChangeEvent) []activityEnt
 
 // mapChangeEventToActivityEntry derives a compact activity row from one persisted event.
 func mapChangeEventToActivityEntry(event domain.ChangeEvent) activityEntry {
-	summary := "update task"
+	operationVerb := "update"
 	switch event.Operation {
 	case domain.ChangeOperationCreate:
-		summary = "create task"
+		operationVerb = "create"
 	case domain.ChangeOperationUpdate:
-		summary = "update task"
+		operationVerb = "update"
 	case domain.ChangeOperationMove:
-		summary = "move task"
+		operationVerb = "move"
 	case domain.ChangeOperationArchive:
-		summary = "archive task"
+		operationVerb = "archive"
 	case domain.ChangeOperationRestore:
-		summary = "restore task"
+		operationVerb = "restore"
 	case domain.ChangeOperationDelete:
-		summary = "delete task"
+		operationVerb = "delete"
 	}
+	summary := fmt.Sprintf("%s %s", operationVerb, activityEntityLabel(event.Metadata))
 	target := strings.TrimSpace(event.Metadata["title"])
 	if target == "" {
 		target = strings.TrimSpace(event.WorkItemID)
@@ -1708,6 +1709,26 @@ func mapChangeEventToActivityEntry(event domain.ChangeEvent) activityEntry {
 		ActorID:    actorID,
 		ActorType:  actorType,
 		Metadata:   copyActivityMetadata(event.Metadata),
+	}
+}
+
+// activityEntityLabel derives one readable entity label from change-event metadata.
+func activityEntityLabel(metadata map[string]string) string {
+	if len(metadata) == 0 {
+		return "task"
+	}
+	label := strings.TrimSpace(strings.ToLower(metadata["item_scope"]))
+	if label == "" {
+		label = strings.TrimSpace(strings.ToLower(metadata["scope"]))
+	}
+	if label == "" {
+		label = strings.TrimSpace(strings.ToLower(metadata["item_kind"]))
+	}
+	switch label {
+	case "project", "branch", "phase", "subphase", "task", "subtask", "decision", "note":
+		return label
+	default:
+		return "task"
 	}
 }
 

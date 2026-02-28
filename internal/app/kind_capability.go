@@ -431,8 +431,18 @@ func (s *Service) ensureOrchestratorOverlapPolicy(ctx context.Context, project d
 	return nil
 }
 
-// enforceMutationGuard validates capability lease requirements for non-user actors.
+// enforceMutationGuard validates capability lease requirements for one requested scope tuple.
 func (s *Service) enforceMutationGuard(ctx context.Context, projectID string, actorType domain.ActorType, scopeType domain.CapabilityScopeType, scopeID string) error {
+	return s.enforceMutationGuardAcrossScopes(ctx, projectID, actorType, []mutationScopeCandidate{
+		{
+			ScopeType: scopeType,
+			ScopeID:   scopeID,
+		},
+	})
+}
+
+// enforceMutationGuardAcrossScopes validates capability lease requirements against allowed scopes.
+func (s *Service) enforceMutationGuardAcrossScopes(ctx context.Context, projectID string, actorType domain.ActorType, scopes []mutationScopeCandidate) error {
 	if !s.requireAgentLease {
 		return nil
 	}
@@ -474,8 +484,26 @@ func (s *Service) enforceMutationGuard(ctx context.Context, projectID string, ac
 		log.Error("mutation blocked: lease expired", "project_id", projectID, "agent_instance_id", guard.AgentInstanceID)
 		return domain.ErrMutationLeaseExpired
 	}
-	if !lease.MatchesScope(scopeType, strings.TrimSpace(scopeID)) {
-		log.Error("mutation blocked: lease scope mismatch", "project_id", projectID, "agent_instance_id", guard.AgentInstanceID, "lease_scope_type", lease.ScopeType, "lease_scope_id", lease.ScopeID, "requested_scope_type", scopeType, "requested_scope_id", scopeID)
+
+	normalizedScopes := make([]mutationScopeCandidate, 0, len(scopes)+1)
+	normalizedScopes = appendMutationScopeCandidate(normalizedScopes, newProjectMutationScopeCandidate(projectID))
+	for _, scope := range scopes {
+		normalizedScopes = appendMutationScopeCandidate(normalizedScopes, scope)
+	}
+
+	allowed := false
+	for _, scope := range normalizedScopes {
+		if lease.MatchesScope(scope.ScopeType, scope.ScopeID) {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		requestedScopes := make([]string, 0, len(normalizedScopes))
+		for _, scope := range normalizedScopes {
+			requestedScopes = append(requestedScopes, fmt.Sprintf("%s:%s", scope.ScopeType, scope.ScopeID))
+		}
+		log.Error("mutation blocked: lease scope mismatch", "project_id", projectID, "agent_instance_id", guard.AgentInstanceID, "lease_scope_type", lease.ScopeType, "lease_scope_id", lease.ScopeID, "requested_scopes", strings.Join(requestedScopes, ","))
 		return domain.ErrMutationLeaseInvalid
 	}
 	lease.Heartbeat(now)
