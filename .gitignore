@@ -1,13 +1,13 @@
 .DS_Store
 coverage.out
 dist/
-/kan
-/kan.exe
+/koll
+/koll.exe
 bin/
 .artifacts/
 .tmp/
 .go-cache
 .go-mod-cache/
 .go-build-cache/
-.kan/
+.hakoll/
 .codex/

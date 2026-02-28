@@ -129,7 +129,7 @@ func NewAttentionItem(in AttentionItemInput, now time.Time) (AttentionItem, erro
 
 	createdByActor := strings.TrimSpace(in.CreatedByActor)
 	if createdByActor == "" {
-		createdByActor = "kan-user"
+		createdByActor = "hakoll-user"
 	}
 	createdByType := normalizeActorTypeValue(in.CreatedByType)
 	if createdByType == "" {
@@ -276,7 +276,7 @@ func (item *AttentionItem) Resolve(resolvedBy string, resolvedByType ActorType, 
 	}
 	resolvedBy = strings.TrimSpace(resolvedBy)
 	if resolvedBy == "" {
-		resolvedBy = "kan-user"
+		resolvedBy = "hakoll-user"
 	}
 	resolvedByType = normalizeActorTypeValue(resolvedByType)
 	if resolvedByType == "" {

@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/evanschultz/kan/internal/app"
-	"github.com/evanschultz/kan/internal/domain"
+	"github.com/hylla/hakoll/internal/app"
+	"github.com/hylla/hakoll/internal/domain"
 	_ "modernc.org/sqlite"
 )
 
@@ -105,8 +105,8 @@ func (r *Repository) migrate(ctx context.Context) error {
 			due_at TEXT,
 			labels_json TEXT NOT NULL DEFAULT '[]',
 			metadata_json TEXT NOT NULL DEFAULT '{}',
-			created_by_actor TEXT NOT NULL DEFAULT 'kan-user',
-			updated_by_actor TEXT NOT NULL DEFAULT 'kan-user',
+			created_by_actor TEXT NOT NULL DEFAULT 'hakoll-user',
+			updated_by_actor TEXT NOT NULL DEFAULT 'hakoll-user',
 			updated_by_type TEXT NOT NULL DEFAULT 'user',
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL,
@@ -132,8 +132,8 @@ func (r *Repository) migrate(ctx context.Context) error {
 			due_at TEXT,
 			labels_json TEXT NOT NULL DEFAULT '[]',
 			metadata_json TEXT NOT NULL DEFAULT '{}',
-			created_by_actor TEXT NOT NULL DEFAULT 'kan-user',
-			updated_by_actor TEXT NOT NULL DEFAULT 'kan-user',
+			created_by_actor TEXT NOT NULL DEFAULT 'hakoll-user',
+			updated_by_actor TEXT NOT NULL DEFAULT 'hakoll-user',
 			updated_by_type TEXT NOT NULL DEFAULT 'user',
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL,
@@ -163,7 +163,7 @@ func (r *Repository) migrate(ctx context.Context) error {
 			target_id TEXT NOT NULL,
 			body_markdown TEXT NOT NULL,
 			actor_type TEXT NOT NULL DEFAULT 'user',
-			author_name TEXT NOT NULL DEFAULT 'kan-user',
+			author_name TEXT NOT NULL DEFAULT 'hakoll-user',
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL,
 			FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
@@ -216,7 +216,7 @@ func (r *Repository) migrate(ctx context.Context) error {
 			summary TEXT NOT NULL,
 			body_markdown TEXT NOT NULL DEFAULT '',
 			requires_user_action INTEGER NOT NULL DEFAULT 0,
-			created_by_actor TEXT NOT NULL DEFAULT 'kan-user',
+			created_by_actor TEXT NOT NULL DEFAULT 'hakoll-user',
 			created_by_type TEXT NOT NULL DEFAULT 'user',
 			created_at TEXT NOT NULL,
 			acknowledged_by_actor TEXT NOT NULL DEFAULT '',
@@ -258,8 +258,8 @@ func (r *Repository) migrate(ctx context.Context) error {
 		`ALTER TABLE tasks ADD COLUMN scope TEXT NOT NULL DEFAULT 'task'`,
 		`ALTER TABLE tasks ADD COLUMN lifecycle_state TEXT NOT NULL DEFAULT 'todo'`,
 		`ALTER TABLE tasks ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'`,
-		`ALTER TABLE tasks ADD COLUMN created_by_actor TEXT NOT NULL DEFAULT 'kan-user'`,
-		`ALTER TABLE tasks ADD COLUMN updated_by_actor TEXT NOT NULL DEFAULT 'kan-user'`,
+		`ALTER TABLE tasks ADD COLUMN created_by_actor TEXT NOT NULL DEFAULT 'hakoll-user'`,
+		`ALTER TABLE tasks ADD COLUMN updated_by_actor TEXT NOT NULL DEFAULT 'hakoll-user'`,
 		`ALTER TABLE tasks ADD COLUMN updated_by_type TEXT NOT NULL DEFAULT 'user'`,
 		`ALTER TABLE tasks ADD COLUMN started_at TEXT`,
 		`ALTER TABLE tasks ADD COLUMN completed_at TEXT`,
@@ -276,8 +276,8 @@ func (r *Repository) migrate(ctx context.Context) error {
 		`ALTER TABLE work_items ADD COLUMN scope TEXT NOT NULL DEFAULT 'task'`,
 		`ALTER TABLE work_items ADD COLUMN lifecycle_state TEXT NOT NULL DEFAULT 'todo'`,
 		`ALTER TABLE work_items ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'`,
-		`ALTER TABLE work_items ADD COLUMN created_by_actor TEXT NOT NULL DEFAULT 'kan-user'`,
-		`ALTER TABLE work_items ADD COLUMN updated_by_actor TEXT NOT NULL DEFAULT 'kan-user'`,
+		`ALTER TABLE work_items ADD COLUMN created_by_actor TEXT NOT NULL DEFAULT 'hakoll-user'`,
+		`ALTER TABLE work_items ADD COLUMN updated_by_actor TEXT NOT NULL DEFAULT 'hakoll-user'`,
 		`ALTER TABLE work_items ADD COLUMN updated_by_type TEXT NOT NULL DEFAULT 'user'`,
 		`ALTER TABLE work_items ADD COLUMN started_at TEXT`,
 		`ALTER TABLE work_items ADD COLUMN completed_at TEXT`,
@@ -1087,7 +1087,7 @@ func (r *Repository) CreateComment(ctx context.Context, comment domain.Comment) 
 
 	authorName := strings.TrimSpace(comment.AuthorName)
 	if authorName == "" {
-		authorName = "kan-user"
+		authorName = "hakoll-user"
 	}
 	createdAt := comment.CreatedAt
 	if createdAt.IsZero() {
@@ -1227,7 +1227,7 @@ func (r *Repository) CreateAttentionItem(ctx context.Context, item domain.Attent
 
 	createdBy := strings.TrimSpace(item.CreatedByActor)
 	if createdBy == "" {
-		createdBy = "kan-user"
+		createdBy = "hakoll-user"
 	}
 	createdByType := normalizeActorType(item.CreatedByType)
 	createdAt := item.CreatedAt.UTC()
@@ -1553,7 +1553,7 @@ func insertTaskChangeEvent(ctx context.Context, execer execerContext, event doma
 		event.ProjectID,
 		event.WorkItemID,
 		string(event.Operation),
-		chooseActorID(event.ActorID, "kan-user"),
+		chooseActorID(event.ActorID, "hakoll-user"),
 		string(normalizeActorType(event.ActorType)),
 		string(metadataJSON),
 		ts(normalizeEventTS(event.OccurredAt)),
@@ -1684,7 +1684,7 @@ func chooseActorID(candidates ...string) string {
 			return candidate
 		}
 	}
-	return "kan-user"
+	return "hakoll-user"
 }
 
 // normalizeActorType applies a default when actor type is unset or unsupported.
@@ -1851,7 +1851,7 @@ func scanTask(s scanner) (domain.Task, error) {
 		t.LifecycleState = domain.StateTodo
 	}
 	if strings.TrimSpace(t.CreatedByActor) == "" {
-		t.CreatedByActor = "kan-user"
+		t.CreatedByActor = "hakoll-user"
 	}
 	if strings.TrimSpace(t.UpdatedByActor) == "" {
 		t.UpdatedByActor = t.CreatedByActor
@@ -1895,7 +1895,7 @@ func scanComment(s scanner) (domain.Comment, error) {
 	comment.BodyMarkdown = strings.TrimSpace(comment.BodyMarkdown)
 	comment.AuthorName = strings.TrimSpace(comment.AuthorName)
 	if comment.AuthorName == "" {
-		comment.AuthorName = "kan-user"
+		comment.AuthorName = "hakoll-user"
 	}
 	comment.CreatedAt = parseTS(createdRaw)
 	comment.UpdatedAt = parseTS(updatedRaw)

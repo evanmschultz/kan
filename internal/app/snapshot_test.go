@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/evanschultz/kan/internal/domain"
+	"github.com/hylla/hakoll/internal/domain"
 )
 
 // TestExportSnapshotIncludesExpectedData verifies behavior for the covered scenario.
@@ -239,7 +239,7 @@ func TestImportSnapshotValidateErrors(t *testing.T) {
 	repo := newFakeRepo()
 	svc := NewService(repo, nil, time.Now, ServiceConfig{})
 
-	badVersion := Snapshot{Version: "kan.snapshot.v999"}
+	badVersion := Snapshot{Version: "hakoll.snapshot.v999"}
 	if err := svc.ImportSnapshot(context.Background(), badVersion); err == nil {
 		t.Fatal("expected version validation error")
 	}

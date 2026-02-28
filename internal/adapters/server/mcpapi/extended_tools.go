@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/evanschultz/kan/internal/adapters/server/common"
-	"github.com/evanschultz/kan/internal/domain"
+	"github.com/hylla/hakoll/internal/adapters/server/common"
+	"github.com/hylla/hakoll/internal/domain"
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 )
@@ -18,7 +18,7 @@ func registerBootstrapTool(srv *mcpserver.MCPServer, guide common.BootstrapGuide
 	}
 	srv.AddTool(
 		mcp.NewTool(
-			"kan.get_bootstrap_guide",
+			"koll.get_bootstrap_guide",
 			mcp.WithDescription("Return bootstrap guidance when no project context exists yet."),
 		),
 		func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -43,7 +43,7 @@ func registerProjectTools(srv *mcpserver.MCPServer, projects common.ProjectServi
 
 	srv.AddTool(
 		mcp.NewTool(
-			"kan.list_projects",
+			"koll.list_projects",
 			mcp.WithDescription("List projects."),
 			mcp.WithBoolean("include_archived", mcp.Description("Include archived projects")),
 		),
@@ -62,7 +62,7 @@ func registerProjectTools(srv *mcpserver.MCPServer, projects common.ProjectServi
 
 	srv.AddTool(
 		mcp.NewTool(
-			"kan.create_project",
+			"koll.create_project",
 			mcp.WithDescription("Create one project."),
 			mcp.WithString("name", mcp.Required(), mcp.Description("Project name")),
 			mcp.WithString("description", mcp.Description("Project description")),
@@ -118,7 +118,7 @@ func registerProjectTools(srv *mcpserver.MCPServer, projects common.ProjectServi
 
 	srv.AddTool(
 		mcp.NewTool(
-			"kan.update_project",
+			"koll.update_project",
 			mcp.WithDescription("Update one project."),
 			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
 			mcp.WithString("name", mcp.Required(), mcp.Description("Project name")),
@@ -189,7 +189,7 @@ func registerTaskTools(
 	if tasks != nil {
 		srv.AddTool(
 			mcp.NewTool(
-				"kan.list_tasks",
+				"koll.list_tasks",
 				mcp.WithDescription("List tasks/work-items for one project."),
 				mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
 				mcp.WithBoolean("include_archived", mcp.Description("Include archived tasks")),
@@ -213,7 +213,7 @@ func registerTaskTools(
 
 		srv.AddTool(
 			mcp.NewTool(
-				"kan.create_task",
+				"koll.create_task",
 				mcp.WithDescription("Create one task/work-item (branch|phase|subphase|task|subtask via scope/kind)."),
 				mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
 				mcp.WithString("column_id", mcp.Required(), mcp.Description("Column identifier")),
@@ -296,7 +296,7 @@ func registerTaskTools(
 
 		srv.AddTool(
 			mcp.NewTool(
-				"kan.update_task",
+				"koll.update_task",
 				mcp.WithDescription("Update one task/work-item."),
 				mcp.WithString("task_id", mcp.Required(), mcp.Description("Task identifier")),
 				mcp.WithString("title", mcp.Required(), mcp.Description("Task title")),
@@ -364,7 +364,7 @@ func registerTaskTools(
 
 		srv.AddTool(
 			mcp.NewTool(
-				"kan.move_task",
+				"koll.move_task",
 				mcp.WithDescription("Move one task/work-item to another column/position."),
 				mcp.WithString("task_id", mcp.Required(), mcp.Description("Task identifier")),
 				mcp.WithString("to_column_id", mcp.Required(), mcp.Description("Destination column identifier")),
@@ -413,7 +413,7 @@ func registerTaskTools(
 
 		srv.AddTool(
 			mcp.NewTool(
-				"kan.delete_task",
+				"koll.delete_task",
 				mcp.WithDescription("Delete one task/work-item (archive or hard)."),
 				mcp.WithString("task_id", mcp.Required(), mcp.Description("Task identifier")),
 				mcp.WithString("mode", mcp.Description("archive|hard"), mcp.Enum("archive", "hard")),
@@ -455,7 +455,7 @@ func registerTaskTools(
 
 		srv.AddTool(
 			mcp.NewTool(
-				"kan.restore_task",
+				"koll.restore_task",
 				mcp.WithDescription("Restore one archived task/work-item."),
 				mcp.WithString("task_id", mcp.Required(), mcp.Description("Task identifier")),
 			),
@@ -478,7 +478,7 @@ func registerTaskTools(
 
 		srv.AddTool(
 			mcp.NewTool(
-				"kan.reparent_task",
+				"koll.reparent_task",
 				mcp.WithDescription("Change parent relationship for one task/work-item."),
 				mcp.WithString("task_id", mcp.Required(), mcp.Description("Task identifier")),
 				mcp.WithString("parent_id", mcp.Description("New parent identifier (empty to unset where allowed)")),
@@ -517,7 +517,7 @@ func registerTaskTools(
 
 		srv.AddTool(
 			mcp.NewTool(
-				"kan.list_child_tasks",
+				"koll.list_child_tasks",
 				mcp.WithDescription("List child tasks for a parent scope."),
 				mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
 				mcp.WithString("parent_id", mcp.Required(), mcp.Description("Parent task identifier")),
@@ -548,7 +548,7 @@ func registerTaskTools(
 	if search != nil {
 		srv.AddTool(
 			mcp.NewTool(
-				"kan.search_task_matches",
+				"koll.search_task_matches",
 				mcp.WithDescription("Search task/work-item matches by query, states, and scope."),
 				mcp.WithString("project_id", mcp.Description("Project identifier for non-cross-project queries")),
 				mcp.WithString("query", mcp.Description("Search query")),
@@ -579,7 +579,7 @@ func registerTaskTools(
 	if changes != nil {
 		srv.AddTool(
 			mcp.NewTool(
-				"kan.list_project_change_events",
+				"koll.list_project_change_events",
 				mcp.WithDescription("List recent project change events."),
 				mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
 				mcp.WithNumber("limit", mcp.Description("Maximum rows to return")),
@@ -603,7 +603,7 @@ func registerTaskTools(
 
 		srv.AddTool(
 			mcp.NewTool(
-				"kan.get_project_dependency_rollup",
+				"koll.get_project_dependency_rollup",
 				mcp.WithDescription("Return dependency/blocking rollups for one project."),
 				mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
 			),
@@ -634,7 +634,7 @@ func registerKindTools(srv *mcpserver.MCPServer, kinds common.KindCatalogService
 
 	srv.AddTool(
 		mcp.NewTool(
-			"kan.list_kind_definitions",
+			"koll.list_kind_definitions",
 			mcp.WithDescription("List kind catalog definitions."),
 			mcp.WithBoolean("include_archived", mcp.Description("Include archived kind definitions")),
 		),
@@ -653,7 +653,7 @@ func registerKindTools(srv *mcpserver.MCPServer, kinds common.KindCatalogService
 
 	srv.AddTool(
 		mcp.NewTool(
-			"kan.upsert_kind_definition",
+			"koll.upsert_kind_definition",
 			mcp.WithDescription("Create or update one kind definition."),
 			mcp.WithString("id", mcp.Required(), mcp.Description("Kind identifier")),
 			mcp.WithString("display_name", mcp.Description("Kind display name")),
@@ -704,7 +704,7 @@ func registerKindTools(srv *mcpserver.MCPServer, kinds common.KindCatalogService
 
 	srv.AddTool(
 		mcp.NewTool(
-			"kan.set_project_allowed_kinds",
+			"koll.set_project_allowed_kinds",
 			mcp.WithDescription("Set explicit project allowed kind identifiers."),
 			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
 			mcp.WithArray("kind_ids", mcp.Required(), mcp.Description("Allowed kind id list"), mcp.WithStringItems()),
@@ -738,7 +738,7 @@ func registerKindTools(srv *mcpserver.MCPServer, kinds common.KindCatalogService
 
 	srv.AddTool(
 		mcp.NewTool(
-			"kan.list_project_allowed_kinds",
+			"koll.list_project_allowed_kinds",
 			mcp.WithDescription("List explicit project allowed kind identifiers."),
 			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
 		),
@@ -768,7 +768,7 @@ func registerCapabilityLeaseTools(srv *mcpserver.MCPServer, leases common.Capabi
 
 	srv.AddTool(
 		mcp.NewTool(
-			"kan.issue_capability_lease",
+			"koll.issue_capability_lease",
 			mcp.WithDescription("Issue one capability lease."),
 			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
 			mcp.WithString("scope_type", mcp.Required(), mcp.Description("project|branch|phase|subphase|task|subtask"), mcp.Enum(common.SupportedScopeTypes()...)),
@@ -823,7 +823,7 @@ func registerCapabilityLeaseTools(srv *mcpserver.MCPServer, leases common.Capabi
 
 	srv.AddTool(
 		mcp.NewTool(
-			"kan.heartbeat_capability_lease",
+			"koll.heartbeat_capability_lease",
 			mcp.WithDescription("Heartbeat one active capability lease."),
 			mcp.WithString("agent_instance_id", mcp.Required(), mcp.Description("Agent instance identifier")),
 			mcp.WithString("lease_token", mcp.Required(), mcp.Description("Lease token")),
@@ -854,7 +854,7 @@ func registerCapabilityLeaseTools(srv *mcpserver.MCPServer, leases common.Capabi
 
 	srv.AddTool(
 		mcp.NewTool(
-			"kan.renew_capability_lease",
+			"koll.renew_capability_lease",
 			mcp.WithDescription("Renew one capability lease expiry."),
 			mcp.WithString("agent_instance_id", mcp.Required(), mcp.Description("Agent instance identifier")),
 			mcp.WithString("lease_token", mcp.Required(), mcp.Description("Lease token")),
@@ -887,7 +887,7 @@ func registerCapabilityLeaseTools(srv *mcpserver.MCPServer, leases common.Capabi
 
 	srv.AddTool(
 		mcp.NewTool(
-			"kan.revoke_capability_lease",
+			"koll.revoke_capability_lease",
 			mcp.WithDescription("Revoke one capability lease by instance id."),
 			mcp.WithString("agent_instance_id", mcp.Required(), mcp.Description("Agent instance identifier")),
 			mcp.WithString("reason", mcp.Description("Optional revocation reason")),
@@ -914,7 +914,7 @@ func registerCapabilityLeaseTools(srv *mcpserver.MCPServer, leases common.Capabi
 
 	srv.AddTool(
 		mcp.NewTool(
-			"kan.revoke_all_capability_leases",
+			"koll.revoke_all_capability_leases",
 			mcp.WithDescription("Revoke all capability leases for one project scope."),
 			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
 			mcp.WithString("scope_type", mcp.Required(), mcp.Description("project|branch|phase|subphase|task|subtask"), mcp.Enum(common.SupportedScopeTypes()...)),
@@ -960,7 +960,7 @@ func registerCommentTools(srv *mcpserver.MCPServer, comments common.CommentServi
 
 	srv.AddTool(
 		mcp.NewTool(
-			"kan.create_comment",
+			"koll.create_comment",
 			mcp.WithDescription("Create one markdown comment for a project/task/subtask/phase/decision/note target."),
 			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
 			mcp.WithString("target_type", mcp.Required(), mcp.Description("project|task|subtask|phase|decision|note"), mcp.Enum("project", "task", "subtask", "phase", "decision", "note")),
@@ -1015,7 +1015,7 @@ func registerCommentTools(srv *mcpserver.MCPServer, comments common.CommentServi
 
 	srv.AddTool(
 		mcp.NewTool(
-			"kan.list_comments_by_target",
+			"koll.list_comments_by_target",
 			mcp.WithDescription("List comments for one target."),
 			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
 			mcp.WithString("target_type", mcp.Required(), mcp.Description("project|task|subtask|phase|decision|note"), mcp.Enum("project", "task", "subtask", "phase", "decision", "note")),

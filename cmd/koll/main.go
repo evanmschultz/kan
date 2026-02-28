@@ -14,14 +14,14 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	charmLog "github.com/charmbracelet/log"
-	serveradapter "github.com/evanschultz/kan/internal/adapters/server"
-	servercommon "github.com/evanschultz/kan/internal/adapters/server/common"
-	"github.com/evanschultz/kan/internal/adapters/storage/sqlite"
-	"github.com/evanschultz/kan/internal/app"
-	"github.com/evanschultz/kan/internal/config"
-	"github.com/evanschultz/kan/internal/platform"
-	"github.com/evanschultz/kan/internal/tui"
 	"github.com/google/uuid"
+	serveradapter "github.com/hylla/hakoll/internal/adapters/server"
+	servercommon "github.com/hylla/hakoll/internal/adapters/server/common"
+	"github.com/hylla/hakoll/internal/adapters/storage/sqlite"
+	"github.com/hylla/hakoll/internal/app"
+	"github.com/hylla/hakoll/internal/config"
+	"github.com/hylla/hakoll/internal/platform"
+	"github.com/hylla/hakoll/internal/tui"
 )
 
 // version stores a package-level helper value.
@@ -59,7 +59,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		stderr = io.Discard
 	}
 
-	fs := flag.NewFlagSet("kan", flag.ContinueOnError)
+	fs := flag.NewFlagSet("koll", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	var (
 		configPath string
@@ -69,13 +69,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		showVer    bool
 	)
 	defaultDevMode := version == "dev"
-	if envDev, ok := parseBoolEnv("KAN_DEV_MODE"); ok {
+	if envDev, ok := parseBoolEnv("KOLL_DEV_MODE"); ok {
 		defaultDevMode = envDev
 	}
-	if envApp := strings.TrimSpace(os.Getenv("KAN_APP_NAME")); envApp != "" {
+	if envApp := strings.TrimSpace(os.Getenv("KOLL_APP_NAME")); envApp != "" {
 		appName = envApp
 	} else {
-		appName = "kan"
+		appName = "hakoll"
 	}
 	fs.StringVar(&configPath, "config", "", "path to config TOML")
 	fs.StringVar(&dbPath, "db", "", "path to sqlite database")
@@ -87,7 +87,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 
 	if showVer {
-		_, _ = fmt.Fprintf(stdout, "kan %s\n", version)
+		_, _ = fmt.Fprintf(stdout, "koll %s\n", version)
 		return nil
 	}
 
@@ -116,14 +116,14 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 	dbOverridden := strings.TrimSpace(dbPath) != ""
 	if configPath == "" {
-		if envPath := strings.TrimSpace(os.Getenv("KAN_CONFIG")); envPath != "" {
+		if envPath := strings.TrimSpace(os.Getenv("KOLL_CONFIG")); envPath != "" {
 			configPath = envPath
 		} else {
 			configPath = paths.ConfigPath
 		}
 	}
 	if !dbOverridden {
-		if envPath := strings.TrimSpace(os.Getenv("KAN_DB_PATH")); envPath != "" {
+		if envPath := strings.TrimSpace(os.Getenv("KOLL_DB_PATH")); envPath != "" {
 			dbPath = envPath
 			dbOverridden = true
 		} else {
@@ -275,7 +275,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 // runServe runs the serve subcommand flow.
 func runServe(ctx context.Context, svc *app.Service, args []string, appName string) error {
-	fs := flag.NewFlagSet("kan serve", flag.ContinueOnError)
+	fs := flag.NewFlagSet("koll serve", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	var (
 		httpBind    string
@@ -307,7 +307,7 @@ func runServe(ctx context.Context, svc *app.Service, args []string, appName stri
 
 // runExport runs the requested command flow.
 func runExport(ctx context.Context, svc *app.Service, args []string, stdout io.Writer) error {
-	fs := flag.NewFlagSet("kan export", flag.ContinueOnError)
+	fs := flag.NewFlagSet("koll export", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	var (
 		outPath         string
@@ -349,7 +349,7 @@ func runExport(ctx context.Context, svc *app.Service, args []string, stdout io.W
 
 // runImport runs the requested command flow.
 func runImport(ctx context.Context, svc *app.Service, args []string) error {
-	fs := flag.NewFlagSet("kan import", flag.ContinueOnError)
+	fs := flag.NewFlagSet("koll import", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	var inPath string
 	fs.StringVar(&inPath, "in", "", "input snapshot JSON file")
@@ -694,7 +694,7 @@ func (l *runtimeLogger) Error(msg string, keyvals ...any) {
 func devLogFilePath(configDir, appName string, now time.Time) (string, error) {
 	baseDir := strings.TrimSpace(configDir)
 	if baseDir == "" {
-		baseDir = ".kan/log"
+		baseDir = ".hakoll/log"
 	}
 	if !filepath.IsAbs(baseDir) {
 		cwd, err := os.Getwd()
@@ -742,12 +742,12 @@ func hasWorkspaceMarker(dir string) bool {
 func sanitizeLogFileStem(appName string) string {
 	stem := strings.TrimSpace(appName)
 	if stem == "" {
-		return "kan"
+		return "hakoll"
 	}
 	replacer := strings.NewReplacer("/", "-", "\\", "-", ":", "-", " ", "-")
 	stem = strings.Trim(replacer.Replace(stem), "-")
 	if stem == "" {
-		return "kan"
+		return "hakoll"
 	}
 	return stem
 }

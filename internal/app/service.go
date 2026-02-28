@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/evanschultz/kan/internal/domain"
+	"github.com/hylla/hakoll/internal/domain"
 )
 
 // DeleteMode represents a selectable mode.

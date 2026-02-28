@@ -14,8 +14,8 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/evanschultz/kan/internal/app"
-	"github.com/evanschultz/kan/internal/domain"
+	"github.com/hylla/hakoll/internal/app"
+	"github.com/hylla/hakoll/internal/domain"
 )
 
 // fakeService represents fake service data used by this package.
@@ -1033,8 +1033,8 @@ func TestModelThreadCommentIdentityFallbacks(t *testing.T) {
 	if len(comments) != 1 {
 		t.Fatalf("expected one posted comment, got %#v", comments)
 	}
-	if comments[0].AuthorName != "kan-user" {
-		t.Fatalf("expected fallback author name kan-user, got %q", comments[0].AuthorName)
+	if comments[0].AuthorName != "koll-user" {
+		t.Fatalf("expected fallback author name koll-user, got %q", comments[0].AuthorName)
 	}
 	if comments[0].ActorType != domain.ActorTypeUser {
 		t.Fatalf("expected fallback actor type user, got %q", comments[0].ActorType)
@@ -1153,7 +1153,7 @@ func TestModelLabelsConfigCommandSave(t *testing.T) {
 		svc,
 		WithLabelConfig(LabelConfig{
 			Global:   []string{"bug"},
-			Projects: map[string][]string{"inbox": {"kan"}},
+			Projects: map[string][]string{"inbox": {"koll"}},
 		}),
 		WithSaveLabelsConfigCallback(func(projectSlug string, globalLabels, projectLabels []string) error {
 			saveCalls++
@@ -1174,7 +1174,7 @@ func TestModelLabelsConfigCommandSave(t *testing.T) {
 	}
 
 	m.labelsConfigInputs[0].SetValue("Bug, chore, bug")
-	m.labelsConfigInputs[1].SetValue("Roadmap, kan, roadmap")
+	m.labelsConfigInputs[1].SetValue("Roadmap, koll, roadmap")
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
 	if saveCalls != 1 {
@@ -1192,7 +1192,7 @@ func TestModelLabelsConfigCommandSave(t *testing.T) {
 			t.Fatalf("unexpected saved global label at %d: got %q want %q", i, savedGlobal[i], wantGlobal[i])
 		}
 	}
-	wantProject := []string{"roadmap", "kan"}
+	wantProject := []string{"roadmap", "koll"}
 	if len(savedProject) != len(wantProject) {
 		t.Fatalf("unexpected saved project labels %#v", savedProject)
 	}
@@ -3639,7 +3639,7 @@ func TestModelFormValidationPaths(t *testing.T) {
 
 	// Add mode: success path.
 	m.formInputs[3].SetValue("2026-03-01")
-	m.formInputs[4].SetValue("planning,kan")
+	m.formInputs[4].SetValue("planning,koll")
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if len(svc.tasks[p.ID]) != 2 {
 		t.Fatalf("expected create task success, got %d tasks", len(svc.tasks[p.ID]))
@@ -3805,7 +3805,7 @@ func TestTaskFormLabelSuggestions(t *testing.T) {
 		Position:  0,
 		Title:     "Task 1",
 		Priority:  domain.PriorityMedium,
-		Labels:    []string{"planning", "kan"},
+		Labels:    []string{"planning", "koll"},
 	}, now)
 	t2, _ := domain.NewTask(domain.TaskInput{
 		ID:        "t2",
@@ -3814,7 +3814,7 @@ func TestTaskFormLabelSuggestions(t *testing.T) {
 		Position:  1,
 		Title:     "Task 2",
 		Priority:  domain.PriorityMedium,
-		Labels:    []string{"kan", "roadmap"},
+		Labels:    []string{"koll", "roadmap"},
 	}, now)
 	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{t1, t2})
 	m := loadReadyModel(t, NewModel(svc))
@@ -3828,8 +3828,8 @@ func TestTaskFormLabelSuggestions(t *testing.T) {
 	if !strings.Contains(out, "suggested labels:") {
 		t.Fatalf("expected suggested labels hint, got %q", out)
 	}
-	if !strings.Contains(out, "kan") {
-		t.Fatalf("expected label suggestions to include 'kan', got %q", out)
+	if !strings.Contains(out, "koll") {
+		t.Fatalf("expected label suggestions to include 'koll', got %q", out)
 	}
 }
 

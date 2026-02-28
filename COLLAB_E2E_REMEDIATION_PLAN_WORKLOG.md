@@ -422,7 +422,7 @@ Tracking protocol (locked for this remediation wave):
 - [ ] Orchestrator check
 - Lane: `W-GUARD-RESTORE`
 - Deliverables:
-  1. `kan_restore_task` request path enforces/provides required actor+lease tuple.
+  1. `koll_restore_task` request path enforces/provides required actor+lease tuple.
   2. Guardrail behavior aligns with actor model (user vs agent).
   3. Automated test coverage for this contract.
 - Evidence:

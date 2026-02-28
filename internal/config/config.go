@@ -21,7 +21,7 @@ const (
 	DeleteModeArchive DeleteMode = "archive"
 	DeleteModeHard    DeleteMode = "hard"
 	defaultLogLevel              = "info"
-	defaultDevLogDir             = ".kan/log"
+	defaultDevLogDir             = ".hakoll/log"
 	defaultActorType             = "user"
 )
 

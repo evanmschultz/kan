@@ -1,4 +1,4 @@
-module github.com/evanschultz/kan
+module github.com/hylla/hakoll
 
 go 1.26.0
 

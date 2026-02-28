@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/evanschultz/kan/internal/domain"
+	"github.com/hylla/hakoll/internal/domain"
 )
 
 // CaptureStateView identifies the sizing profile used by CaptureState.

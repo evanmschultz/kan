@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/evanschultz/kan/internal/app"
-	"github.com/evanschultz/kan/internal/domain"
+	"github.com/hylla/hakoll/internal/app"
+	"github.com/hylla/hakoll/internal/domain"
 )
 
 // GetBootstrapGuide returns summary-first onboarding guidance for empty-instance flows.
@@ -27,15 +27,15 @@ func (a *AppServiceAdapter) GetBootstrapGuide(_ context.Context) (BootstrapGuide
 			"Capability lease issuance and guardrailed non-user mutations",
 		},
 		NextSteps: []string{
-			"Create a project with kan.create_project",
-			"Create level-scoped work items with kan.create_task",
-			"Call kan.capture_state to reorient and continue safely",
+			"Create a project with koll.create_project",
+			"Create level-scoped work items with koll.create_task",
+			"Call koll.capture_state to reorient and continue safely",
 		},
 		Recommended: []string{
-			"kan.list_projects",
-			"kan.create_project",
-			"kan.create_task",
-			"kan.capture_state",
+			"koll.list_projects",
+			"koll.create_project",
+			"koll.create_task",
+			"koll.capture_state",
 		},
 		RoadmapNotice: "Import/export transport-closure and advanced conflict tooling remain roadmap-only for this wave.",
 	}, nil

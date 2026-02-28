@@ -19,8 +19,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/atotto/clipboard"
-	"github.com/evanschultz/kan/internal/app"
-	"github.com/evanschultz/kan/internal/domain"
+	"github.com/hylla/hakoll/internal/app"
+	"github.com/hylla/hakoll/internal/domain"
 )
 
 // Service represents service data used by this package.
@@ -111,7 +111,7 @@ const (
 	activityLogViewWindow = 14
 	defaultHighlightColor = "212"
 	// headerMarkText defines the boxed brand wordmark shown in the board header.
-	headerMarkText = "KAN"
+	headerMarkText = "KOLL"
 	// tuiOuterHorizontalPadding keeps a small symmetric outer gutter around the whole TUI.
 	tuiOuterHorizontalPadding = 1
 	// boardColumnGapWidth is the horizontal spacing between adjacent board columns.
@@ -653,7 +653,7 @@ func NewModel(svc Service, opts ...Option) Model {
 		allowedLabelProject:      map[string][]string{},
 		searchRoots:              []string{},
 		projectRoots:             map[string]string{},
-		identityDisplayName:      "kan-user",
+		identityDisplayName:      "koll-user",
 		identityDefaultActorType: string(domain.ActorTypeUser),
 		bootstrapActorIndex:      0,
 		bootstrapRoots:           []string{},
@@ -981,7 +981,7 @@ func (m Model) View() tea.View {
 		helpStyle := lipgloss.NewStyle().Foreground(muted)
 		statusStyle := lipgloss.NewStyle().Foreground(dim)
 		sections := []string{
-			titleStyle.Render("kan"),
+			titleStyle.Render("koll"),
 			"",
 			"No projects yet.",
 			"Press N to create your first project.",
@@ -2631,7 +2631,7 @@ func commandPaletteItems() []commandPaletteItem {
 		{Command: "highlight-color", Aliases: []string{"set-highlight", "focus-color"}, Description: "set focused-row highlight color"},
 		{Command: "activity-log", Aliases: []string{"log"}, Description: "open recent activity modal"},
 		{Command: "help", Aliases: []string{}, Description: "open help modal"},
-		{Command: "quit", Aliases: []string{"exit"}, Description: "quit kan"},
+		{Command: "quit", Aliases: []string{"exit"}, Description: "quit koll"},
 	}
 }
 
@@ -8735,7 +8735,7 @@ func (m Model) renderHelpOverlay(accent, muted, dim color.Color, _ lipgloss.Styl
 		width = 72
 	}
 	screenTitle, screenHelp := m.helpOverlayScreenTitleAndLines()
-	title := lipgloss.NewStyle().Bold(true).Foreground(accent).Render("KAN Help")
+	title := lipgloss.NewStyle().Bold(true).Foreground(accent).Render("KOLL Help")
 	subtitle := lipgloss.NewStyle().Foreground(muted).Render("screen: " + screenTitle)
 	lines := []string{title, subtitle, ""}
 	for _, line := range screenHelp {

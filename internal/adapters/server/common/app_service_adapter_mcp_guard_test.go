@@ -7,8 +7,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/evanschultz/kan/internal/app"
-	"github.com/evanschultz/kan/internal/domain"
+	"github.com/hylla/hakoll/internal/app"
+	"github.com/hylla/hakoll/internal/domain"
 )
 
 // TestWithMutationGuardContext validates actor-type and lease tuple normalization/guarding.

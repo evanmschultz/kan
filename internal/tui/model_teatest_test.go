@@ -9,7 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/exp/teatest/v2"
-	"github.com/evanschultz/kan/internal/domain"
+	"github.com/hylla/hakoll/internal/domain"
 )
 
 // TestModelWithTeatest verifies behavior for the covered scenario.
@@ -164,7 +164,7 @@ func TestModelGoldenHelpExpandedOutput(t *testing.T) {
 
 	tm.Send(tea.KeyPressMsg{Code: '?', Text: "?"})
 	teatest.WaitFor(t, stream, func(out []byte) bool {
-		return strings.Contains(string(out), "KAN Help")
+		return strings.Contains(string(out), "KOLL Help")
 	}, teatest.WithDuration(2*time.Second), teatest.WithCheckInterval(10*time.Millisecond))
 
 	tm.Send(tea.KeyPressMsg{Code: 'q', Text: "q"})

@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/evanschultz/kan/internal/adapters/server/common"
+	"github.com/hylla/hakoll/internal/adapters/server/common"
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
 )
@@ -74,7 +74,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func normalizeConfig(cfg Config) Config {
 	cfg.ServerName = strings.TrimSpace(cfg.ServerName)
 	if cfg.ServerName == "" {
-		cfg.ServerName = "kan"
+		cfg.ServerName = "hakoll"
 	}
 	cfg.ServerVersion = strings.TrimSpace(cfg.ServerVersion)
 	if cfg.ServerVersion == "" {
@@ -91,11 +91,11 @@ func normalizeConfig(cfg Config) Config {
 	return cfg
 }
 
-// registerCaptureStateTool registers the `kan.capture_state` tool.
+// registerCaptureStateTool registers the `koll.capture_state` tool.
 func registerCaptureStateTool(srv *mcpserver.MCPServer, captureState common.CaptureStateReader) {
 	srv.AddTool(
 		mcp.NewTool(
-			"kan.capture_state",
+			"koll.capture_state",
 			mcp.WithDescription("Return a summary-first state capture for one scoped level tuple."),
 			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
 			mcp.WithString("scope_type", mcp.Description("Scope type"), mcp.Enum(common.SupportedScopeTypes()...)),
@@ -129,7 +129,7 @@ func registerCaptureStateTool(srv *mcpserver.MCPServer, captureState common.Capt
 func registerAttentionTools(srv *mcpserver.MCPServer, attention common.AttentionService) {
 	srv.AddTool(
 		mcp.NewTool(
-			"kan.list_attention_items",
+			"koll.list_attention_items",
 			mcp.WithDescription("List attention items for a project scope."),
 			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
 			mcp.WithString("scope_type", mcp.Description("Scope type")),
@@ -162,7 +162,7 @@ func registerAttentionTools(srv *mcpserver.MCPServer, attention common.Attention
 
 	srv.AddTool(
 		mcp.NewTool(
-			"kan.raise_attention_item",
+			"koll.raise_attention_item",
 			mcp.WithDescription("Create a new attention item for a project scope."),
 			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
 			mcp.WithString("scope_type", mcp.Required(), mcp.Description("Scope type")),
@@ -215,7 +215,7 @@ func registerAttentionTools(srv *mcpserver.MCPServer, attention common.Attention
 
 	srv.AddTool(
 		mcp.NewTool(
-			"kan.resolve_attention_item",
+			"koll.resolve_attention_item",
 			mcp.WithDescription("Resolve one attention item by id."),
 			mcp.WithString("id", mcp.Required(), mcp.Description("Attention item id")),
 			mcp.WithString("resolved_by", mcp.Description("Actor resolving the item")),

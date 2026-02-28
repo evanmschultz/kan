@@ -6,10 +6,10 @@ Set Width 1200
 Set Height 720
 Set Framerate 30
 
-Type "rm -f /tmp/kan-vhs-regression-subtasks.db"
+Type "rm -f /tmp/koll-vhs-regression-subtasks.db"
 Enter
 Sleep 300ms
-Type "KAN_DB_PATH=/tmp/kan-vhs-regression-subtasks.db ./kan"
+Type "KOLL_DB_PATH=/tmp/koll-vhs-regression-subtasks.db ./koll"
 Enter
 Sleep 1200ms
 

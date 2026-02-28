@@ -8,8 +8,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/evanschultz/kan/internal/app"
-	"github.com/evanschultz/kan/internal/domain"
+	"github.com/hylla/hakoll/internal/app"
+	"github.com/hylla/hakoll/internal/domain"
 )
 
 // renderThreadModeView renders the full-screen project/work-item thread view.
@@ -30,7 +30,7 @@ func (m Model) renderThreadModeView() tea.View {
 	if threadTitle == "" {
 		threadTitle = "(untitled thread)"
 	}
-	header := titleStyle.Render("kan thread") + "  " + threadTitle + statusStyle.Render("  ["+m.modeLabel()+"]")
+	header := titleStyle.Render("koll thread") + "  " + threadTitle + statusStyle.Render("  ["+m.modeLabel()+"]")
 	targetLine := hintStyle.Render(fmt.Sprintf("target: %s/%s  comments: %d", m.threadTarget.TargetType, m.threadTarget.TargetID, len(m.threadComments)))
 
 	wrapWidth := max(24, m.width-8)
@@ -110,7 +110,7 @@ func (m Model) threadBodyLines(width int, sectionStyle, hintStyle lipgloss.Style
 	for idx, comment := range m.threadComments {
 		author := strings.TrimSpace(comment.AuthorName)
 		if author == "" {
-			author = "kan-user"
+			author = "koll-user"
 		}
 		actor := string(normalizeCommentActorType(string(comment.ActorType)))
 		lines = append(lines, hintStyle.Render(fmt.Sprintf("[%s] %s • %s", actor, author, formatThreadTimestamp(comment.CreatedAt))))
@@ -256,7 +256,7 @@ func (m Model) createThreadCommentCmd(body string) tea.Cmd {
 func (m Model) threadAuthorName() string {
 	authorName := strings.TrimSpace(m.identityDisplayName)
 	if authorName == "" {
-		return "kan-user"
+		return "koll-user"
 	}
 	return authorName
 }

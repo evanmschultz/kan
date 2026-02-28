@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/evanschultz/kan/internal/domain"
+	"github.com/hylla/hakoll/internal/domain"
 )
 
 // SnapshotVersion defines a package constant value.
-const SnapshotVersion = "kan.snapshot.v1"
+const SnapshotVersion = "hakoll.snapshot.v1"
 
 // Snapshot represents snapshot data used by this package.
 type Snapshot struct {
@@ -486,7 +486,7 @@ func (s *Snapshot) Validate() error {
 		}
 		authorName := strings.TrimSpace(c.AuthorName)
 		if authorName == "" {
-			authorName = "kan-user"
+			authorName = "hakoll-user"
 		}
 		if c.CreatedAt.IsZero() || c.UpdatedAt.IsZero() {
 			return fmt.Errorf("comments[%d] timestamps are required", i)
@@ -999,7 +999,7 @@ func (t SnapshotTask) toDomain() domain.Task {
 	}
 	createdBy := strings.TrimSpace(t.CreatedByActor)
 	if createdBy == "" {
-		createdBy = "kan-user"
+		createdBy = "hakoll-user"
 	}
 	updatedBy := strings.TrimSpace(t.UpdatedByActor)
 	if updatedBy == "" {
@@ -1056,7 +1056,7 @@ func (c SnapshotComment) toDomain() domain.Comment {
 	}
 	authorName := strings.TrimSpace(c.AuthorName)
 	if authorName == "" {
-		authorName = "kan-user"
+		authorName = "hakoll-user"
 	}
 	return domain.Comment{
 		ID:           strings.TrimSpace(c.ID),

@@ -4,7 +4,7 @@ set windows-shell := ["C:/Program Files/Git/bin/bash.exe", "-eu", "-o", "pipefai
 # Verify required source files still exist before running broader gates.
 [private]
 verify-sources:
-  @git ls-files --error-unmatch cmd/kan/main.go cmd/kan/main_test.go >/dev/null
+  @git ls-files --error-unmatch cmd/koll/main.go cmd/koll/main_test.go >/dev/null
 
 # Format all tracked Go files in place.
 fmt:
@@ -52,17 +52,17 @@ test-golden:
 test-golden-update:
   @go test ./internal/tui -run 'Golden' -update
 
-# Build the local kan binary at ./kan.
+# Build the local koll binary at ./koll.
 build:
-  @go build -o ./kan ./cmd/kan
+  @go build -o ./koll ./cmd/koll
 
-# Run kan directly from source.
+# Run koll directly from source.
 run:
-  @go run ./cmd/kan
+  @go run ./cmd/koll
 
 # Initialize a dev config file at the resolved --dev config path if missing.
 init-dev-config:
-  @cfg="$(./kan --dev paths | awk -F': ' '/^config:/{print $2}')"; \
+  @cfg="$(./koll --dev paths | awk -F': ' '/^config:/{print $2}')"; \
   if [ -z "$cfg" ]; then \
     echo "could not resolve dev config path"; \
     exit 1; \
@@ -77,7 +77,7 @@ init-dev-config:
 
 # Delete the resolved --dev data directory (db/config/logs under that root).
 clean-dev:
-  @data_dir="$(./kan --dev paths | awk -F': ' '/^data_dir:/{print $2}')"; \
+  @data_dir="$(./koll --dev paths | awk -F': ' '/^data_dir:/{print $2}')"; \
   if [ -z "$data_dir" ]; then \
     echo "could not resolve dev data directory"; \
     exit 1; \

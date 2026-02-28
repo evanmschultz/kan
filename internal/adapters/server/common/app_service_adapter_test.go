@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/evanschultz/kan/internal/app"
-	"github.com/evanschultz/kan/internal/domain"
+	"github.com/hylla/hakoll/internal/app"
+	"github.com/hylla/hakoll/internal/domain"
 )
 
 // TestComputeCaptureSummaryHashIgnoresCapturedAt verifies the hash excludes capture timestamp jitter.

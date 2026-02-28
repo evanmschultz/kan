@@ -1,4 +1,4 @@
-# Remote E2EE Architecture + Roadmap For `kan`
+# Remote E2EE Architecture + Roadmap For `hakoll`
 
 Created: 2026-02-27  
 Owner: product/architecture planning  
@@ -8,9 +8,9 @@ Status: proposed (design + execution plan)
 
 Add optional remote collaboration for customer organizations while preserving:
 
-1. local-first `kan` UX and offline operation,
+1. local-first `hakoll` UX and offline operation,
 2. zero required cloud dependencies for OSS local-only users,
-3. end-to-end encrypted (E2EE) customer project data such that the `kan` service operator cannot read project/task/file content.
+3. end-to-end encrypted (E2EE) customer project data such that the `hakoll` service operator cannot read project/task/file content.
 
 This roadmap covers two tracks:
 
@@ -21,21 +21,21 @@ This roadmap covers two tracks:
 
 1. Local-first SQLite is the current primary persistence model.
 2. HTTP + MCP serve surfaces exist and are currently local/dev oriented.
-3. Snapshot import/export exists (`kan.snapshot.v1` JSON model).
+3. Snapshot import/export exists (`hakoll.snapshot.v1` JSON model).
 4. Task metadata already supports resource references and project-root attachment boundaries.
 5. Remote/team auth-tenancy and hardening are explicitly roadmap/deferred in active planning docs.
 
 Primary repo references:
 
-1. [README.md](/Users/evanschultz/Documents/Code/personal/kan/README.md)
-2. [PLAN.md](/Users/evanschultz/Documents/Code/personal/kan/PLAN.md)
-3. [internal/app/snapshot.go](/Users/evanschultz/Documents/Code/personal/kan/internal/app/snapshot.go)
-4. [internal/domain/workitem.go](/Users/evanschultz/Documents/Code/personal/kan/internal/domain/workitem.go)
-5. [internal/adapters/server/server.go](/Users/evanschultz/Documents/Code/personal/kan/internal/adapters/server/server.go)
+1. [README.md](README.md)
+2. [PLAN.md](PLAN.md)
+3. [internal/app/snapshot.go](internal/app/snapshot.go)
+4. [internal/domain/workitem.go](internal/domain/workitem.go)
+5. [internal/adapters/server/server.go](internal/adapters/server/server.go)
 
 ## 3) Required Product Constraints
 
-1. The same `kan` client must support:
+1. The same `hakoll` client must support:
    - local-only personal projects,
    - remote org projects synced from the cloud.
 2. Remote org projects must live-update across authorized org members.
@@ -63,8 +63,8 @@ These are explicitly agreed implementation decisions for the next wave:
 
 1. MCP transport in OSS runtime is HTTP-only for now (Streamable HTTP endpoint).
 2. No stdio MCP transport in this immediate wave.
-3. `kan serve` remains the explicit headless runtime entrypoint.
-4. `kan` (TUI launch) must ensure local server availability:
+3. `koll serve` remains the explicit headless runtime entrypoint.
+4. `koll` (TUI launch) must ensure local server availability:
    - if already running, reuse it and do not restart,
    - if not running, auto-start local server process and continue.
 5. Default local server bind target is `127.0.0.1:5437`.
@@ -80,7 +80,7 @@ These are explicitly agreed implementation decisions for the next wave:
 ## 4.2 Why HTTP-Only First (Now)
 
 1. Keeps one transport contract across local + remote.
-2. Matches existing `kan` implementation (`serve` is already headless; TUI is not required at runtime).
+2. Matches existing `hakoll` implementation (`serve` is already headless; TUI is not required at runtime).
 3. Reduces branching complexity in auth, observability, and test matrices.
 4. Supports future non-CLI clients better than stdio-only.
 5. Allows stdio to be added later as an optional compatibility transport if needed.
@@ -88,7 +88,7 @@ These are explicitly agreed implementation decisions for the next wave:
 ## 4.3 MCP-Go Viability + Known Limits (Planning Constraints)
 
 1. `mcp-go` supports Streamable HTTP and stdio transports, and can run multiple transports in one process.
-2. Current `kan` implementation already uses Streamable HTTP in stateless mode for MCP.
+2. Current `hakoll` implementation already uses Streamable HTTP in stateless mode for MCP.
 3. HTTP-only requires a running server process; clients cannot talk to MCP when no process is bound.
 4. Streamable HTTP is the right long-term path for remote/multi-client and web-facing integration.
 5. Known limitation from `mcp-go` docs to track:
@@ -177,12 +177,12 @@ Board/project picker behavior:
 
 ## 8.1 Local Runtime Modes
 
-1. `kan`:
+1. `koll`:
    - launches TUI,
    - probes configured local HTTP server endpoint,
    - reuses existing running server if healthy,
    - otherwise auto-starts local serve process.
-2. `kan serve`:
+2. `koll serve`:
    - explicit headless API/MCP server process,
    - useful for external MCP clients, scripting, and remote-sync-only sessions.
 3. Future optional mode:
@@ -221,9 +221,9 @@ Deliverables:
 
 1. migrate CLI from `flag` package to Charm Fang + Cobra command tree,
 2. command UX shape:
-   - `kan` (TUI with local-server ensure behavior),
-   - `kan serve` (headless server),
-   - `kan export` / `kan import` / `kan paths`.
+   - `koll` (TUI with local-server ensure behavior),
+   - `koll serve` (headless server),
+   - `koll export` / `koll import` / `koll paths`.
 3. deterministic help/usage behavior for root + subcommands,
 4. local-server endpoint controls in CLI flags and config persistence,
 5. TUI startup supervisor behavior (reuse running server; auto-start only when needed),
@@ -231,9 +231,9 @@ Deliverables:
 
 Acceptance:
 
-1. `kan --help` and `kan serve --help` are deterministic and side-effect free,
-2. launching `kan` with running server does not restart server process,
-3. launching `kan` without running server auto-starts server and surfaces endpoint,
+1. `koll --help` and `koll serve --help` are deterministic and side-effect free,
+2. launching `koll` with running server does not restart server process,
+3. launching `koll` without running server auto-starts server and surfaces endpoint,
 4. default endpoint starts at `127.0.0.1:5437` with automatic fallback behavior,
 5. regression tests cover supervisor/reuse/fallback flows.
 
@@ -363,7 +363,7 @@ Each phase below is designed for single-branch parallel execution with non-overl
 ### Phase R-CLI lanes
 
 1. `RCLI-L1` CLI framework lane:
-   - scope: `cmd/kan/**`, CLI tests, command/help docs.
+   - scope: `cmd/koll/**`, CLI tests, command/help docs.
 2. `RCLI-L2` local-server supervisor lane:
    - scope: runtime process-management module(s), endpoint selection/fallback logic, related tests.
 3. `RCLI-L3` TUI integration lane:
@@ -464,8 +464,8 @@ Rationale:
 
 References:
 
-1. [COLLAB_E2E_REMEDIATION_PLAN_WORKLOG.md](/Users/evanschultz/Documents/Code/personal/kan/COLLAB_E2E_REMEDIATION_PLAN_WORKLOG.md)
-2. [COLLABORATIVE_POST_FIX_VALIDATION_WORKSHEET.md](/Users/evanschultz/Documents/Code/personal/kan/COLLABORATIVE_POST_FIX_VALIDATION_WORKSHEET.md)
+1. [COLLAB_E2E_REMEDIATION_PLAN_WORKLOG.md](COLLAB_E2E_REMEDIATION_PLAN_WORKLOG.md)
+2. [COLLABORATIVE_POST_FIX_VALIDATION_WORKSHEET.md](COLLABORATIVE_POST_FIX_VALIDATION_WORKSHEET.md)
 
 ## 12) Initial Milestone Breakdown (Suggested)
 

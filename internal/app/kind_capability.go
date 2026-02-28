@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/log"
-	"github.com/evanschultz/kan/internal/domain"
+	"github.com/hylla/hakoll/internal/domain"
 )
 
 // CreateKindDefinitionInput holds write values for kind-catalog upsert behavior.
@@ -742,7 +742,7 @@ func (s *Service) applyKindTemplateSystemActions(ctx context.Context, parent dom
 			updated.Metadata.CompletionContract.CompletionChecklist = merged
 			updated.UpdatedAt = s.clock().UTC()
 			updated.UpdatedByType = domain.ActorTypeSystem
-			updated.UpdatedByActor = "kan-system-template"
+			updated.UpdatedByActor = "hakoll-system-template"
 			if err := s.repo.UpdateTask(ctx, updated); err != nil {
 				return err
 			}
@@ -791,8 +791,8 @@ func (s *Service) applyKindTemplateSystemActions(ctx context.Context, parent dom
 			Priority:       domain.PriorityMedium,
 			Labels:         childSpec.Labels,
 			Metadata:       childMetadata,
-			CreatedByActor: "kan-system-template",
-			UpdatedByActor: "kan-system-template",
+			CreatedByActor: "hakoll-system-template",
+			UpdatedByActor: "hakoll-system-template",
 			UpdatedByType:  domain.ActorTypeSystem,
 		}, s.clock())
 		if childErr != nil {

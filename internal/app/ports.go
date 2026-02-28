@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/evanschultz/kan/internal/domain"
+	"github.com/hylla/hakoll/internal/domain"
 )
 
 // Repository represents repository data used by this package.

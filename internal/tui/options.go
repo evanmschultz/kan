@@ -4,7 +4,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/evanschultz/kan/internal/app"
+	"github.com/hylla/hakoll/internal/app"
 )
 
 // TaskFieldConfig holds configuration for task field.

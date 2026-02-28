@@ -33,8 +33,8 @@ func TestNewCommentDefaultsAndNormalization(t *testing.T) {
 	if comment.ActorType != ActorTypeUser {
 		t.Fatalf("expected default actor type user, got %q", comment.ActorType)
 	}
-	if comment.AuthorName != "kan-user" {
-		t.Fatalf("expected default author name kan-user, got %q", comment.AuthorName)
+	if comment.AuthorName != "hakoll-user" {
+		t.Fatalf("expected default author name hakoll-user, got %q", comment.AuthorName)
 	}
 	if !comment.CreatedAt.Equal(now.UTC()) || !comment.UpdatedAt.Equal(now.UTC()) {
 		t.Fatalf("expected UTC timestamps at input time, got created=%s updated=%s", comment.CreatedAt, comment.UpdatedAt)

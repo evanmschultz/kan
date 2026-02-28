@@ -327,6 +327,85 @@ File edits in this checkpoint:
 Test status:
 - `test_not_applicable` (docs-only changes; no code/test behavior modified).
 
+### 2026-02-28: Rename Wave Kickoff (hakoll project + koll command)
+
+Objective:
+- execute full no-compat rename from `kan` to `hakoll` (project/repo identity) and `koll` (runtime command/binary), then revalidate parity with `just check` and `just ci`.
+
+Commands run and outcomes:
+1. `git status --short` -> PASS (`README.md` staged change only).
+2. `git add README.md && git commit -m "docs: note hakoll naming origin in README"` -> PASS (`aadf95c`).
+3. Context7:
+   - `resolve-library-id` for Go (`/golang/go`) -> PASS.
+   - `query-docs` on module path/import rename implications -> PASS.
+4. Orchestration scan:
+   - `pwd && ls -la` -> PASS.
+   - `sed -n '1,220p' Justfile` -> PASS.
+   - `rg -n "\bkan\b|cmd/kan|/kan\b|kan\." -S --hidden --glob '!**/.git/**'` -> PASS.
+5. Spawned three subagents (code/runtime, tests/fixtures, docs/automation) and collected inventories -> PASS.
+
+File edits in this checkpoint:
+1. `PLAN.md`
+   - added rename-wave kickoff checkpoint and command evidence.
+
+Test status:
+- `test_not_applicable` (planning/orchestration checkpoint; implementation in progress).
+
+### 2026-02-28: Rename Wave Implementation Complete (No Compatibility Layer)
+
+Objective:
+- complete the all-at-once rename from `kan` to `hakoll` (project/repo/module identity) and `koll` (runtime command/binary/tool namespace), with no compatibility aliases.
+
+Subagent lane execution and outcomes:
+1. `R1-core-cli` (core CLI/module/build/path surfaces) -> PASS
+   - scope delivered: `go.mod`, `cmd/koll/**` (from `cmd/kan/**`), `internal/platform/**`, `internal/config/**`, `internal/tui/**`, `Justfile`, `.goreleaser.yml`, `.github/workflows/ci.yml`, `.gitignore`, `config.example.toml`, `cmd/headerlab/main.go`.
+2. `R2-runtime-mcp` (server/app/domain/storage surfaces) -> PASS
+   - scope delivered: `internal/adapters/server/**`, `internal/adapters/storage/sqlite/**`, `internal/app/**`, `internal/domain/**`.
+3. `R3-docs-ops` (docs/runbooks/worksheets/tapes) -> PASS
+   - scope delivered: `README.md`, `AGENTS.md`, `MCP_*`, `COLLAB*`, `REMOTE_E2EE_ROADMAP.md`, `vhs/**`.
+
+Commands run and outcomes:
+1. Integrator gate run `just check` -> FAIL (verify-sources pathspec before staging renamed `cmd/koll/*` files).
+2. Context7 re-consult (Go rename/staging implications) -> PASS.
+3. Staged rename paths and reran `just check` -> FAIL (`gofmt required for cmd/koll/main.go`).
+4. Context7 re-consult (gofmt workflow) -> PASS.
+5. `just fmt` -> PASS.
+6. `just check` -> PASS.
+7. `just ci` -> PASS.
+8. Final cleanup of lingering test sample tokens (`kan` -> `hakoll`) in:
+   - `internal/adapters/storage/sqlite/repo_test.go`
+   - `internal/app/service_test.go`
+   - `internal/adapters/server/mcpapi/handler_test.go`
+9. Post-cleanup verification:
+   - `just check` -> PASS.
+   - `just ci` -> PASS.
+
+File edits in this checkpoint:
+1. `PLAN.md`
+   - added full rename implementation checkpoint with subagent evidence and gate outcomes.
+
+Test status:
+- `just check` PASS
+- `just ci` PASS
+
+### 2026-02-28: Post-Integration Docs Correction
+
+Objective:
+- resolve a docs regression introduced during rename sweep where absolute local links in the remote roadmap pointed at a non-existent workspace path.
+
+Commands run and outcomes:
+1. `rg -n "/Users/.*/personal/hakoll|/Users/.*/personal/kan" REMOTE_E2EE_ROADMAP.md ...` -> PASS (identified hardcoded absolute links).
+2. Patched `REMOTE_E2EE_ROADMAP.md` links to repo-relative paths -> PASS.
+
+File edits in this checkpoint:
+1. `REMOTE_E2EE_ROADMAP.md`
+   - replaced hardcoded absolute paths with repo-relative markdown links.
+2. `PLAN.md`
+   - recorded post-integration docs correction checkpoint.
+
+Test status:
+- `test_not_applicable` (docs-only correction; no runtime/code behavior change).
+
 ### 2026-02-28: Phase 0 Section 2 Post-Fix Rerun (in progress, blocker persists)
 
 Objective:

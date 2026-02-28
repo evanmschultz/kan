@@ -1,4 +1,4 @@
-// Package main renders header-design experiments for the kan TUI.
+// Package main renders header-design experiments for the koll TUI.
 package main
 
 import (
@@ -52,7 +52,7 @@ func main() {
 	fmt.Println(renderSheet(palette, variants, renderWidth))
 }
 
-// buildPalette returns the default kan-like color palette for previews.
+// buildPalette returns the default koll-like color palette for previews.
 func buildPalette() previewPalette {
 	return previewPalette{
 		fg:       lipgloss.Color("252"),
@@ -69,7 +69,7 @@ func buildVariants() []headerVariant {
 	return []headerVariant{
 		{
 			ID:          1,
-			Name:        "KAN Pixel Blocks",
+			Name:        "KOLL Pixel Blocks",
 			Inspiration: "box-cell logo mosaic",
 			Render: func(p previewPalette, width int) string {
 				k := []string{"10001", "10010", "10100", "11000", "10100", "10010", "10001"}
@@ -107,17 +107,17 @@ func buildVariants() []headerVariant {
 		},
 		{
 			ID:          2,
-			Name:        "KAN Stair-Step Chips",
+			Name:        "KOLL Stair-Step Chips",
 			Inspiration: "diagonal chip motif",
 			Render: func(p previewPalette, width int) string {
 				chipA := lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Background(lipgloss.Color("171")).Padding(0, 1)
 				chipB := lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Background(lipgloss.Color("99")).Padding(0, 1)
 				steps := []string{
-					chipA.Render("KAN"),
-					"  " + chipB.Render("KAN"),
-					"    " + chipA.Render("KAN"),
-					"      " + chipB.Render("KAN"),
-					"        " + chipA.Render("KAN"),
+					chipA.Render("KOLL"),
+					"  " + chipB.Render("KOLL"),
+					"    " + chipA.Render("KOLL"),
+					"      " + chipB.Render("KOLL"),
+					"        " + chipA.Render("KOLL"),
 				}
 				path := lipgloss.NewStyle().Foreground(p.muted).Render(truncate("path: "+samplePath, width))
 				return strings.Join([]string{strings.Join(steps, "\n"), "", path}, "\n")
@@ -134,7 +134,7 @@ func buildVariants() []headerVariant {
 					Padding(0, 1).
 					Bold(true).
 					Foreground(p.fg).
-					Render("KAN")
+					Render("KOLL")
 				rule := lipgloss.NewStyle().Foreground(p.accent).Render(strings.Repeat("─", max(8, width)))
 				path := lipgloss.NewStyle().Foreground(p.muted).Render(truncate("path: "+samplePath, width))
 				return strings.Join([]string{title, rule, path}, "\n")
@@ -149,7 +149,7 @@ func buildVariants() []headerVariant {
 					Border(lipgloss.NormalBorder()).
 					BorderForeground(p.dim).
 					Padding(0, 2).
-					Render(lipgloss.NewStyle().Bold(true).Foreground(p.fg).Render("KAN"))
+					Render(lipgloss.NewStyle().Bold(true).Foreground(p.fg).Render("KOLL"))
 				ramp := []string{
 					"#5A56E0",
 					"#4E68F2",
@@ -188,7 +188,7 @@ func buildVariants() []headerVariant {
 					Background(p.accent).
 					Align(lipgloss.Center).
 					Width(width).
-					Render("KAN")
+					Render("KOLL")
 				path := lipgloss.NewStyle().Foreground(p.muted).Render(truncate("path: "+samplePath, width))
 				return strings.Join([]string{banner, path}, "\n")
 			},
@@ -203,7 +203,7 @@ func buildVariants() []headerVariant {
 					Foreground(p.fg).
 					Bold(true).
 					Padding(0, 2).
-					Render("kan")
+					Render("koll")
 				path := lipgloss.NewStyle().Foreground(p.muted).Render(truncate("path: "+samplePath, width))
 				return strings.Join([]string{plate, path}, "\n")
 			},
@@ -229,7 +229,7 @@ func buildVariants() []headerVariant {
 			Inspiration: "simple framed masthead",
 			Render: func(p previewPalette, width int) string {
 				rule := lipgloss.NewStyle().Foreground(p.accent).Render(strings.Repeat("=", max(8, width)))
-				title := lipgloss.NewStyle().Bold(true).Foreground(p.fg).Align(lipgloss.Center).Width(width).Render("kan")
+				title := lipgloss.NewStyle().Bold(true).Foreground(p.fg).Align(lipgloss.Center).Width(width).Render("koll")
 				path := lipgloss.NewStyle().Foreground(p.muted).Render(truncate("path: "+samplePath, width))
 				return strings.Join([]string{rule, title, rule, path}, "\n")
 			},
@@ -247,7 +247,7 @@ func buildVariants() []headerVariant {
 					Foreground(p.fg).
 					Align(lipgloss.Center).
 					Width(leftWidth).
-					Render("kan")
+					Render("koll")
 				right := lipgloss.NewStyle().
 					Background(p.surface).
 					Width(rightWidth).
@@ -261,8 +261,8 @@ func buildVariants() []headerVariant {
 			Name:        "Shadow Wordmark",
 			Inspiration: "subtle duplicate ghost text",
 			Render: func(p previewPalette, width int) string {
-				top := lipgloss.NewStyle().Bold(true).Foreground(p.fg).Render("kan")
-				shadow := lipgloss.NewStyle().Foreground(p.dim).Render("  kan")
+				top := lipgloss.NewStyle().Bold(true).Foreground(p.fg).Render("koll")
+				shadow := lipgloss.NewStyle().Foreground(p.dim).Render("  koll")
 				path := lipgloss.NewStyle().Foreground(p.muted).Render(truncate("path: "+samplePath, width))
 				return strings.Join([]string{top, shadow, path}, "\n")
 			},
@@ -272,7 +272,7 @@ func buildVariants() []headerVariant {
 
 // renderSheet renders all variants into one terminal-friendly output.
 func renderSheet(p previewPalette, variants []headerVariant, width int) string {
-	title := lipgloss.NewStyle().Bold(true).Foreground(p.accent).Render("kan header design playground")
+	title := lipgloss.NewStyle().Bold(true).Foreground(p.accent).Render("koll header design playground")
 	subtitle := lipgloss.NewStyle().
 		Foreground(p.dim).
 		Render(fmt.Sprintf("width=%d  path-only header context", width))

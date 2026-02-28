@@ -1,6 +1,6 @@
 # Repository Guidelines
 
-This file defines instructions for coding agents working in this repository. It is not runtime behavior for `kan`.
+This file defines instructions for coding agents working in this repository. It is not runtime behavior for `hakoll`.
 
 You are a senior Go dev. YOU ALWAYS:
 
@@ -22,7 +22,7 @@ You are a senior Go dev. YOU ALWAYS:
 - Treat runtime logging as a first-class implementation concern:
   - use `github.com/charmbracelet/log` as the canonical logger for application/runtime logs.
   - keep colored/styled console output enabled for local developer ergonomics.
-  - in dev mode, write logs to a workspace-local `.kan/log/` directory so logs are easy to inspect during debugging.
+  - in dev mode, write logs to a workspace-local `.hakoll/log/` directory so logs are easy to inspect during debugging.
   - log meaningful runtime operations and failures (startup paths/config load, persistence/migrations, mutating actions, recoverable/non-recoverable errors).
 - During troubleshooting, inspect recent local log files before proposing fixes and include relevant findings in your reasoning.
 - Keep error handling idiomatic:
@@ -40,7 +40,7 @@ You are a senior Go dev. YOU ALWAYS:
 
 ## Project Structure
 
-- `cmd/kan`: CLI/TUI entrypoint.
+- `cmd/koll`: CLI/TUI entrypoint.
 - `internal/domain`: core entities and invariants.
 - `internal/app`: application services and use-cases (ports-first, hexagonal core).
 - `internal/adapters/storage/sqlite`: SQLite persistence adapter.
@@ -52,8 +52,8 @@ You are a senior Go dev. YOU ALWAYS:
 
 ## Build and Run
 
-- `just run`: run app from source (`go run ./cmd/kan`).
-- `just build`: build local binary `./kan`.
+- `just run`: run app from source (`go run ./cmd/koll`).
+- `just build`: build local binary `./koll`.
 - `just fmt`: format Go files.
 - `just check`: cross-platform smoke gate (source verification, format check, tests, build).
 - `just test`, `just test-pkg <pkg>`: test entrypoints.

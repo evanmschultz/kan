@@ -6,7 +6,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/evanschultz/kan/internal/domain"
+	"github.com/hylla/hakoll/internal/domain"
 )
 
 // ScopeTypeProject identifies project-level scope for capture and attention operations.

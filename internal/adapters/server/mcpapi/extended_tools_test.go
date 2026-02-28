@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/evanschultz/kan/internal/adapters/server/common"
-	"github.com/evanschultz/kan/internal/domain"
+	"github.com/hylla/hakoll/internal/adapters/server/common"
+	"github.com/hylla/hakoll/internal/domain"
 )
 
 // stubExpandedService provides deterministic responses for expanded MCP tool coverage tests.
@@ -375,32 +375,32 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		toolNames = append(toolNames, name)
 	}
 	requiredTools := []string{
-		"kan.get_bootstrap_guide",
-		"kan.list_projects",
-		"kan.create_project",
-		"kan.update_project",
-		"kan.list_tasks",
-		"kan.create_task",
-		"kan.update_task",
-		"kan.move_task",
-		"kan.delete_task",
-		"kan.restore_task",
-		"kan.reparent_task",
-		"kan.list_child_tasks",
-		"kan.search_task_matches",
-		"kan.list_project_change_events",
-		"kan.get_project_dependency_rollup",
-		"kan.list_kind_definitions",
-		"kan.upsert_kind_definition",
-		"kan.set_project_allowed_kinds",
-		"kan.list_project_allowed_kinds",
-		"kan.issue_capability_lease",
-		"kan.heartbeat_capability_lease",
-		"kan.renew_capability_lease",
-		"kan.revoke_capability_lease",
-		"kan.revoke_all_capability_leases",
-		"kan.create_comment",
-		"kan.list_comments_by_target",
+		"koll.get_bootstrap_guide",
+		"koll.list_projects",
+		"koll.create_project",
+		"koll.update_project",
+		"koll.list_tasks",
+		"koll.create_task",
+		"koll.update_task",
+		"koll.move_task",
+		"koll.delete_task",
+		"koll.restore_task",
+		"koll.reparent_task",
+		"koll.list_child_tasks",
+		"koll.search_task_matches",
+		"koll.list_project_change_events",
+		"koll.get_project_dependency_rollup",
+		"koll.list_kind_definitions",
+		"koll.upsert_kind_definition",
+		"koll.set_project_allowed_kinds",
+		"koll.list_project_allowed_kinds",
+		"koll.issue_capability_lease",
+		"koll.heartbeat_capability_lease",
+		"koll.renew_capability_lease",
+		"koll.revoke_capability_lease",
+		"koll.revoke_all_capability_leases",
+		"koll.create_comment",
+		"koll.list_comments_by_target",
 	}
 	for _, toolName := range requiredTools {
 		found := false
@@ -419,32 +419,32 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		name string
 		args map[string]any
 	}{
-		{name: "kan.get_bootstrap_guide", args: map[string]any{}},
-		{name: "kan.list_projects", args: map[string]any{"include_archived": true}},
-		{name: "kan.create_project", args: map[string]any{"name": "Project One"}},
-		{name: "kan.update_project", args: map[string]any{"project_id": "p1", "name": "Project One Updated"}},
-		{name: "kan.list_tasks", args: map[string]any{"project_id": "p1"}},
-		{name: "kan.create_task", args: map[string]any{"project_id": "p1", "column_id": "c1", "title": "Task One"}},
-		{name: "kan.update_task", args: map[string]any{"task_id": "t1", "title": "Task One Updated"}},
-		{name: "kan.move_task", args: map[string]any{"task_id": "t1", "to_column_id": "c2", "position": 1}},
-		{name: "kan.delete_task", args: map[string]any{"task_id": "t1"}},
-		{name: "kan.restore_task", args: map[string]any{"task_id": "t1"}},
-		{name: "kan.reparent_task", args: map[string]any{"task_id": "t1", "parent_id": "parent-1"}},
-		{name: "kan.list_child_tasks", args: map[string]any{"project_id": "p1", "parent_id": "parent-1"}},
-		{name: "kan.search_task_matches", args: map[string]any{"project_id": "p1", "query": "task"}},
-		{name: "kan.list_project_change_events", args: map[string]any{"project_id": "p1", "limit": 25}},
-		{name: "kan.get_project_dependency_rollup", args: map[string]any{"project_id": "p1"}},
-		{name: "kan.list_kind_definitions", args: map[string]any{}},
-		{name: "kan.upsert_kind_definition", args: map[string]any{"id": "phase", "applies_to": []any{"phase"}}},
-		{name: "kan.set_project_allowed_kinds", args: map[string]any{"project_id": "p1", "kind_ids": []any{"phase", "task"}}},
-		{name: "kan.list_project_allowed_kinds", args: map[string]any{"project_id": "p1"}},
-		{name: "kan.issue_capability_lease", args: map[string]any{"project_id": "p1", "scope_type": "project", "role": "worker", "agent_name": "agent-1"}},
-		{name: "kan.heartbeat_capability_lease", args: map[string]any{"agent_instance_id": "inst-1", "lease_token": "tok-1"}},
-		{name: "kan.renew_capability_lease", args: map[string]any{"agent_instance_id": "inst-1", "lease_token": "tok-1", "ttl_seconds": 60}},
-		{name: "kan.revoke_capability_lease", args: map[string]any{"agent_instance_id": "inst-1"}},
-		{name: "kan.revoke_all_capability_leases", args: map[string]any{"project_id": "p1", "scope_type": "project"}},
-		{name: "kan.create_comment", args: map[string]any{"project_id": "p1", "target_type": "task", "target_id": "t1", "body_markdown": "hello"}},
-		{name: "kan.list_comments_by_target", args: map[string]any{"project_id": "p1", "target_type": "task", "target_id": "t1"}},
+		{name: "koll.get_bootstrap_guide", args: map[string]any{}},
+		{name: "koll.list_projects", args: map[string]any{"include_archived": true}},
+		{name: "koll.create_project", args: map[string]any{"name": "Project One"}},
+		{name: "koll.update_project", args: map[string]any{"project_id": "p1", "name": "Project One Updated"}},
+		{name: "koll.list_tasks", args: map[string]any{"project_id": "p1"}},
+		{name: "koll.create_task", args: map[string]any{"project_id": "p1", "column_id": "c1", "title": "Task One"}},
+		{name: "koll.update_task", args: map[string]any{"task_id": "t1", "title": "Task One Updated"}},
+		{name: "koll.move_task", args: map[string]any{"task_id": "t1", "to_column_id": "c2", "position": 1}},
+		{name: "koll.delete_task", args: map[string]any{"task_id": "t1"}},
+		{name: "koll.restore_task", args: map[string]any{"task_id": "t1"}},
+		{name: "koll.reparent_task", args: map[string]any{"task_id": "t1", "parent_id": "parent-1"}},
+		{name: "koll.list_child_tasks", args: map[string]any{"project_id": "p1", "parent_id": "parent-1"}},
+		{name: "koll.search_task_matches", args: map[string]any{"project_id": "p1", "query": "task"}},
+		{name: "koll.list_project_change_events", args: map[string]any{"project_id": "p1", "limit": 25}},
+		{name: "koll.get_project_dependency_rollup", args: map[string]any{"project_id": "p1"}},
+		{name: "koll.list_kind_definitions", args: map[string]any{}},
+		{name: "koll.upsert_kind_definition", args: map[string]any{"id": "phase", "applies_to": []any{"phase"}}},
+		{name: "koll.set_project_allowed_kinds", args: map[string]any{"project_id": "p1", "kind_ids": []any{"phase", "task"}}},
+		{name: "koll.list_project_allowed_kinds", args: map[string]any{"project_id": "p1"}},
+		{name: "koll.issue_capability_lease", args: map[string]any{"project_id": "p1", "scope_type": "project", "role": "worker", "agent_name": "agent-1"}},
+		{name: "koll.heartbeat_capability_lease", args: map[string]any{"agent_instance_id": "inst-1", "lease_token": "tok-1"}},
+		{name: "koll.renew_capability_lease", args: map[string]any{"agent_instance_id": "inst-1", "lease_token": "tok-1", "ttl_seconds": 60}},
+		{name: "koll.revoke_capability_lease", args: map[string]any{"agent_instance_id": "inst-1"}},
+		{name: "koll.revoke_all_capability_leases", args: map[string]any{"project_id": "p1", "scope_type": "project"}},
+		{name: "koll.create_comment", args: map[string]any{"project_id": "p1", "target_type": "task", "target_id": "t1", "body_markdown": "hello"}},
+		{name: "koll.list_comments_by_target", args: map[string]any{"project_id": "p1", "target_type": "task", "target_id": "t1"}},
 	}
 	for idx, tc := range calls {
 		resp, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(100+idx, tc.name, tc.args))
@@ -473,7 +473,7 @@ func TestHandlerExpandedToolInvalidBindArguments(t *testing.T) {
 	defer server.Close()
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
-	_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(201, "kan.create_project", map[string]any{
+	_, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(201, "koll.create_project", map[string]any{
 		"name": 123,
 	}))
 	if isError, _ := callResp.Result["isError"].(bool); !isError {

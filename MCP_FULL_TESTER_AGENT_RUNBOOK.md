@@ -5,41 +5,41 @@ Owner: tester-orchestrator agent
 Status: ready_to_run
 
 ## 1) Objective
-Run a full MCP-first, end-to-end validation sweep against the local `kan` server and produce one evidence-backed final report.
+Run a full MCP-first, end-to-end validation sweep against the local `hakoll` server and produce one evidence-backed final report.
 
 Hard requirement: cover **every currently registered MCP tool**, protocol/stateless behavior, guardrail/fail-closed paths, and HTTP parity checks where relevant.
 
 Current MCP tool surface to validate:
-1. `kan.capture_state`
-2. `kan.get_bootstrap_guide`
-3. `kan.list_projects`
-4. `kan.create_project`
-5. `kan.update_project`
-6. `kan.list_tasks`
-7. `kan.create_task`
-8. `kan.update_task`
-9. `kan.move_task`
-10. `kan.delete_task`
-11. `kan.restore_task`
-12. `kan.reparent_task`
-13. `kan.list_child_tasks`
-14. `kan.search_task_matches`
-15. `kan.list_project_change_events`
-16. `kan.get_project_dependency_rollup`
-17. `kan.list_kind_definitions`
-18. `kan.upsert_kind_definition`
-19. `kan.set_project_allowed_kinds`
-20. `kan.list_project_allowed_kinds`
-21. `kan.issue_capability_lease`
-22. `kan.heartbeat_capability_lease`
-23. `kan.renew_capability_lease`
-24. `kan.revoke_capability_lease`
-25. `kan.revoke_all_capability_leases`
-26. `kan.create_comment`
-27. `kan.list_comments_by_target`
-28. `kan.list_attention_items`
-29. `kan.raise_attention_item`
-30. `kan.resolve_attention_item`
+1. `koll.capture_state`
+2. `koll.get_bootstrap_guide`
+3. `koll.list_projects`
+4. `koll.create_project`
+5. `koll.update_project`
+6. `koll.list_tasks`
+7. `koll.create_task`
+8. `koll.update_task`
+9. `koll.move_task`
+10. `koll.delete_task`
+11. `koll.restore_task`
+12. `koll.reparent_task`
+13. `koll.list_child_tasks`
+14. `koll.search_task_matches`
+15. `koll.list_project_change_events`
+16. `koll.get_project_dependency_rollup`
+17. `koll.list_kind_definitions`
+18. `koll.upsert_kind_definition`
+19. `koll.set_project_allowed_kinds`
+20. `koll.list_project_allowed_kinds`
+21. `koll.issue_capability_lease`
+22. `koll.heartbeat_capability_lease`
+23. `koll.renew_capability_lease`
+24. `koll.revoke_capability_lease`
+25. `koll.revoke_all_capability_leases`
+26. `koll.create_comment`
+27. `koll.list_comments_by_target`
+28. `koll.list_attention_items`
+29. `koll.raise_attention_item`
+30. `koll.resolve_attention_item`
 
 ## 2) Mandatory Safety + Approval Policy
 1. If a command needs sandbox escalation, stop and ask the user with a human-readable reason.
@@ -113,21 +113,21 @@ Mandatory preflight (must pass before P0):
 Suggested command shape:
 
 ```bash
-TMP_DIR="$(mktemp -d /tmp/kan-mcp-e2e.XXXXXX)"
-DB_PATH="$TMP_DIR/kan-e2e.db"
-./kan --db "$DB_PATH" serve --http 127.0.0.1:18080 --api-endpoint /api/v1 --mcp-endpoint /mcp
+TMP_DIR="$(mktemp -d /tmp/koll-mcp-e2e.XXXXXX)"
+DB_PATH="$TMP_DIR/koll-e2e.db"
+./koll --db "$DB_PATH" serve --http 127.0.0.1:18080 --api-endpoint /api/v1 --mcp-endpoint /mcp
 ```
 
 Hard-stop rule:
-- If `kan.list_projects` returns non-empty during P0, mark run `blocked` and stop.
+- If `koll.list_projects` returns non-empty during P0, mark run `blocked` and stop.
 - Do not continue to P1 on a dirty DB; reset the temp DB and restart P0.
 
 Phase P0: Empty instance validation
 1. Start with clean DB and no projects.
 2. Validate empty-instance behavior:
-   - `kan.list_projects` returns empty.
-   - `kan.capture_state` with unknown project returns deterministic error (`not_found` or `bootstrap_required` class).
-   - `kan.get_bootstrap_guide` returns actionable setup guidance.
+   - `koll.list_projects` returns empty.
+   - `koll.capture_state` with unknown project returns deterministic error (`not_found` or `bootstrap_required` class).
+   - `koll.get_bootstrap_guide` returns actionable setup guidance.
 
 Phase P1: Seeded hierarchy validation
 Seed deterministic data for all scope levels:
@@ -166,7 +166,7 @@ For each tool, run:
 4. invalid value/type failure,
 5. not-found/guardrail path where applicable.
 
-### 8.1 `kan.capture_state`
+### 8.1 `koll.capture_state`
 Cover scope tuple variants:
 - `project`, `branch`, `phase`, `subphase`, `task`, `subtask`
 
@@ -178,40 +178,40 @@ Failure matrix:
 - non-project missing `scope_id`
 
 ### 8.2 Bootstrap tool
-- `kan.get_bootstrap_guide` response shape + actionable fields.
+- `koll.get_bootstrap_guide` response shape + actionable fields.
 
 ### 8.3 Attention tools
-- `kan.list_attention_items`: all scope levels + `state` filters (`open`, `acknowledged`, `resolved`) + invalid state.
-- `kan.raise_attention_item`: required and optional fields; missing requireds; invalid scope tuple.
-- `kan.resolve_attention_item`: required `id`, optional fields, unknown id.
+- `koll.list_attention_items`: all scope levels + `state` filters (`open`, `acknowledged`, `resolved`) + invalid state.
+- `koll.raise_attention_item`: required and optional fields; missing requireds; invalid scope tuple.
+- `koll.resolve_attention_item`: required `id`, optional fields, unknown id.
 
 ### 8.4 Project/task/search/change tools
-- `kan.list_projects`, `kan.create_project`, `kan.update_project`
-- `kan.list_tasks`, `kan.create_task`, `kan.update_task`, `kan.move_task`, `kan.delete_task`, `kan.restore_task`, `kan.reparent_task`, `kan.list_child_tasks`
-- `kan.search_task_matches`
-- `kan.list_project_change_events`
-- `kan.get_project_dependency_rollup`
+- `koll.list_projects`, `koll.create_project`, `koll.update_project`
+- `koll.list_tasks`, `koll.create_task`, `koll.update_task`, `koll.move_task`, `koll.delete_task`, `koll.restore_task`, `koll.reparent_task`, `koll.list_child_tasks`
+- `koll.search_task_matches`
+- `koll.list_project_change_events`
+- `koll.get_project_dependency_rollup`
 
 ### 8.5 Kind/allowlist tools
-- `kan.list_kind_definitions`
-- `kan.upsert_kind_definition`
-- `kan.set_project_allowed_kinds`
-- `kan.list_project_allowed_kinds`
+- `koll.list_kind_definitions`
+- `koll.upsert_kind_definition`
+- `koll.set_project_allowed_kinds`
+- `koll.list_project_allowed_kinds`
 
 ### 8.6 Lease tools
-- `kan.issue_capability_lease`
-- `kan.heartbeat_capability_lease`
-- `kan.renew_capability_lease`
-- `kan.revoke_capability_lease`
-- `kan.revoke_all_capability_leases`
+- `koll.issue_capability_lease`
+- `koll.heartbeat_capability_lease`
+- `koll.renew_capability_lease`
+- `koll.revoke_capability_lease`
+- `koll.revoke_all_capability_leases`
 
 Guardrail checks:
 - non-user mutation calls without valid lease tuple should fail closed.
 - bad lease token / wrong instance / scope mismatch should fail closed.
 
 ### 8.7 Comment tools
-- `kan.create_comment`
-- `kan.list_comments_by_target`
+- `koll.create_comment`
+- `koll.list_comments_by_target`
 
 ## 9) HTTP Parity Checks (Lane E)
 For same scope tuple and entities, compare MCP outputs against HTTP endpoints where available:

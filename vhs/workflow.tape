@@ -6,7 +6,7 @@ Set Width 1200
 Set Height 720
 Set Framerate 30
 
-Type "KAN_DB_PATH=/tmp/kan-vhs-workflow.db ./kan"
+Type "KOLL_DB_PATH=/tmp/koll-vhs-workflow.db ./koll"
 Enter
 Sleep 1s
 Type "n"
@@ -18,7 +18,7 @@ Type "l"
 Tab
 Type "2026-03-01"
 Tab
-Type "planning,kan"
+Type "planning,hakoll"
 Enter
 Sleep 600ms
 Type "i"
@@ -32,7 +32,7 @@ Type "l"
 Tab
 Type "2026-03-01"
 Tab
-Type "planning,kan"
+Type "planning,hakoll"
 Enter
 Sleep 700ms
 Type "]"

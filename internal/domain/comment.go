@@ -91,7 +91,7 @@ func NewComment(in CommentInput, now time.Time) (Comment, error) {
 
 	authorName := strings.TrimSpace(in.AuthorName)
 	if authorName == "" {
-		authorName = "kan-user"
+		authorName = "hakoll-user"
 	}
 
 	timestamp := now.UTC()

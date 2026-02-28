@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/evanschultz/kan/internal/domain"
+	"github.com/hylla/hakoll/internal/domain"
 )
 
 // TestServiceRaiseListResolveAttentionItem verifies attention lifecycle APIs on the app service.

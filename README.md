@@ -35,7 +35,7 @@ Contributor workflow and CI policy: `CONTRIBUTING.md`
 
 ## Active Status (2026-02-27)
 Implemented now:
-- Use `kan` as the canonical local planning/verification source while collaborating with an agent in terminal/chat.
+- Use `hakoll` as the canonical local planning/verification source while collaborating with an agent in terminal/chat.
 - Keep collaborative validation notes in `COLLABORATIVE_POST_FIX_VALIDATION_WORKSHEET.md`.
 - Use `MCP_FULL_TESTER_AGENT_RUNBOOK.md` for MCP full-sweep execution protocol and evidence contract.
 - Local-only TUI + SQLite workflows (including startup bootstrap, project picker, threads/comments, and import/export snapshots).
@@ -57,20 +57,20 @@ Wave-locked MCP/HTTP direction (implemented and in active dogfooding closeout):
 - Attention/blocker signaling direction is node-scoped with user-action visibility and paginated scope queries for user/agent coordination.
 - Transport-level lease/scope request contracts enforce non-user mutation guardrails.
 - MCP tool surface now includes:
-  - bootstrap guidance: `kan.get_bootstrap_guide`
-  - projects: `kan.list_projects`, `kan.create_project`, `kan.update_project`
-  - tasks/work graph: `kan.list_tasks`, `kan.create_task`, `kan.update_task`, `kan.move_task`, `kan.delete_task`, `kan.restore_task`, `kan.reparent_task`, `kan.list_child_tasks`, `kan.search_task_matches`
-  - capture/attention: `kan.capture_state`, `kan.list_attention_items`, `kan.raise_attention_item`, `kan.resolve_attention_item`
-  - change/dependency context: `kan.list_project_change_events`, `kan.get_project_dependency_rollup`
-  - kinds/allowlists: `kan.list_kind_definitions`, `kan.upsert_kind_definition`, `kan.set_project_allowed_kinds`, `kan.list_project_allowed_kinds`
-  - capability leases: `kan.issue_capability_lease`, `kan.heartbeat_capability_lease`, `kan.renew_capability_lease`, `kan.revoke_capability_lease`, `kan.revoke_all_capability_leases`
-  - comments: `kan.create_comment`, `kan.list_comments_by_target`
-  - empty-instance `capture_state` now returns deterministic `bootstrap_required` signaling, and agents can call `kan.get_bootstrap_guide` for next steps.
+  - bootstrap guidance: `koll.get_bootstrap_guide`
+  - projects: `koll.list_projects`, `koll.create_project`, `koll.update_project`
+  - tasks/work graph: `koll.list_tasks`, `koll.create_task`, `koll.update_task`, `koll.move_task`, `koll.delete_task`, `koll.restore_task`, `koll.reparent_task`, `koll.list_child_tasks`, `koll.search_task_matches`
+  - capture/attention: `koll.capture_state`, `koll.list_attention_items`, `koll.raise_attention_item`, `koll.resolve_attention_item`
+  - change/dependency context: `koll.list_project_change_events`, `koll.get_project_dependency_rollup`
+  - kinds/allowlists: `koll.list_kind_definitions`, `koll.upsert_kind_definition`, `koll.set_project_allowed_kinds`, `koll.list_project_allowed_kinds`
+  - capability leases: `koll.issue_capability_lease`, `koll.heartbeat_capability_lease`, `koll.renew_capability_lease`, `koll.revoke_capability_lease`, `koll.revoke_all_capability_leases`
+  - comments: `koll.create_comment`, `koll.list_comments_by_target`
+  - empty-instance `capture_state` now returns deterministic `bootstrap_required` signaling, and agents can call `koll.get_bootstrap_guide` for next steps.
   - parity/guardrail notes:
     - `capture_state.state_hash` is stable across MCP/HTTP calls for unchanged underlying state (timestamp jitter excluded from hash input);
-    - `kan.revoke_all_capability_leases` fails closed on invalid/unknown scope tuples;
-    - `kan.create_comment` fails closed when the target does not exist in the referenced project;
-    - `kan.update_task` title-only updates preserve existing priority when `priority` is omitted.
+    - `koll.revoke_all_capability_leases` fails closed on invalid/unknown scope tuples;
+    - `koll.create_comment` fails closed when the target does not exist in the referenced project;
+    - `koll.update_task` title-only updates preserve existing priority when `priority` is omitted.
 
 Roadmap-only in the active wave (explicitly deferred):
 - advanced import/export transport closure concerns (branch/commit-aware divergence reconciliation and conflict tooling),
@@ -89,7 +89,7 @@ just run
 Or build once and run the binary:
 ```bash
 just build
-./kan
+./koll
 ```
 
 ## Startup Behavior
@@ -102,7 +102,7 @@ just build
 ## CLI Commands
 Export current data:
 ```bash
-./kan export --out /tmp/kan.json
+./koll export --out /tmp/koll.json
 ```
 
 Snapshot export includes:
@@ -113,31 +113,31 @@ Snapshot export includes:
 
 Import snapshot:
 ```bash
-./kan import --in /tmp/kan.json
+./koll import --in /tmp/koll.json
 ```
 
 Include only active records in export:
 ```bash
-./kan export --out /tmp/kan-active.json --include-archived=false
+./koll export --out /tmp/koll-active.json --include-archived=false
 ```
 
 ## Config
-`kan` loads TOML config from platform defaults, or from `--config` / `KAN_CONFIG`.
+`koll` loads TOML config from platform defaults, or from `--config` / `KOLL_CONFIG`.
 
 Database path precedence:
 1. `--db`
-2. `KAN_DB_PATH`
+2. `KOLL_DB_PATH`
 3. TOML `database.path`
 4. platform default path
 
 Path resolution controls:
-- `--app` / `KAN_APP_NAME` to namespace paths (default `kan`)
-- `--dev` / `KAN_DEV_MODE` to use `<app>-dev` path roots
-- `kan paths` prints the resolved config/data/db paths for the current environment
+- `--app` / `KOLL_APP_NAME` to namespace paths (default `hakoll`)
+- `--dev` / `KOLL_DEV_MODE` to use `<app>-dev` path roots
+- `koll paths` prints the resolved config/data/db paths for the current environment
 - `identity.default_actor_type` (`user|agent|system`) + `identity.display_name` are defaults for new thread comment ownership
 - `paths.search_roots` stores one active default path used by bootstrap and path-pickers
 - task resource attachments require a configured per-project root mapping (`project_roots`)
-- dev mode logging writes to workspace-local `.kan/log/` when `logging.dev_file.enabled = true`
+- dev mode logging writes to workspace-local `.hakoll/log/` when `logging.dev_file.enabled = true`
   - relative dev log dirs are anchored to the nearest workspace root marker (`go.mod` or `.git`)
 - logging level is controlled by TOML `logging.level` (`debug|info|warn|error|fatal`)
 
@@ -176,7 +176,7 @@ level = "info"
 
 [logging.dev_file]
 enabled = true
-dir = ".kan/log"
+dir = ".hakoll/log"
 ```
 
 Full template: `config.example.toml`
@@ -215,11 +215,11 @@ Command palette highlights:
 - Open project thread from command palette with `thread-project` (`project-thread` alias).
 - Open selected work-item thread with `thread-item` (`item-thread` / `task-thread` aliases), or `c` from task info.
 - Supported thread targets: project, task, subtask, phase, decision, and note.
-- New comments use configured identity defaults; invalid/empty identity safely falls back to `[user] kan-user`.
+- New comments use configured identity defaults; invalid/empty identity safely falls back to `[user] koll-user`.
 
 ## Fang Context
 Fang is Charmbracelet's experimental batteries-included wrapper for Cobra CLIs.
-`kan` does not currently integrate Fang or Cobra for CLI command execution.
+`hakoll` does not currently integrate Fang or Cobra for CLI command execution.
 Current usage is Fang-inspired help copy/style in the in-app command reference overlay.
 
 ## Developer Workflow
