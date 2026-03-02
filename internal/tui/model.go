@@ -110,7 +110,9 @@ const (
 const (
 	activityLogMaxItems   = 200
 	activityLogViewWindow = 14
-	defaultHighlightColor = "212"
+	// taskInfoCommentPreviewLimit caps recent comment previews in task-info read mode.
+	taskInfoCommentPreviewLimit = 5
+	defaultHighlightColor       = "212"
 	// headerMarkText defines the boxed brand wordmark shown in the board header.
 	headerMarkText = "TILLSYN"
 	// tuiOuterHorizontalPadding keeps a small symmetric outer gutter around the whole TUI.
@@ -281,10 +283,15 @@ const (
 
 // noticesPanelItem describes one selectable row in a notices-panel section.
 type noticesPanelItem struct {
-	Label       string
-	TaskID      string
-	Activity    activityEntry
-	HasActivity bool
+	Label             string
+	TaskID            string
+	ProjectID         string
+	ScopeType         domain.ScopeLevel
+	ScopeID           string
+	ThreadTitle       string
+	ThreadDescription string
+	Activity          activityEntry
+	HasActivity       bool
 }
 
 // noticesPanelSection describes one notices-panel list section.
@@ -301,6 +308,28 @@ var noticesPanelSectionOrder = []noticesSectionID{
 	noticesSectionAttention,
 	noticesSectionSelection,
 	noticesSectionRecentActivity,
+}
+
+// noticesPanelFocusTarget identifies which notifications panel currently owns focus.
+type noticesPanelFocusTarget int
+
+// Notifications panel focus targets.
+const (
+	noticesPanelFocusProject noticesPanelFocusTarget = iota
+	noticesPanelFocusGlobal
+)
+
+// globalNoticesPanelItem describes one selectable row in the global notifications panel.
+type globalNoticesPanelItem struct {
+	StableKey         string
+	AttentionID       string
+	ProjectID         string
+	ProjectLabel      string
+	ScopeType         domain.ScopeLevel
+	ScopeID           string
+	Summary           string
+	TaskID            string
+	ThreadDescription string
 }
 
 // historyStepKind identifies one reversible operation in a mutation set.
@@ -430,12 +459,19 @@ type Model struct {
 	taskInfoTaskID           string
 	taskInfoOriginTaskID     string
 	taskInfoSubtaskIdx       int
+	taskInfoComments         []domain.Comment
+	taskInfoCommentsError    string
 	taskFormParentID         string
 	taskFormKind             domain.WorkKind
 	taskFormScope            domain.KindAppliesTo
 	pendingProjectID         string
 	pendingFocusTaskID       string
 	pendingActivityJumpTask  string
+	pendingOpenTaskInfoID    string
+	pendingOpenActivityLog   bool
+	pendingOpenThreadTarget  domain.CommentTarget
+	pendingOpenThreadTitle   string
+	pendingOpenThreadBody    string
 
 	lastArchivedTaskID string
 
@@ -462,16 +498,22 @@ type Model struct {
 	selectedTaskIDs  map[string]struct{}
 	activityLog      []activityEntry
 	noticesFocused   bool
+	noticesPanel     noticesPanelFocusTarget
 	noticesSection   noticesSectionID
 	noticesWarnings  int
 	noticesAttention int
 	noticesSelection int
 	noticesActivity  int
-	activityInfoItem activityEntry
-	undoStack        []historyActionSet
-	redoStack        []historyActionSet
-	nextHistoryID    int
-	dependencyRollup domain.DependencyRollup
+	attentionItems   []domain.AttentionItem
+	globalNotices    []globalNoticesPanelItem
+	globalNoticesIdx int
+	// globalNoticesPartialCount reports how many projects were skipped while aggregating global notices.
+	globalNoticesPartialCount int
+	activityInfoItem          activityEntry
+	undoStack                 []historyActionSet
+	redoStack                 []historyActionSet
+	nextHistoryID             int
+	dependencyRollup          domain.DependencyRollup
 
 	resourcePickerBack   inputMode
 	resourcePickerTaskID string
@@ -516,6 +558,8 @@ type Model struct {
 	threadComments            []domain.Comment
 	threadScroll              int
 	threadPendingCommentBody  string
+	threadComposerActive      bool
+	threadDetailsActive       bool
 	threadMarkdown            markdownRenderer
 
 	autoRefreshInterval time.Duration
@@ -525,15 +569,18 @@ type Model struct {
 
 // loadedMsg carries message data through update handling.
 type loadedMsg struct {
-	projects                 []domain.Project
-	selectedProject          int
-	columns                  []domain.Column
-	tasks                    []domain.Task
-	activityEntries          []activityEntry
-	rollup                   domain.DependencyRollup
-	err                      error
-	attentionItemsCount      int
-	attentionUserActionCount int
+	projects                  []domain.Project
+	selectedProject           int
+	columns                   []domain.Column
+	tasks                     []domain.Task
+	activityEntries           []activityEntry
+	attentionItems            []domain.AttentionItem
+	globalNotices             []globalNoticesPanelItem
+	globalNoticesPartialCount int
+	rollup                    domain.DependencyRollup
+	err                       error
+	attentionItemsCount       int
+	attentionUserActionCount  int
 }
 
 // resourcePickerLoadedMsg carries resource picker directory entries.
@@ -712,7 +759,9 @@ func NewModel(svc Service, opts ...Option) Model {
 		highlightColor:           defaultHighlightColor,
 		selectedTaskIDs:          map[string]struct{}{},
 		activityLog:              []activityEntry{},
+		noticesPanel:             noticesPanelFocusProject,
 		noticesSection:           noticesSectionRecentActivity,
+		globalNotices:            []globalNoticesPanelItem{},
 		confirmDelete:            true,
 		confirmArchive:           true,
 		confirmHardDelete:        true,
@@ -780,6 +829,10 @@ func (m *Model) applyLoadedMsg(msg loadedMsg) tea.Cmd {
 		m.err = msg.err
 		return nil
 	}
+	previousGlobalNoticesKey := ""
+	if selectedGlobalNotice, ok := m.selectedGlobalNoticesItem(); ok {
+		previousGlobalNoticesKey = strings.TrimSpace(selectedGlobalNotice.StableKey)
+	}
 	m.err = nil
 	m.projects = msg.projects
 	m.selectedProject = msg.selectedProject
@@ -788,8 +841,16 @@ func (m *Model) applyLoadedMsg(msg loadedMsg) tea.Cmd {
 	if msg.activityEntries != nil {
 		m.activityLog = append([]activityEntry(nil), msg.activityEntries...)
 	}
+	if msg.attentionItems != nil {
+		m.attentionItems = append([]domain.AttentionItem(nil), msg.attentionItems...)
+	}
+	if msg.globalNotices != nil {
+		m.globalNotices = append([]globalNoticesPanelItem(nil), msg.globalNotices...)
+		m.reanchorGlobalNoticesSelection(previousGlobalNoticesKey)
+	}
+	m.globalNoticesPartialCount = max(0, msg.globalNoticesPartialCount)
 	m.dependencyRollup = msg.rollup
-	m.warnings = buildScopeWarnings(msg.attentionItemsCount, msg.attentionUserActionCount)
+	m.warnings = buildScopeWarnings(msg.attentionItemsCount, msg.attentionUserActionCount, m.globalNoticesPartialCount)
 	if len(m.projects) == 0 {
 		m.selectedProject = 0
 		m.selectedColumn = 0
@@ -798,6 +859,12 @@ func (m *Model) applyLoadedMsg(msg loadedMsg) tea.Cmd {
 		m.columns = nil
 		m.tasks = nil
 		m.activityLog = []activityEntry{}
+		m.attentionItems = []domain.AttentionItem{}
+		m.globalNotices = []globalNoticesPanelItem{}
+		m.globalNoticesIdx = 0
+		m.globalNoticesPartialCount = 0
+		m.pendingOpenActivityLog = false
+		m.clearPendingNotificationThread()
 		if m.startupBootstrapRequired {
 			if m.mode != modeBootstrapSettings && m.mode != modeAddProject && m.mode != modeEditProject {
 				return m.startBootstrapSettingsMode(true)
@@ -833,6 +900,38 @@ func (m *Model) applyLoadedMsg(msg loadedMsg) tea.Cmd {
 		m.focusTaskByID(m.pendingFocusTaskID)
 		m.pendingFocusTaskID = ""
 	}
+	if pendingTaskID := strings.TrimSpace(m.pendingOpenTaskInfoID); pendingTaskID != "" {
+		if _, ok := m.taskByID(pendingTaskID); ok {
+			m.focusTaskByID(pendingTaskID)
+			if m.openTaskInfo(pendingTaskID, "task info") {
+				m.noticesFocused = false
+				m.clearPendingNotificationThread()
+			} else {
+				m.status = "notification task not found"
+			}
+			m.pendingOpenTaskInfoID = ""
+		} else if !m.showArchived {
+			m.showArchived = true
+			m.pendingFocusTaskID = pendingTaskID
+			m.status = "loading notification task..."
+			return m.loadData
+		} else {
+			m.pendingOpenTaskInfoID = ""
+			if cmd := m.applyPendingNotificationThread(); cmd != nil {
+				return cmd
+			}
+			m.status = "notification task not found"
+		}
+	}
+	if cmd := m.applyPendingNotificationThread(); cmd != nil {
+		return cmd
+	}
+	if m.pendingOpenActivityLog {
+		m.mode = modeActivityLog
+		m.noticesFocused = false
+		m.pendingOpenActivityLog = false
+		m.status = "activity log"
+	}
 	if pendingJump := strings.TrimSpace(m.pendingActivityJumpTask); pendingJump != "" {
 		if _, ok := m.taskByID(pendingJump); ok {
 			m.prepareActivityJumpContext(pendingJump)
@@ -864,6 +963,59 @@ func (m *Model) applyLoadedMsg(msg loadedMsg) tea.Cmd {
 		m.status = "ready"
 	}
 	return nil
+}
+
+// setPendingNotificationThread stores one deferred thread-open action for applyLoadedMsg.
+func (m *Model) setPendingNotificationThread(target domain.CommentTarget, title, body string) {
+	m.pendingOpenThreadTarget = target
+	m.pendingOpenThreadTitle = strings.TrimSpace(title)
+	m.pendingOpenThreadBody = strings.TrimSpace(body)
+}
+
+// clearPendingNotificationThread clears one deferred thread-open action.
+func (m *Model) clearPendingNotificationThread() {
+	m.pendingOpenThreadTarget = domain.CommentTarget{}
+	m.pendingOpenThreadTitle = ""
+	m.pendingOpenThreadBody = ""
+}
+
+// pendingNotificationThread returns one normalized deferred thread-open action when available.
+func (m Model) pendingNotificationThread() (domain.CommentTarget, string, string, bool) {
+	target, err := domain.NormalizeCommentTarget(m.pendingOpenThreadTarget)
+	if err != nil {
+		return domain.CommentTarget{}, "", "", false
+	}
+	title := strings.TrimSpace(m.pendingOpenThreadTitle)
+	if title == "" {
+		title = "notification thread"
+	}
+	return target, title, strings.TrimSpace(m.pendingOpenThreadBody), true
+}
+
+// applyPendingNotificationThread opens one deferred notification thread after project data reload.
+func (m *Model) applyPendingNotificationThread() tea.Cmd {
+	target, title, body, ok := m.pendingNotificationThread()
+	if !ok {
+		return nil
+	}
+	updated, cmd := m.startNotificationThread(target, title, body)
+	next, castOK := updated.(Model)
+	if castOK {
+		*m = next
+	}
+	m.clearPendingNotificationThread()
+	return cmd
+}
+
+// startNotificationThread opens thread mode from one notifications-panel action.
+func (m Model) startNotificationThread(target domain.CommentTarget, title, body string) (tea.Model, tea.Cmd) {
+	updated, cmd := m.startThread(modeNone, target, title, body)
+	next, ok := updated.(Model)
+	if !ok {
+		return updated, cmd
+	}
+	next.noticesFocused = false
+	return next, cmd
 }
 
 // Init handles init.
@@ -1391,6 +1543,7 @@ func (m Model) View() tea.View {
 				muted,
 				dim,
 				noticesWidth,
+				colHeight,
 				attentionItems,
 				attentionTotal,
 				attentionBlocked,
@@ -1428,7 +1581,7 @@ func (m Model) View() tea.View {
 	infoLine := m.renderInfoLine(project, muted)
 
 	sections := []string{header, headerRule}
-	if path, _ := m.projectionPathWithProject(project.Name); path != "" {
+	if path, _ := m.projectionPathWithProject(projectDisplayName(project)); path != "" {
 		sections = append(sections, statusStyle.Render("path: "+truncate(path, max(24, m.width-6))), "")
 	}
 	sections = append(sections, mainArea)
@@ -1571,17 +1724,35 @@ func (m Model) loadData() tea.Msg {
 		activityEntries = mapChangeEventsToActivityEntries(events)
 	}
 
-	attentionItems, attentionErr := m.svc.ListAttentionItems(context.Background(), app.ListAttentionItemsInput{
-		Level: domain.LevelTupleInput{
-			ProjectID: projectID,
-			ScopeType: domain.ScopeLevelProject,
-			ScopeID:   projectID,
-		},
-		UnresolvedOnly: true,
-		Limit:          256,
-	})
-	if attentionErr != nil {
-		return loadedMsg{err: attentionErr}
+	attentionItems := []domain.AttentionItem{}
+	globalNotices := make([]globalNoticesPanelItem, 0)
+	globalNoticesPartialCount := 0
+	for _, project := range projects {
+		projectAttention, attentionErr := m.svc.ListAttentionItems(context.Background(), app.ListAttentionItemsInput{
+			Level: domain.LevelTupleInput{
+				ProjectID: project.ID,
+				ScopeType: domain.ScopeLevelProject,
+				ScopeID:   project.ID,
+			},
+			UnresolvedOnly: true,
+			Limit:          256,
+		})
+		if attentionErr != nil {
+			if project.ID == projectID {
+				return loadedMsg{err: attentionErr}
+			}
+			globalNoticesPartialCount++
+			continue
+		}
+		if project.ID == projectID {
+			attentionItems = append(attentionItems, projectAttention...)
+		}
+		for _, item := range projectAttention {
+			if !item.RequiresUserAction {
+				continue
+			}
+			globalNotices = append(globalNotices, globalNoticesPanelItemFromAttention(project, item))
+		}
 	}
 	requiresUserAction := 0
 	for _, item := range attentionItems {
@@ -1591,14 +1762,17 @@ func (m Model) loadData() tea.Msg {
 	}
 
 	return loadedMsg{
-		projects:                 projects,
-		selectedProject:          projectIdx,
-		columns:                  columns,
-		tasks:                    tasks,
-		activityEntries:          activityEntries,
-		rollup:                   rollup,
-		attentionItemsCount:      len(attentionItems),
-		attentionUserActionCount: requiresUserAction,
+		projects:                  projects,
+		selectedProject:           projectIdx,
+		columns:                   columns,
+		tasks:                     tasks,
+		activityEntries:           activityEntries,
+		attentionItems:            attentionItems,
+		globalNotices:             globalNotices,
+		globalNoticesPartialCount: globalNoticesPartialCount,
+		rollup:                    rollup,
+		attentionItemsCount:       len(attentionItems),
+		attentionUserActionCount:  requiresUserAction,
 	}
 }
 
@@ -2704,6 +2878,9 @@ func (m Model) panelFocusCount() int {
 	count := len(m.columns)
 	if m.isNoticesPanelVisible() {
 		count++
+		if m.hasGlobalNoticesPanel() {
+			count++
+		}
 	}
 	return count
 }
@@ -2711,6 +2888,9 @@ func (m Model) panelFocusCount() int {
 // panelFocusIndex resolves the focused panel index across board columns and notices.
 func (m Model) panelFocusIndex() int {
 	if m.noticesFocused && m.isNoticesPanelVisible() {
+		if m.noticesPanel == noticesPanelFocusGlobal && m.hasGlobalNoticesPanel() {
+			return len(m.columns) + 1
+		}
 		return len(m.columns)
 	}
 	if len(m.columns) == 0 {
@@ -2728,11 +2908,26 @@ func (m *Model) setPanelFocusIndex(idx int, resetTask bool) bool {
 	}
 	idx = clamp(idx, 0, total-1)
 	current := m.panelFocusIndex()
-	if m.isNoticesPanelVisible() && idx == len(m.columns) {
-		changed := !m.noticesFocused || current != idx
-		m.noticesFocused = true
-		m.clampNoticesSelection()
-		return changed
+	if m.isNoticesPanelVisible() {
+		projectPanelIdx := len(m.columns)
+		globalPanelIdx := len(m.columns) + 1
+		switch idx {
+		case projectPanelIdx:
+			changed := !m.noticesFocused || current != idx
+			m.noticesFocused = true
+			m.noticesPanel = noticesPanelFocusProject
+			m.clampNoticesSelection()
+			return changed
+		case globalPanelIdx:
+			if !m.hasGlobalNoticesPanel() {
+				return false
+			}
+			changed := !m.noticesFocused || current != idx
+			m.noticesFocused = true
+			m.noticesPanel = noticesPanelFocusGlobal
+			m.clampGlobalNoticesSelection()
+			return changed
+		}
 	}
 	if len(m.columns) == 0 {
 		m.noticesFocused = false
@@ -2780,8 +2975,24 @@ func (m *Model) normalizePanelFocus() {
 		m.noticesFocused = false
 	}
 	if m.noticesFocused {
-		m.clampNoticesSelection()
+		if m.noticesPanel == noticesPanelFocusGlobal && m.hasGlobalNoticesPanel() {
+			m.clampGlobalNoticesSelection()
+		} else {
+			m.noticesPanel = noticesPanelFocusProject
+			m.clampNoticesSelection()
+		}
 	}
+}
+
+// noticesFocusStatus returns a status label for the active panel focus target.
+func (m Model) noticesFocusStatus() string {
+	if !m.noticesFocused {
+		return "board focus"
+	}
+	if m.noticesPanel == noticesPanelFocusGlobal {
+		return "global notifications focus"
+	}
+	return "project notifications focus"
 }
 
 // bootstrapActorTypeIndex resolves one actor type to its canonical bootstrap option index.
@@ -4961,39 +5172,23 @@ func (m Model) handleNormalModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.status = "panel focus unchanged"
 			return m, nil
 		}
-		if m.noticesFocused {
-			m.status = "notices focus"
-		} else {
-			m.status = "board focus"
-		}
+		m.status = m.noticesFocusStatus()
 		return m, nil
 	case isBackwardTabKey(msg):
 		if !m.cyclePanelFocus(-1, true, true) {
 			m.status = "panel focus unchanged"
 			return m, nil
 		}
-		if m.noticesFocused {
-			m.status = "notices focus"
-		} else {
-			m.status = "board focus"
-		}
+		m.status = m.noticesFocusStatus()
 		return m, nil
 	case key.Matches(msg, m.keys.moveLeft):
 		if m.cyclePanelFocus(-1, false, true) {
-			if m.noticesFocused {
-				m.status = "notices focus"
-			} else {
-				m.status = "board focus"
-			}
+			m.status = m.noticesFocusStatus()
 		}
 		return m, nil
 	case key.Matches(msg, m.keys.moveRight):
 		if m.cyclePanelFocus(1, false, true) {
-			if m.noticesFocused {
-				m.status = "notices focus"
-			} else {
-				m.status = "board focus"
-			}
+			m.status = m.noticesFocusStatus()
 		}
 		return m, nil
 	case key.Matches(msg, m.keys.toggleSelectMode):
@@ -5009,15 +5204,36 @@ func (m Model) handleNormalModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 // handleNoticesPanelNormalKey handles board-mode input while notices panel owns focus.
 func (m Model) handleNoticesPanelNormalKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.noticesPanel == noticesPanelFocusGlobal {
+		switch {
+		case key.Matches(msg, m.keys.moveDown):
+			if m.moveGlobalNoticesSelection(1) {
+				m.status = "global notifications"
+			}
+			return m, nil
+		case key.Matches(msg, m.keys.moveUp):
+			if m.moveGlobalNoticesSelection(-1) {
+				m.status = "global notifications"
+			}
+			return m, nil
+		case msg.Code == tea.KeyEnter || msg.String() == "enter":
+			return m.activateGlobalNoticesSelection()
+		case key.Matches(msg, m.keys.activityLog):
+			return m, m.openActivityLog()
+		default:
+			return m, nil
+		}
+	}
+
 	switch {
 	case key.Matches(msg, m.keys.moveDown):
 		if m.moveNoticesSelection(1) {
-			m.status = "notices: " + strings.ToLower(noticesSectionTitle(m.noticesSection))
+			m.status = "project notifications: " + strings.ToLower(noticesSectionTitle(m.noticesSection))
 		}
 		return m, nil
 	case key.Matches(msg, m.keys.moveUp):
 		if m.moveNoticesSelection(-1) {
-			m.status = "notices: " + strings.ToLower(noticesSectionTitle(m.noticesSection))
+			m.status = "project notifications: " + strings.ToLower(noticesSectionTitle(m.noticesSection))
 		}
 		return m, nil
 	case msg.Code == tea.KeyEnter || msg.String() == "enter":
@@ -5201,7 +5417,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.mode = modeNone
 			if m.isNoticesPanelVisible() {
 				_ = m.setPanelFocusIndex(len(m.columns), false)
-				m.status = "notices focus"
+				m.status = m.noticesFocusStatus()
 			} else {
 				m.noticesFocused = false
 				m.status = "board focus"
@@ -5230,16 +5446,65 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.mode == modeThread {
-		if handled, status := applyClipboardShortcutToInput(msg, &m.threadInput); handled {
-			m.status = status
-			return m, nil
+		if m.threadComposerActive {
+			if handled, status := applyClipboardShortcutToInput(msg, &m.threadInput); handled {
+				m.status = status
+				return m, nil
+			}
+		}
+		updateThreadInput := func() (tea.Model, tea.Cmd) {
+			var cmd tea.Cmd
+			m.threadInput, cmd = m.threadInput.Update(msg)
+			return m, cmd
 		}
 		switch {
+		case msg.String() == "i":
+			if m.threadComposerActive {
+				return updateThreadInput()
+			}
+			m.threadDetailsActive = false
+			m.threadComposerActive = true
+			m.status = "comment composer"
+			return m, m.threadInput.Focus()
+		case msg.String() == "e":
+			if m.threadComposerActive {
+				return updateThreadInput()
+			}
+			if m.threadDetailsActive {
+				return m.startThreadEditFlow()
+			}
+			m.threadDetailsActive = true
+			m.status = "thread details"
+			return m, nil
+		case msg.Code == tea.KeyTab || msg.String() == "tab" || msg.String() == "ctrl+i":
+			if m.threadComposerActive {
+				m.threadComposerActive = false
+				m.threadInput.Blur()
+				m.status = "thread read mode"
+				return m, nil
+			}
+			m.threadDetailsActive = false
+			m.threadComposerActive = true
+			m.status = "comment composer"
+			return m, m.threadInput.Focus()
 		case msg.Code == tea.KeyEscape || msg.String() == "esc":
+			if m.threadComposerActive {
+				m.threadComposerActive = false
+				m.threadInput.Blur()
+				m.status = "thread read mode"
+				return m, nil
+			}
+			if m.threadDetailsActive {
+				m.threadDetailsActive = false
+				m.status = "thread read mode"
+				return m, nil
+			}
 			m.threadInput.Blur()
 			m.threadPendingCommentBody = ""
+			m.threadDetailsActive = false
 			if m.threadBackMode == modeTaskInfo {
 				m.mode = modeTaskInfo
+				m.loadTaskInfoComments(m.taskInfoTaskID)
 				m.status = "task info"
 				return m, nil
 			}
@@ -5262,6 +5527,13 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.threadScroll += 1000
 			return m, nil
 		case msg.Code == tea.KeyEnter || msg.String() == "enter":
+			if !m.threadComposerActive {
+				if m.threadDetailsActive {
+					return m.startThreadEditFlow()
+				}
+				m.status = "press e for details or i to compose a comment"
+				return m, nil
+			}
 			body := strings.TrimSpace(m.threadInput.Value())
 			if body == "" {
 				m.status = "comment body required"
@@ -5273,9 +5545,10 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.status = "posting comment..."
 			return m, m.createThreadCommentCmd(body)
 		default:
-			var cmd tea.Cmd
-			m.threadInput, cmd = m.threadInput.Update(msg)
-			return m, cmd
+			if !m.threadComposerActive {
+				return m, nil
+			}
+			return updateThreadInput()
 		}
 	}
 
@@ -5293,6 +5566,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				if _, ok := m.taskByID(originID); ok {
 					m.taskInfoTaskID = originID
 					m.taskInfoSubtaskIdx = 0
+					m.loadTaskInfoComments(originID)
 					m.status = "task info"
 					return m, nil
 				}
@@ -5322,6 +5596,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			subtask := subtasks[clamp(m.taskInfoSubtaskIdx, 0, len(subtasks)-1)]
 			m.taskInfoTaskID = subtask.ID
 			m.taskInfoSubtaskIdx = 0
+			m.loadTaskInfoComments(subtask.ID)
 			m.status = "subtask info"
 			return m, nil
 		case "backspace", "h", "left":
@@ -5334,6 +5609,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			m.taskInfoTaskID = parentID
 			m.taskInfoSubtaskIdx = 0
+			m.loadTaskInfoComments(parentID)
 			m.status = "parent task info"
 			return m, nil
 		case "e":
@@ -8750,13 +9026,27 @@ func (m Model) scopeAttentionSummary(byID map[string]domain.Task) (int, int, int
 }
 
 // buildScopeWarnings synthesizes warning text from attention counts.
-func buildScopeWarnings(attentionItemsCount, attentionUserActionCount int) []string {
-	warnings := make([]string, 0, 2)
+func buildScopeWarnings(attentionItemsCount, attentionUserActionCount, globalNoticesPartialCount int) []string {
+	warnings := make([]string, 0, 3)
 	if attentionItemsCount > 0 {
 		warnings = append(warnings, fmt.Sprintf("%d work items report open blockers", attentionItemsCount))
 	}
 	if attentionUserActionCount > 0 {
 		warnings = append(warnings, fmt.Sprintf("%d attention items require user action", attentionUserActionCount))
+	}
+	if globalNoticesPartialCount > 0 {
+		projectLabel := "projects"
+		if globalNoticesPartialCount == 1 {
+			projectLabel = "project"
+		}
+		warnings = append(
+			warnings,
+			fmt.Sprintf(
+				"global notices partial: %d %s unavailable",
+				globalNoticesPartialCount,
+				projectLabel,
+			),
+		)
 	}
 	return warnings
 }
@@ -9114,6 +9404,204 @@ func (m Model) canFocusNoticesPanel() bool {
 	return m.isNoticesPanelVisible()
 }
 
+// hasGlobalNoticesPanel reports whether the global-notifications panel should be rendered and focusable.
+func (m Model) hasGlobalNoticesPanel() bool {
+	return true
+}
+
+// globalNoticesEmptyRowKey identifies the deterministic placeholder row when no global notices are available.
+const globalNoticesEmptyRowKey = "global-notices:empty"
+
+// notificationScopeLevel normalizes attention scope values and defaults empties to project scope.
+func notificationScopeLevel(scopeType domain.ScopeLevel) domain.ScopeLevel {
+	scopeType = domain.NormalizeScopeLevel(scopeType)
+	if scopeType == "" {
+		return domain.ScopeLevelProject
+	}
+	return scopeType
+}
+
+// notificationTaskIDFromScope resolves a task-info target id only for task/subtask scoped rows.
+func notificationTaskIDFromScope(scopeType domain.ScopeLevel, scopeID string) string {
+	if scopeID == "" {
+		return ""
+	}
+	switch notificationScopeLevel(scopeType) {
+	case domain.ScopeLevelTask, domain.ScopeLevelSubtask:
+		return scopeID
+	default:
+		return ""
+	}
+}
+
+// commentTargetTypeForScopeLevel maps scope levels into comment-target types.
+func commentTargetTypeForScopeLevel(scopeType domain.ScopeLevel) (domain.CommentTargetType, bool) {
+	switch notificationScopeLevel(scopeType) {
+	case domain.ScopeLevelProject:
+		return domain.CommentTargetTypeProject, true
+	case domain.ScopeLevelBranch:
+		return domain.CommentTargetTypeBranch, true
+	case domain.ScopeLevelPhase:
+		return domain.CommentTargetTypePhase, true
+	case domain.ScopeLevelSubphase:
+		return domain.CommentTargetTypeSubphase, true
+	case domain.ScopeLevelTask:
+		return domain.CommentTargetTypeTask, true
+	case domain.ScopeLevelSubtask:
+		return domain.CommentTargetTypeSubtask, true
+	default:
+		return "", false
+	}
+}
+
+// commentTargetForScope normalizes one comment target from attention scope metadata.
+func commentTargetForScope(projectID string, scopeType domain.ScopeLevel, scopeID string) (domain.CommentTarget, bool) {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return domain.CommentTarget{}, false
+	}
+	scopeType = notificationScopeLevel(scopeType)
+	scopeID = strings.TrimSpace(scopeID)
+	if scopeType == domain.ScopeLevelProject && scopeID == "" {
+		scopeID = projectID
+	}
+	targetType, ok := commentTargetTypeForScopeLevel(scopeType)
+	if !ok {
+		return domain.CommentTarget{}, false
+	}
+	target, err := domain.NormalizeCommentTarget(domain.CommentTarget{
+		ProjectID:  projectID,
+		TargetType: targetType,
+		TargetID:   scopeID,
+	})
+	if err != nil {
+		return domain.CommentTarget{}, false
+	}
+	return target, true
+}
+
+// notificationAttentionLabel renders one scoped attention-row label for the project notifications panel.
+func notificationAttentionLabel(scopeType domain.ScopeLevel, summary string) string {
+	summary = strings.TrimSpace(summary)
+	if summary == "" {
+		summary = "attention item"
+	}
+	return fmt.Sprintf("%s: %s", notificationScopeLevel(scopeType), summary)
+}
+
+// notificationThreadTitle renders one deterministic thread title for notification-driven opens.
+func notificationThreadTitle(scopeType domain.ScopeLevel, summary string) string {
+	summary = strings.TrimSpace(summary)
+	if summary == "" {
+		summary = "attention item"
+	}
+	return fmt.Sprintf("%s attention: %s", notificationScopeLevel(scopeType), summary)
+}
+
+// globalNoticesTaskIDFromAttention resolves one task/subtask scoped id for task-info opens.
+func globalNoticesTaskIDFromAttention(item domain.AttentionItem) string {
+	scopeID := strings.TrimSpace(item.ScopeID)
+	if scopeID == "" {
+		return ""
+	}
+	scopeType := notificationScopeLevel(item.ScopeType)
+	switch scopeType {
+	case domain.ScopeLevelTask, domain.ScopeLevelSubtask:
+		return notificationTaskIDFromScope(scopeType, scopeID)
+	}
+	return ""
+}
+
+// globalNoticesStableKey returns one deterministic row identity for reload re-anchoring.
+func globalNoticesStableKey(projectID, attentionID string, scopeType domain.ScopeLevel, scopeID, summary string) string {
+	projectID = strings.TrimSpace(projectID)
+	attentionID = strings.TrimSpace(attentionID)
+	scopeType = domain.NormalizeScopeLevel(scopeType)
+	scopeID = strings.TrimSpace(scopeID)
+	if attentionID != "" {
+		return fmt.Sprintf("project:%s|attention:%s|scope:%s|id:%s", projectID, attentionID, scopeType, scopeID)
+	}
+	if scopeType != "" || scopeID != "" {
+		return fmt.Sprintf("project:%s|scope:%s|id:%s", projectID, scopeType, scopeID)
+	}
+	summary = strings.TrimSpace(summary)
+	if summary == "" {
+		summary = "attention item"
+	}
+	return fmt.Sprintf("project:%s|summary:%s", projectID, summary)
+}
+
+// globalNoticesPanelItemFromAttention maps one attention item into a global notifications panel row.
+func globalNoticesPanelItemFromAttention(project domain.Project, item domain.AttentionItem) globalNoticesPanelItem {
+	summary := strings.TrimSpace(item.Summary)
+	if summary == "" {
+		summary = "attention item"
+	}
+	projectID := strings.TrimSpace(project.ID)
+	scopeType := notificationScopeLevel(item.ScopeType)
+	scopeID := strings.TrimSpace(item.ScopeID)
+	if scopeType == domain.ScopeLevelProject && scopeID == "" {
+		scopeID = projectID
+	}
+	attentionID := strings.TrimSpace(item.ID)
+	return globalNoticesPanelItem{
+		StableKey:         globalNoticesStableKey(projectID, attentionID, scopeType, scopeID, summary),
+		AttentionID:       attentionID,
+		ProjectID:         projectID,
+		ProjectLabel:      projectDisplayName(project),
+		ScopeType:         scopeType,
+		ScopeID:           scopeID,
+		Summary:           summary,
+		TaskID:            globalNoticesTaskIDFromAttention(item),
+		ThreadDescription: strings.TrimSpace(item.BodyMarkdown),
+	}
+}
+
+// globalNoticesPanelItemsForInteraction returns selectable global-notifications rows.
+func (m Model) globalNoticesPanelItemsForInteraction() []globalNoticesPanelItem {
+	if len(m.globalNotices) == 0 {
+		return []globalNoticesPanelItem{{
+			StableKey: globalNoticesEmptyRowKey,
+			Summary:   "no notifications requiring user action",
+		}}
+	}
+	return append([]globalNoticesPanelItem(nil), m.globalNotices...)
+}
+
+// reanchorGlobalNoticesSelection keeps focus on one stable row key after global-notices reloads.
+func (m *Model) reanchorGlobalNoticesSelection(previousKey string) {
+	items := m.globalNoticesPanelItemsForInteraction()
+	if len(items) == 0 {
+		m.globalNoticesIdx = 0
+		return
+	}
+	previousKey = strings.TrimSpace(previousKey)
+	if previousKey != "" {
+		for idx, item := range items {
+			if strings.TrimSpace(item.StableKey) == previousKey {
+				m.globalNoticesIdx = idx
+				return
+			}
+		}
+	}
+	m.globalNoticesIdx = clamp(m.globalNoticesIdx, 0, len(items)-1)
+}
+
+// clampGlobalNoticesSelection keeps the global-notifications row cursor within bounds.
+func (m *Model) clampGlobalNoticesSelection() {
+	m.reanchorGlobalNoticesSelection("")
+}
+
+// selectedGlobalNoticesItem returns the currently selected global-notifications row.
+func (m Model) selectedGlobalNoticesItem() (globalNoticesPanelItem, bool) {
+	items := m.globalNoticesPanelItemsForInteraction()
+	if len(items) == 0 {
+		return globalNoticesPanelItem{}, false
+	}
+	idx := clamp(m.globalNoticesIdx, 0, len(items)-1)
+	return items[idx], true
+}
+
 // recentActivityPanelEntries returns newest-first activity entries for notices rendering/navigation.
 func (m Model) recentActivityPanelEntries() []activityEntry {
 	if len(m.activityLog) == 0 {
@@ -9182,29 +9670,58 @@ func noticesSectionPosition(section noticesSectionID) int {
 	return -1
 }
 
-// noticesAttentionPanelItems builds selectable attention rows, preserving board display order.
-func (m Model) noticesAttentionPanelItems(byID map[string]domain.Task, fallback []string) []noticesPanelItem {
-	out := make([]noticesPanelItem, 0)
-	for _, column := range m.columns {
-		for _, task := range m.boardTasksForColumn(column.ID) {
-			count := m.taskAttentionCount(task, byID)
-			if count <= 0 {
-				continue
-			}
-			out = append(out, noticesPanelItem{
-				Label:  fmt.Sprintf("%s !%d", task.Title, count),
-				TaskID: task.ID,
-			})
-		}
+// noticesPanelItemFromAttention maps one unresolved attention record into an actionable notices row.
+func (m Model) noticesPanelItemFromAttention(item domain.AttentionItem) (noticesPanelItem, bool) {
+	projectID, _ := m.currentProjectID()
+	scopeType := notificationScopeLevel(item.ScopeType)
+	scopeID := strings.TrimSpace(item.ScopeID)
+	if scopeType == domain.ScopeLevelProject && scopeID == "" {
+		scopeID = projectID
 	}
-	if len(out) == 0 {
-		for _, item := range fallback {
-			item = strings.TrimSpace(item)
-			if item == "" {
-				continue
-			}
-			out = append(out, noticesPanelItem{Label: item})
+	label := notificationAttentionLabel(scopeType, item.Summary)
+	if label == "" {
+		return noticesPanelItem{}, false
+	}
+	rowProjectID := strings.TrimSpace(item.ProjectID)
+	if rowProjectID == "" {
+		rowProjectID = projectID
+	}
+	return noticesPanelItem{
+		Label:             label,
+		TaskID:            notificationTaskIDFromScope(scopeType, scopeID),
+		ProjectID:         rowProjectID,
+		ScopeType:         scopeType,
+		ScopeID:           scopeID,
+		ThreadTitle:       notificationThreadTitle(scopeType, item.Summary),
+		ThreadDescription: strings.TrimSpace(item.BodyMarkdown),
+	}, true
+}
+
+// noticesWarningPanelItems builds actionable warning rows from unresolved attention records.
+func (m Model) noticesWarningPanelItems() []noticesPanelItem {
+	out := make([]noticesPanelItem, 0, len(m.attentionItems))
+	for _, item := range m.attentionItems {
+		row, ok := m.noticesPanelItemFromAttention(item)
+		if !ok {
+			continue
 		}
+		out = append(out, row)
+	}
+	return out
+}
+
+// noticesAttentionPanelItems builds selectable action-required rows from persisted attention records.
+func (m Model) noticesAttentionPanelItems() []noticesPanelItem {
+	out := make([]noticesPanelItem, 0, len(m.attentionItems))
+	for _, item := range m.attentionItems {
+		if !item.RequiresUserAction {
+			continue
+		}
+		row, ok := m.noticesPanelItemFromAttention(item)
+		if !ok {
+			continue
+		}
+		out = append(out, row)
 	}
 	return out
 }
@@ -9221,40 +9738,28 @@ func (m Model) noticesPanelSections(
 	attentionTop []string,
 ) []noticesPanelSection {
 	sections := make([]noticesPanelSection, 0, len(noticesPanelSectionOrder))
+	_ = attentionTop
 
-	attentionRows := m.noticesAttentionPanelItems(m.tasksByID(), attentionTop)
-	if len(attentionRows) == 0 {
-		attentionRows = append(attentionRows, noticesPanelItem{Label: "no unresolved notices"})
-	}
-
-	warningTaskID := ""
-	if attentionItems == 1 {
-		for _, row := range attentionRows {
-			if taskID := strings.TrimSpace(row.TaskID); taskID != "" {
-				warningTaskID = taskID
-				break
-			}
-		}
-	}
-
-	warningItems := make([]noticesPanelItem, 0, max(1, len(m.warnings)))
-	if len(m.warnings) == 0 {
+	warningItems := m.noticesWarningPanelItems()
+	if len(warningItems) == 0 {
 		warningItems = append(warningItems, noticesPanelItem{Label: "none"})
-	} else {
-		for _, warning := range m.warnings {
-			warningItems = append(warningItems, noticesPanelItem{
-				Label:  warning,
-				TaskID: warningTaskID,
-			})
-		}
 	}
 	sections = append(sections, noticesPanelSection{
-		ID:    noticesSectionWarnings,
-		Title: noticesSectionTitle(noticesSectionWarnings),
-		Items: warningItems,
+		ID:      noticesSectionWarnings,
+		Title:   noticesSectionTitle(noticesSectionWarnings),
+		Summary: append([]string(nil), m.warnings...),
+		Items:   warningItems,
 	})
 
+	attentionRows := m.noticesAttentionPanelItems()
+	actionableAttentionCount := len(attentionRows)
+	if actionableAttentionCount == 0 {
+		attentionRows = append(attentionRows, noticesPanelItem{Label: "no notifications requiring user action"})
+	}
 	attentionSummary := []string{}
+	if actionableAttentionCount > 0 {
+		attentionSummary = append(attentionSummary, fmt.Sprintf("requires action: %d", actionableAttentionCount))
+	}
 	if attentionTotal > 0 {
 		attentionSummary = append(
 			attentionSummary,
@@ -9419,6 +9924,116 @@ func (m *Model) moveNoticesSelection(delta int) bool {
 	return false
 }
 
+// moveGlobalNoticesSelection moves row focus inside the global notifications panel.
+func (m *Model) moveGlobalNoticesSelection(delta int) bool {
+	if delta == 0 {
+		return false
+	}
+	items := m.globalNoticesPanelItemsForInteraction()
+	if len(items) == 0 {
+		return false
+	}
+	next := clamp(m.globalNoticesIdx+delta, 0, len(items)-1)
+	if next == m.globalNoticesIdx {
+		return false
+	}
+	m.globalNoticesIdx = next
+	return true
+}
+
+// activateGlobalNoticesSelection runs enter behavior for the selected global notifications row.
+func (m Model) activateGlobalNoticesSelection() (tea.Model, tea.Cmd) {
+	items := m.globalNoticesPanelItemsForInteraction()
+	if len(items) == 0 {
+		m.status = "no global notifications available"
+		return m, nil
+	}
+	m.clampGlobalNoticesSelection()
+	item := items[clamp(m.globalNoticesIdx, 0, len(items)-1)]
+	if strings.TrimSpace(item.StableKey) == globalNoticesEmptyRowKey {
+		m.status = "no global notifications available"
+		return m, nil
+	}
+	projectID := strings.TrimSpace(item.ProjectID)
+	currentProjectID, hasProject := m.currentProjectID()
+	if projectID == "" && hasProject {
+		projectID = currentProjectID
+	}
+	if projectID == "" {
+		m.status = "selected global notification has no project context"
+		return m, nil
+	}
+	threadTarget, hasThreadTarget := commentTargetForScope(projectID, item.ScopeType, item.ScopeID)
+	threadTitle := notificationThreadTitle(item.ScopeType, item.Summary)
+	threadBody := strings.TrimSpace(item.ThreadDescription)
+	switchProject := !hasProject || projectID != currentProjectID
+	taskID := strings.TrimSpace(item.TaskID)
+	if taskID == "" {
+		if !hasThreadTarget {
+			m.status = "selected global notification has no comment thread target"
+			return m, nil
+		}
+		if switchProject {
+			m.pendingProjectID = projectID
+			m.setPendingNotificationThread(threadTarget, threadTitle, threadBody)
+			m.status = "loading global notification..."
+			return m, m.loadData
+		}
+		return m.startNotificationThread(threadTarget, threadTitle, threadBody)
+	}
+
+	if switchProject {
+		m.searchApplied = false
+		m.searchQuery = ""
+		m.pendingProjectID = projectID
+		m.pendingFocusTaskID = taskID
+		m.pendingOpenTaskInfoID = taskID
+		if hasThreadTarget {
+			m.setPendingNotificationThread(threadTarget, threadTitle, threadBody)
+		} else {
+			m.clearPendingNotificationThread()
+		}
+		m.status = "loading global notification..."
+		return m, m.loadData
+	}
+
+	if m.openTaskInfo(taskID, "task info") {
+		m.noticesFocused = false
+		m.clearPendingNotificationThread()
+		return m, nil
+	}
+	if m.searchApplied || m.searchQuery != "" {
+		m.searchApplied = false
+		m.searchQuery = ""
+		m.pendingFocusTaskID = taskID
+		m.pendingOpenTaskInfoID = taskID
+		if hasThreadTarget {
+			m.setPendingNotificationThread(threadTarget, threadTitle, threadBody)
+		} else {
+			m.clearPendingNotificationThread()
+		}
+		m.status = "loading notification task..."
+		return m, m.loadData
+	}
+	if !m.showArchived {
+		m.showArchived = true
+		m.pendingFocusTaskID = taskID
+		m.pendingOpenTaskInfoID = taskID
+		if hasThreadTarget {
+			m.setPendingNotificationThread(threadTarget, threadTitle, threadBody)
+		} else {
+			m.clearPendingNotificationThread()
+		}
+		m.status = "loading notification task..."
+		return m, m.loadData
+	}
+	if hasThreadTarget {
+		return m.startNotificationThread(threadTarget, threadTitle, threadBody)
+	}
+	m.status = "task not found"
+	return m, nil
+}
+
 // activateNoticesSelection runs enter behavior for the active notices row.
 func (m Model) activateNoticesSelection() (tea.Model, tea.Cmd) {
 	sections := m.noticesSectionsForInteraction()
@@ -9448,15 +10063,39 @@ func (m Model) activateNoticesSelection() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	taskID := strings.TrimSpace(item.TaskID)
-	if taskID == "" {
-		m.status = "selected notice has no action"
-		return m, nil
+	if taskID != "" {
+		if m.openTaskInfo(taskID, "task info") {
+			m.noticesFocused = false
+			return m, nil
+		}
 	}
-	if !m.openTaskInfo(taskID, "task info") {
+	projectID := strings.TrimSpace(item.ProjectID)
+	if projectID == "" {
+		projectID, _ = m.currentProjectID()
+	}
+	hasScopedThreadTarget := strings.TrimSpace(string(item.ScopeType)) != "" || strings.TrimSpace(item.ScopeID) != "" || strings.TrimSpace(item.ProjectID) != ""
+	if hasScopedThreadTarget {
+		title := strings.TrimSpace(item.ThreadTitle)
+		if title == "" {
+			title = notificationThreadTitle(item.ScopeType, item.Label)
+		}
+		if target, ok := commentTargetForScope(projectID, item.ScopeType, item.ScopeID); ok {
+			return m.startNotificationThread(target, title, item.ThreadDescription)
+		}
+		// If scoped metadata is malformed, fall back to the project thread so Enter still performs a deterministic action.
+		if target, ok := commentTargetForScope(projectID, domain.ScopeLevelProject, projectID); ok {
+			return m.startNotificationThread(target, title, item.ThreadDescription)
+		}
+	}
+	if taskID != "" {
 		m.status = "task not found"
 		return m, nil
 	}
-	m.noticesFocused = false
+	if hasScopedThreadTarget {
+		m.status = "selected notice thread target unavailable"
+		return m, nil
+	}
+	m.status = "selected notice has no action"
 	return m, nil
 }
 
@@ -9515,32 +10154,39 @@ func (m Model) renderOverviewPanel(
 	project domain.Project,
 	accent, muted, dim color.Color,
 	width int,
+	height int,
 	attentionItems, attentionTotal, attentionBlocked int,
 	attentionTop []string,
 	focused bool,
 ) string {
 	panelWidth := max(24, width)
+	panelHeight := max(14, height)
 	contentWidth := max(12, panelWidth-6)
 	normalStyle := lipgloss.NewStyle().Foreground(muted)
 	selectedStyle := lipgloss.NewStyle().Foreground(accent).Bold(true)
-	lines := []string{
-		lipgloss.NewStyle().Bold(true).Foreground(accent).Render("Notices"),
-		normalStyle.Render("project: " + truncate(projectDisplayName(project), contentWidth)),
-	}
-	if path, _ := m.projectionPathWithProject(project.Name); path != "" {
-		lines = append(lines, normalStyle.Render("path: "+truncate(path, contentWidth)))
-	}
+	_ = project
 
 	sections := m.noticesPanelSections(attentionItems, attentionTotal, attentionBlocked, attentionTop)
 	viewModel := m
 	viewModel.clampNoticesSelectionForSections(sections)
+
+	globalPanelHeight := max(8, panelHeight/3)
+	if globalPanelHeight > panelHeight-8 {
+		globalPanelHeight = panelHeight - 8
+	}
+	projectPanelHeight := max(8, panelHeight-globalPanelHeight)
+	projectContentHeight := max(1, projectPanelHeight-4)
+	globalContentHeight := max(1, globalPanelHeight-4)
+	projectLines := []string{
+		lipgloss.NewStyle().Bold(true).Foreground(accent).Render("Project Notifications"),
+	}
 	for _, section := range sections {
-		lines = append(lines, "")
-		lines = append(
-			lines,
+		projectLines = append(projectLines, "")
+		projectLines = append(
+			projectLines,
 			viewModel.renderNoticesSection(
 				section,
-				focused,
+				focused && m.noticesPanel == noticesPanelFocusProject,
 				accent,
 				contentWidth,
 				selectedStyle,
@@ -9548,20 +10194,110 @@ func (m Model) renderOverviewPanel(
 			)...,
 		)
 	}
+	projectLines = append(projectLines, "")
+	projectLines = append(projectLines, normalStyle.Render("j/k move • enter open • g full activity log"))
+	projectBorderColor := dim
+	if focused && m.noticesPanel == noticesPanelFocusProject {
+		projectBorderColor = accent
+	}
+	projectPanel := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(projectBorderColor).
+		Padding(1, 1).
+		Width(panelWidth).
+		Render(fitLines(strings.Join(projectLines, "\n"), projectContentHeight))
+
+	globalPanel := m.renderGlobalNoticesPanel(
+		accent,
+		muted,
+		dim,
+		panelWidth,
+		contentWidth,
+		globalContentHeight,
+		focused && m.noticesPanel == noticesPanelFocusGlobal,
+		selectedStyle,
+		normalStyle,
+	)
+	return lipgloss.JoinVertical(lipgloss.Top, projectPanel, globalPanel)
+}
+
+// globalNoticesItemLabel builds one display label for a global-notifications row.
+func globalNoticesItemLabel(item globalNoticesPanelItem) string {
+	projectLabel := strings.TrimSpace(item.ProjectLabel)
+	summary := strings.TrimSpace(item.Summary)
+	if summary == "" {
+		summary = "attention item"
+	}
+	if projectLabel == "" {
+		return summary
+	}
+	return projectLabel + ": " + summary
+}
+
+// renderGlobalNoticesPanel renders the lower global notifications panel.
+func (m Model) renderGlobalNoticesPanel(
+	accent, muted, dim color.Color,
+	panelWidth int,
+	contentWidth int,
+	contentHeight int,
+	focused bool,
+	selectedStyle, normalStyle lipgloss.Style,
+) string {
+	viewModel := m
+	viewModel.clampGlobalNoticesSelection()
+	items := viewModel.globalNoticesPanelItemsForInteraction()
+	selectedIdx := clamp(viewModel.globalNoticesIdx, 0, len(items)-1)
+	start, end := windowBounds(len(items), selectedIdx, noticesSectionViewWindow)
+
+	lines := []string{
+		lipgloss.NewStyle().Bold(true).Foreground(accent).Render("Global Notifications"),
+		normalStyle.Render("requires user action across projects"),
+	}
+	if viewModel.globalNoticesPartialCount > 0 {
+		projectLabel := "projects"
+		if viewModel.globalNoticesPartialCount == 1 {
+			projectLabel = "project"
+		}
+		lines = append(
+			lines,
+			normalStyle.Render(
+				fmt.Sprintf("partial results: %d %s unavailable", viewModel.globalNoticesPartialCount, projectLabel),
+			),
+		)
+	}
 	lines = append(lines, "")
-	lines = append(lines, normalStyle.Render("tab/shift+tab panels • enter details • g full activity log"))
+	if focused && start > 0 {
+		lines = append(lines, normalStyle.Render(truncate("↑ more", contentWidth)))
+	}
+	for idx := start; idx < end; idx++ {
+		item := items[idx]
+		prefix := ""
+		style := normalStyle
+		if focused {
+			prefix = "  "
+		}
+		if focused && idx == selectedIdx {
+			prefix = "› "
+			style = selectedStyle
+		}
+		lineWidth := max(1, contentWidth-utf8.RuneCountInString(prefix))
+		lines = append(lines, style.Render(prefix+truncate(globalNoticesItemLabel(item), lineWidth)))
+	}
+	if focused && end < len(items) {
+		lines = append(lines, normalStyle.Render(truncate("↓ more", contentWidth)))
+	}
+	lines = append(lines, "", normalStyle.Render("j/k move • enter open"))
 
 	borderColor := dim
 	if focused {
 		borderColor = accent
 	}
-
 	style := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(borderColor).
 		Padding(1, 1).
 		Width(panelWidth)
-	return style.Render(strings.Join(lines, "\n"))
+	return style.Render(fitLines(strings.Join(lines, "\n"), contentHeight))
 }
 
 // renderNoticesSection renders one notices-panel section with local list-window scrolling.
@@ -9695,8 +10431,15 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 	switch m.mode {
 	case modeNone:
 		panelLine := "tab/shift+tab cycle focused panel; left/right move adjacent panel; enter opens notices detail"
-		if m.noticesFocused {
-			panelLine = "tab/shift+tab cycle focused panel; j/k or arrows move notices; enter opens selected notice item"
+		if m.hasGlobalNoticesPanel() {
+			panelLine = "tab/shift+tab cycle board/project/global panels; left/right move adjacent panel"
+			if m.noticesFocused {
+				if m.noticesPanel == noticesPanelFocusGlobal {
+					panelLine = "tab/shift+tab cycle board/project/global panels; j/k or arrows move global notifications; enter opens selected item"
+				} else {
+					panelLine = "tab/shift+tab cycle board/project/global panels; j/k or arrows move project notifications; enter opens selected item"
+				}
+			}
 		}
 		return "board", []string{
 			"h/l or left/right move columns; j/k or up/down move task selection",
@@ -9872,8 +10615,10 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 		}
 	case modeThread:
 		return "thread", []string{
-			"type comment text in composer",
-			"enter posts comment",
+			"read mode opens first for markdown description/comments",
+			"e opens markdown details; enter opens edit while details are visible",
+			"i opens comment composer; tab/esc exits composer",
+			"enter posts when composer is active",
 			"pgup/pgdown or mouse wheel scrolls",
 			"ctrl+r reloads comments",
 			"esc returns to previous screen",
@@ -10001,6 +10746,39 @@ func (m Model) taskInfoTask() (domain.Task, bool) {
 	return m.taskByID(taskID)
 }
 
+// clearTaskInfoComments clears cached task-info comment preview state.
+func (m *Model) clearTaskInfoComments() {
+	m.taskInfoComments = nil
+	m.taskInfoCommentsError = ""
+}
+
+// loadTaskInfoComments refreshes task-info comment previews for one task id.
+func (m *Model) loadTaskInfoComments(taskID string) {
+	m.clearTaskInfoComments()
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return
+	}
+	task, ok := m.taskByID(taskID)
+	if !ok {
+		return
+	}
+	targetType, ok := commentTargetTypeForTask(task)
+	if !ok {
+		return
+	}
+	comments, err := m.svc.ListCommentsByTarget(context.Background(), app.ListCommentsByTargetInput{
+		ProjectID:  task.ProjectID,
+		TargetType: targetType,
+		TargetID:   task.ID,
+	})
+	if err != nil {
+		m.taskInfoCommentsError = err.Error()
+		return
+	}
+	m.taskInfoComments = append([]domain.Comment(nil), comments...)
+}
+
 // openTaskInfo enters task-info mode and stores the origin task for contextual esc back behavior.
 func (m *Model) openTaskInfo(taskID string, status string) bool {
 	taskID = strings.TrimSpace(taskID)
@@ -10014,6 +10792,7 @@ func (m *Model) openTaskInfo(taskID string, status string) bool {
 	m.taskInfoTaskID = taskID
 	m.taskInfoOriginTaskID = taskID
 	m.taskInfoSubtaskIdx = 0
+	m.loadTaskInfoComments(taskID)
 	if strings.TrimSpace(status) == "" {
 		status = "task info"
 	}
@@ -10027,6 +10806,7 @@ func (m *Model) closeTaskInfo(status string) {
 	m.taskInfoTaskID = ""
 	m.taskInfoOriginTaskID = ""
 	m.taskInfoSubtaskIdx = 0
+	m.clearTaskInfoComments()
 	if strings.TrimSpace(status) == "" {
 		status = "ready"
 	}
@@ -10044,6 +10824,7 @@ func (m *Model) stepBackTaskInfo(task domain.Task) bool {
 	}
 	m.taskInfoTaskID = parentID
 	m.taskInfoSubtaskIdx = 0
+	m.loadTaskInfoComments(parentID)
 	// Keep the cursor aligned to the child we navigated from when it remains visible.
 	for idx, child := range m.subtasksForParent(parentID) {
 		if child.ID == task.ID {
@@ -10353,7 +11134,11 @@ func (m Model) renderTaskDetails(accent, muted, dim color.Color) string {
 
 	if m.taskFields.ShowDescription {
 		if desc := strings.TrimSpace(task.Description); desc != "" {
-			lines = append(lines, desc)
+			renderWidth := 72
+			if m.width > 0 {
+				renderWidth = max(24, m.width-8)
+			}
+			lines = append(lines, splitThreadMarkdownLines(m.threadMarkdown.render(desc, renderWidth))...)
 		} else {
 			lines = append(lines, lipgloss.NewStyle().Foreground(muted).Render("description: -"))
 		}
@@ -10445,13 +11230,18 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		if !ok {
 			return ""
 		}
+		boxWidth := 96
+		if maxWidth > 0 {
+			boxWidth = clamp(maxWidth, 40, 112)
+		}
 		boxStyle := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(accent).
 			Padding(0, 1)
 		if maxWidth > 0 {
-			boxStyle = boxStyle.Width(clamp(maxWidth, 24, 76))
+			boxStyle = boxStyle.Width(boxWidth)
 		}
+		contentWidth := max(24, boxWidth-8)
 		titleStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
 		hintStyle := lipgloss.NewStyle().Foreground(muted)
 		due := "-"
@@ -10474,7 +11264,17 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		if warning := m.taskDueWarning(task, time.Now().UTC()); warning != "" {
 			lines = append(lines, lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("203")).Render(warning))
 		}
-		lines = append(lines, hintStyle.Render("due entry supports time: YYYY-MM-DD HH:MM, YYYY-MM-DDTHH:MM, RFC3339 (UTC default)"))
+
+		lines = append(lines, "")
+		lines = append(lines, hintStyle.Render("details"))
+		description := strings.TrimSpace(task.Description)
+		if description == "" {
+			lines = append(lines, hintStyle.Render("(no description)"))
+		} else {
+			rendered := m.threadMarkdown.render(description, contentWidth)
+			lines = append(lines, splitThreadMarkdownLines(rendered)...)
+		}
+
 		subtasks := m.subtasksForParent(task.ID)
 		if len(subtasks) > 0 {
 			lines = append(lines, "")
@@ -10495,7 +11295,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 				if subtaskDone {
 					check = checkedStyle.Render("[x]")
 				}
-				title := truncate(subtask.Title, 34)
+				title := truncate(subtask.Title, 48)
 				if idx == subtaskIdx {
 					title = focusStyle.Render(title)
 				}
@@ -10531,6 +11331,38 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		lines = append(lines, hintStyle.Render("blocked_reason: "+blockedReason))
 
 		lines = append(lines, "")
+		lines = append(lines, hintStyle.Render(fmt.Sprintf("comments (%d)", len(m.taskInfoComments))))
+		if strings.TrimSpace(m.taskInfoCommentsError) != "" {
+			lines = append(lines, hintStyle.Render("comments unavailable: "+truncate(m.taskInfoCommentsError, max(28, contentWidth))))
+		} else if len(m.taskInfoComments) == 0 {
+			lines = append(lines, hintStyle.Render("(no comments yet)"))
+		} else {
+			start := max(0, len(m.taskInfoComments)-taskInfoCommentPreviewLimit)
+			for idx := len(m.taskInfoComments) - 1; idx >= start; idx-- {
+				comment := m.taskInfoComments[idx]
+				owner := threadCommentOwnerLabel(comment)
+				actor := string(normalizeCommentActorType(string(comment.ActorType)))
+				lines = append(lines, hintStyle.Render(fmt.Sprintf("[%s] %s • %s", actor, owner, formatThreadTimestamp(comment.CreatedAt))))
+				if summary := commentSummaryText(comment); summary != "" {
+					lines = append(lines, hintStyle.Render("summary: "+truncate(summary, max(24, contentWidth))))
+				}
+				body := m.threadMarkdown.render(comment.BodyMarkdown, contentWidth)
+				if strings.TrimSpace(body) == "" {
+					body = "(empty comment)"
+				}
+				for _, line := range splitThreadMarkdownLines(body) {
+					lines = append(lines, "  "+line)
+				}
+				if idx > start {
+					lines = append(lines, "")
+				}
+			}
+			if hidden := len(m.taskInfoComments) - taskInfoCommentPreviewLimit; hidden > 0 {
+				lines = append(lines, hintStyle.Render(fmt.Sprintf("+%d older comments", hidden)))
+			}
+		}
+
+		lines = append(lines, "")
 		lines = append(lines, hintStyle.Render("resources"))
 		if len(task.Metadata.ResourceRefs) == 0 {
 			lines = append(lines, hintStyle.Render("(none)"))
@@ -10551,7 +11383,9 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 			lines = append(lines, hintStyle.Render("parent: "+task.ParentID))
 		}
 		if objective := strings.TrimSpace(task.Metadata.Objective); objective != "" {
-			lines = append(lines, "", hintStyle.Render("objective"), objective)
+			lines = append(lines, "", hintStyle.Render("objective"))
+			rendered := m.threadMarkdown.render(objective, contentWidth)
+			lines = append(lines, splitThreadMarkdownLines(rendered)...)
 		}
 		if len(task.Metadata.CompletionContract.CompletionCriteria) > 0 {
 			unmet := 0
@@ -10567,10 +11401,8 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 				lines = append(lines, hintStyle.Render(fmt.Sprintf("completion: %d unmet checks", unmet)))
 			}
 		}
-		if desc := strings.TrimSpace(task.Description); desc != "" {
-			lines = append(lines, "", desc)
-		}
-		lines = append(lines, "", hintStyle.Render("e edit • s subtask • c thread • [ / ] move • b deps inspector • r attach resource • f focus subtree • esc back/close"))
+		lines = append(lines, "")
+		lines = append(lines, hintStyle.Render("e edit task • c thread read mode • [ / ] move • b deps inspector • r attach resource • s subtask • f focus subtree • esc back/close"))
 		return boxStyle.Render(strings.Join(lines, "\n"))
 
 	case modeBootstrapSettings:
@@ -11589,7 +12421,7 @@ func (m Model) modePrompt() string {
 	case modeDependencyInspector:
 		return "deps inspector: tab focus, d/b toggle, x switch active, enter jump, a apply, esc cancel"
 	case modeThread:
-		return "thread: enter post comment, pgup/pgdown scroll, ctrl+r reload, esc back"
+		return "thread: read mode by default; e details, enter edit-from-details, i compose, tab/esc leave composer, enter post, pgup/pgdown scroll, ctrl+r reload"
 	default:
 		return ""
 	}

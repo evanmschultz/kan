@@ -1,5 +1,7 @@
 # COLLAB TEST 2026-03-02
 
+> Superseded for active dogfood wave by `COLLAB_TEST_2026-03-02_DOGFOOD.md`.
+
 ## Objective
 - Re-run all remaining dogfooding blockers and changed paths after the 2026-03-02 remediation wave.
 - Execute every agent-only test now, record evidence inline, then hand off only the required collaborative/manual checks.
@@ -44,6 +46,11 @@
 | C-05 | TUI regression sweep Section 4 (C4/C6/C9/C10/C11/C12/C13) | Collaborative/manual | PENDING_USER | `TBD` | User-driven validation required. |
 | C-06 | Archived/search/keybinding targeted checks Section 5 | Collaborative/manual | PENDING_USER | `TBD` | User-driven validation required. |
 | C-07 | Notifications bubbling + quick-info parity (Section 6 manual UI check) | Collaborative/manual | PENDING_USER | `TBD` | Requires user-visible TUI confirmation of warning/error surfacing. |
+| C-08 | Project notifications header cleanup (no redundant project/path rows) | Collaborative/manual | PENDING_USER | `TBD` | Verify redesigned top notifications panel copy/layout in live TUI. |
+| C-09 | Global notifications panel presence and placement | Collaborative/manual | PENDING_USER | `TBD` | Verify separate global panel appears below project notifications when global data exists. |
+| C-10 | Notifications panel focus traversal parity | Collaborative/manual | PENDING_USER | `TBD` | Verify tab/shift+tab and left/right cycle board -> project notifications -> global notifications. |
+| C-11 | Enter actionability in project + global notifications lists | Collaborative/manual | PENDING_USER | `TBD` | Verify Enter opens deterministic modal/action for selected rows in both panels. |
+| C-12 | Notifications list scrolling behavior parity | Collaborative/manual | PENDING_USER | `TBD` | Verify project/global notification lists scroll with j/k (and arrows) including overflow markers and stable selection. |
 
 ## Execution Log
 - 2026-03-02: Worksheet created.
@@ -55,6 +62,8 @@
 - 2026-03-02: `E-01` to `E-07` PASS via isolated live runtime transport checks (health, MCP init/list, guardrails M2.1/M2.2/M2.3, restore rerun).
 - 2026-03-02: `E-08` rerun PASS after runtime default logger sink-bridge fix. Live probe shows both mapped MCP + HTTP error lines in `.tillsyn/log` and stderr.
 - 2026-03-02: Initial `S-01`/`S-02` probe attempt blocked by sandbox bind restrictions; rerun with escalated local bind permissions completed and both checks passed.
+- 2026-03-02: Wave 3 notifications/global-panel redesign implemented with remediation loop; agent-side gates revalidated green (`just test-pkg ./internal/tui`, `just check`, `just ci`).
+- 2026-03-02: Independent code QA sign-off passed after remediation; remaining closeout is collaborative manual confirmation for `C-08` through `C-12`.
 
 ## User Notes Overflow
 Use this section for findings that do not map directly to `C-01` through `C-07` during collaborative/manual validation.

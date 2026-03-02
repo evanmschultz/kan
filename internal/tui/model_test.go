@@ -20,20 +20,21 @@ import (
 
 // fakeService represents fake service data used by this package.
 type fakeService struct {
-	projects          []domain.Project
-	columns           map[string][]domain.Column
-	tasks             map[string][]domain.Task
-	lastCreateTask    app.CreateTaskInput
-	createTaskCalls   int
-	comments          map[string][]domain.Comment
-	lastCreateComment app.CreateCommentInput
-	err               error
-	rollups           map[string]domain.DependencyRollup
-	changeEvents      map[string][]domain.ChangeEvent
-	changeEventsErr   error
-	commentCreateErr  error
-	commentListErr    error
-	commentSeq        int
+	projects              []domain.Project
+	columns               map[string][]domain.Column
+	tasks                 map[string][]domain.Task
+	lastCreateTask        app.CreateTaskInput
+	createTaskCalls       int
+	comments              map[string][]domain.Comment
+	lastCreateComment     app.CreateCommentInput
+	err                   error
+	rollups               map[string]domain.DependencyRollup
+	changeEvents          map[string][]domain.ChangeEvent
+	changeEventsErr       error
+	attentionErrByProject map[string]error
+	commentCreateErr      error
+	commentListErr        error
+	commentSeq            int
 }
 
 // newFakeService constructs fake service.
@@ -47,12 +48,13 @@ func newFakeService(projects []domain.Project, columns []domain.Column, tasks []
 		taskByProject[t.ProjectID] = append(taskByProject[t.ProjectID], t)
 	}
 	return &fakeService{
-		projects:     projects,
-		columns:      colByProject,
-		tasks:        taskByProject,
-		comments:     map[string][]domain.Comment{},
-		rollups:      map[string]domain.DependencyRollup{},
-		changeEvents: map[string][]domain.ChangeEvent{},
+		projects:              projects,
+		columns:               colByProject,
+		tasks:                 taskByProject,
+		comments:              map[string][]domain.Comment{},
+		rollups:               map[string]domain.DependencyRollup{},
+		changeEvents:          map[string][]domain.ChangeEvent{},
+		attentionErrByProject: map[string]error{},
 	}
 }
 
@@ -153,6 +155,9 @@ func (f *fakeService) ListAttentionItems(_ context.Context, in app.ListAttention
 	projectID := strings.TrimSpace(in.Level.ProjectID)
 	if projectID == "" {
 		return nil, domain.ErrInvalidID
+	}
+	if err := f.attentionErrByProject[projectID]; err != nil {
+		return nil, err
 	}
 	tasks := f.tasks[projectID]
 	out := make([]domain.AttentionItem, 0, len(tasks))
@@ -566,7 +571,15 @@ func TestModelLoadAndNavigation(t *testing.T) {
 	}, now)
 
 	svc := newFakeService([]domain.Project{p}, []domain.Column{c1, c2}, []domain.Task{task})
-	m := loadReadyModel(t, NewModel(svc))
+	m := loadReadyModel(t, NewModel(
+		svc,
+		WithTaskFieldConfig(TaskFieldConfig{
+			ShowPriority:    true,
+			ShowDueDate:     true,
+			ShowLabels:      true,
+			ShowDescription: true,
+		}),
+	))
 
 	if len(m.projects) != 1 || len(m.columns) != 2 || len(m.tasks) != 1 {
 		t.Fatalf("unexpected loaded model: %#v", m)
@@ -597,7 +610,15 @@ func TestModelQuickAddMoveArchiveRestoreDelete(t *testing.T) {
 	}, now)
 
 	svc := newFakeService([]domain.Project{p}, []domain.Column{c1, c2}, []domain.Task{existing})
-	m := loadReadyModel(t, NewModel(svc))
+	m := loadReadyModel(t, NewModel(
+		svc,
+		WithTaskFieldConfig(TaskFieldConfig{
+			ShowPriority:    true,
+			ShowDueDate:     true,
+			ShowLabels:      true,
+			ShowDescription: true,
+		}),
+	))
 
 	m = applyMsg(t, m, keyRune('n'))
 	m = applyMsg(t, m, keyRune('N'))
@@ -905,6 +926,9 @@ func TestModelThreadModeProjectAndPostCommentUsesConfiguredIdentity(t *testing.T
 		Position:  0,
 		Title:     "Task",
 		Priority:  domain.PriorityMedium,
+		Metadata: domain.TaskMetadata{
+			BlockedReason: "requires global follow-up",
+		},
 	}, now)
 	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
 
@@ -913,6 +937,7 @@ func TestModelThreadModeProjectAndPostCommentUsesConfiguredIdentity(t *testing.T
 		ProjectID:    p.ID,
 		TargetType:   domain.CommentTargetTypeProject,
 		TargetID:     p.ID,
+		Summary:      "Initial project summary",
 		BodyMarkdown: "Initial **project** thread comment",
 		ActorID:      "system-bot",
 		ActorName:    "System Bot",
@@ -942,7 +967,14 @@ func TestModelThreadModeProjectAndPostCommentUsesConfiguredIdentity(t *testing.T
 	if m.threadTarget.TargetType != domain.CommentTargetTypeProject || m.threadTarget.TargetID != p.ID {
 		t.Fatalf("unexpected project thread target %#v", m.threadTarget)
 	}
+	if m.threadComposerActive {
+		t.Fatal("expected thread to open in read-first mode with composer inactive")
+	}
 
+	m = applyMsg(t, m, keyRune('i'))
+	if !m.threadComposerActive {
+		t.Fatal("expected i to activate thread comment composer")
+	}
 	m.threadInput.SetValue("New _markdown_ project comment")
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
@@ -978,6 +1010,9 @@ func TestModelThreadModeProjectAndPostCommentUsesConfiguredIdentity(t *testing.T
 	}
 	if !strings.Contains(rendered, "[agent] Lane User (lane-user-17)") {
 		t.Fatalf("expected ownership metadata in thread view, got\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "summary: Initial project summary") {
+		t.Fatalf("expected comment summary visible in thread view, got\n%s", rendered)
 	}
 }
 
@@ -1043,6 +1078,7 @@ func TestModelThreadCommentIdentityFallbacks(t *testing.T) {
 	if m.mode != modeThread {
 		t.Fatalf("expected work-item thread mode, got %v", m.mode)
 	}
+	m = applyMsg(t, m, keyRune('i'))
 	m.threadInput.SetValue("fallback check")
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 
@@ -1059,6 +1095,253 @@ func TestModelThreadCommentIdentityFallbacks(t *testing.T) {
 	}
 	if comments[0].ActorType != domain.ActorTypeUser {
 		t.Fatalf("expected fallback actor type user, got %q", comments[0].ActorType)
+	}
+}
+
+// TestModelThreadReadModeRequiresExplicitComposer verifies thread mode starts read-first and requires explicit composer activation to post.
+func TestModelThreadReadModeRequiresExplicitComposer(t *testing.T) {
+	now := time.Date(2026, 2, 23, 11, 15, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityLow,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	m := loadReadyModel(t, NewModel(svc))
+
+	updated, cmd := m.executeCommandPalette("thread-item")
+	m = applyResult(t, updated, cmd)
+	if m.mode != modeThread {
+		t.Fatalf("expected thread mode, got %v", m.mode)
+	}
+	if m.threadComposerActive {
+		t.Fatal("expected read-first thread mode with composer inactive")
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !strings.Contains(m.status, "press e for details") {
+		t.Fatalf("expected read-mode enter status, got %q", m.status)
+	}
+
+	m = applyMsg(t, m, keyRune('i'))
+	if !m.threadComposerActive {
+		t.Fatal("expected composer active after i")
+	}
+	m.threadInput.SetValue("explicit composer")
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	itemKey := commentThreadKey(p.ID, domain.CommentTargetTypeTask, task.ID)
+	comments := svc.comments[itemKey]
+	if len(comments) != 1 {
+		t.Fatalf("expected one posted comment, got %#v", comments)
+	}
+}
+
+// TestModelThreadComposerAllowsTypingEditRune verifies composer input accepts plain 'e' text while active.
+func TestModelThreadComposerAllowsTypingEditRune(t *testing.T) {
+	now := time.Date(2026, 2, 23, 11, 20, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityLow,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	m := loadReadyModel(t, NewModel(svc))
+
+	updated, cmd := m.executeCommandPalette("thread-item")
+	m = applyResult(t, updated, cmd)
+	m = applyMsg(t, m, keyRune('i'))
+	m = applyMsg(t, m, keyRune('e'))
+	m = applyMsg(t, m, keyRune('x'))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	itemKey := commentThreadKey(p.ID, domain.CommentTargetTypeTask, task.ID)
+	comments := svc.comments[itemKey]
+	if len(comments) != 1 {
+		t.Fatalf("expected one posted comment, got %#v", comments)
+	}
+	if comments[0].BodyMarkdown != "ex" {
+		t.Fatalf("expected posted comment body %q, got %q", "ex", comments[0].BodyMarkdown)
+	}
+}
+
+// TestModelThreadReadModeEditShortcutStartsTaskEditForm verifies read-mode details-first flow before task edit.
+func TestModelThreadReadModeEditShortcutStartsTaskEditForm(t *testing.T) {
+	now := time.Date(2026, 2, 23, 11, 22, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:          "t1",
+		ProjectID:   p.ID,
+		ColumnID:    c.ID,
+		Position:    0,
+		Title:       "Task",
+		Description: "## Details\n\n- read me",
+		Priority:    domain.PriorityLow,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+	m := loadReadyModel(t, NewModel(svc))
+
+	updated, cmd := m.executeCommandPalette("thread-item")
+	m = applyResult(t, updated, cmd)
+	if m.mode != modeThread {
+		t.Fatalf("expected thread mode, got %v", m.mode)
+	}
+
+	m = applyMsg(t, m, keyRune('e'))
+	if m.mode != modeThread {
+		t.Fatalf("expected thread mode while details modal is open, got %v", m.mode)
+	}
+	if !m.threadDetailsActive {
+		t.Fatal("expected thread details modal to open before edit")
+	}
+	rendered := stripANSI(fmt.Sprint(m.View().Content))
+	if !strings.Contains(rendered, "Task Details") {
+		t.Fatalf("expected task details modal title, got\n%s", rendered)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeEditTask {
+		t.Fatalf("expected edit-task mode from thread details modal, got %v", m.mode)
+	}
+	if strings.TrimSpace(m.editingTaskID) != task.ID {
+		t.Fatalf("expected editing task id %q, got %q", task.ID, m.editingTaskID)
+	}
+	if got := strings.TrimSpace(m.formInputs[taskFieldDescription].Value()); !strings.Contains(got, "Details") {
+		t.Fatalf("expected edit form description prefilled from thread target, got %q", got)
+	}
+}
+
+// TestModelThreadProjectReadModeEditShortcutStartsProjectEditForm verifies project-thread details-first flow before project edit.
+func TestModelThreadProjectReadModeEditShortcutStartsProjectEditForm(t *testing.T) {
+	now := time.Date(2026, 2, 23, 11, 24, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "## Overview\n\n- read first", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, nil)))
+
+	updated, cmd := m.executeCommandPalette("thread-project")
+	m = applyResult(t, updated, cmd)
+	if m.mode != modeThread {
+		t.Fatalf("expected project thread mode, got %v", m.mode)
+	}
+
+	m = applyMsg(t, m, keyRune('e'))
+	if m.mode != modeThread {
+		t.Fatalf("expected thread mode while project details modal is open, got %v", m.mode)
+	}
+	if !m.threadDetailsActive {
+		t.Fatal("expected project details modal to open before edit")
+	}
+	rendered := stripANSI(fmt.Sprint(m.View().Content))
+	if !strings.Contains(rendered, "Project Details") {
+		t.Fatalf("expected project details modal title, got\n%s", rendered)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeEditProject {
+		t.Fatalf("expected edit-project mode from project thread details modal, got %v", m.mode)
+	}
+	if strings.TrimSpace(m.editingProjectID) != project.ID {
+		t.Fatalf("expected editing project id %q, got %q", project.ID, m.editingProjectID)
+	}
+	if got := strings.TrimSpace(m.projectFormInputs[projectFieldDescription].Value()); !strings.Contains(got, "Overview") {
+		t.Fatalf("expected project description prefilled from thread target, got %q", got)
+	}
+}
+
+// TestModelTaskInfoShowsCommentPreview verifies task info renders recent markdown comments without requiring thread mode.
+func TestModelTaskInfoShowsCommentPreview(t *testing.T) {
+	now := time.Date(2026, 2, 23, 11, 30, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:          "t1",
+		ProjectID:   p.ID,
+		ColumnID:    c.ID,
+		Position:    0,
+		Title:       "Task",
+		Description: "## Details\n\n- read me",
+		Priority:    domain.PriorityMedium,
+	}, now)
+	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
+
+	comment, err := domain.NewComment(domain.CommentInput{
+		ID:           "cm-1",
+		ProjectID:    p.ID,
+		TargetType:   domain.CommentTargetTypeTask,
+		TargetID:     task.ID,
+		Summary:      "comment summary preview",
+		BodyMarkdown: "**latest** comment",
+		ActorID:      "user-1",
+		ActorName:    "User One",
+		ActorType:    domain.ActorTypeUser,
+	}, now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("NewComment(comment) error = %v", err)
+	}
+	itemKey := commentThreadKey(p.ID, domain.CommentTargetTypeTask, task.ID)
+	svc.comments[itemKey] = append(svc.comments[itemKey], comment)
+
+	m := loadReadyModel(t, NewModel(svc))
+	m = applyMsg(t, m, keyRune('i'))
+	if m.mode != modeTaskInfo {
+		t.Fatalf("expected task info mode, got %v", m.mode)
+	}
+
+	overlay := stripANSI(m.renderModeOverlay(lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), lipgloss.NewStyle(), 108))
+	if !strings.Contains(overlay, "comments (1)") {
+		t.Fatalf("expected comment preview section in task info, got %q", overlay)
+	}
+	if !strings.Contains(overlay, "latest") {
+		t.Fatalf("expected markdown comment content preview in task info, got %q", overlay)
+	}
+	if !strings.Contains(overlay, "summary: comment summary preview") {
+		t.Fatalf("expected explicit comment summary in task info preview, got %q", overlay)
+	}
+	if !strings.Contains(overlay, "Details") {
+		t.Fatalf("expected markdown details content in task info, got %q", overlay)
+	}
+}
+
+// TestModelTaskInfoShowsMarkdownDetailsWhenCardDescriptionsHidden verifies task-info read mode still shows markdown details.
+func TestModelTaskInfoShowsMarkdownDetailsWhenCardDescriptionsHidden(t *testing.T) {
+	now := time.Date(2026, 2, 23, 11, 35, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:          "t1",
+		ProjectID:   p.ID,
+		ColumnID:    c.ID,
+		Position:    0,
+		Title:       "Task",
+		Description: "## Hidden Card Description\n\n- still visible in task info",
+		Priority:    domain.PriorityMedium,
+	}, now)
+	m := loadReadyModel(t, NewModel(
+		newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task}),
+		WithTaskFieldConfig(TaskFieldConfig{
+			ShowPriority:    false,
+			ShowDueDate:     false,
+			ShowLabels:      false,
+			ShowDescription: false,
+		}),
+	))
+
+	m = applyMsg(t, m, keyRune('i'))
+	if m.mode != modeTaskInfo {
+		t.Fatalf("expected task info mode, got %v", m.mode)
+	}
+	overlay := stripANSI(m.renderModeOverlay(lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), lipgloss.NewStyle(), 108))
+	if !strings.Contains(overlay, "Hidden Card Description") {
+		t.Fatalf("expected markdown details visible in task info despite card-description toggle, got %q", overlay)
 	}
 }
 
@@ -2060,6 +2343,9 @@ func TestModelCommandPaletteReloadConfigAppliesRuntimeSettings(t *testing.T) {
 		Position:  0,
 		Title:     "Task",
 		Priority:  domain.PriorityMedium,
+		Metadata: domain.TaskMetadata{
+			BlockedReason: "requires global follow-up",
+		},
 	}, now)
 	svc := newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})
 
@@ -3651,13 +3937,13 @@ func TestRenderModeOverlayAndIndexHelpers(t *testing.T) {
 		t.Fatalf("expected large row => last task, got %d", idx)
 	}
 
-	panelWithSelection := m.renderOverviewPanel(p, accent, muted, dim, 30, 0, 0, 0, nil, false)
+	panelWithSelection := m.renderOverviewPanel(p, accent, muted, dim, 30, 24, 0, 0, 0, nil, false)
 	if !strings.Contains(panelWithSelection, "Selection") {
 		t.Fatalf("expected overview panel selection section, got %q", panelWithSelection)
 	}
 	noneSelected := m
 	noneSelected.selectedColumn = 1
-	panelWithoutSelection := noneSelected.renderOverviewPanel(p, accent, muted, dim, 30, 0, 0, 0, nil, false)
+	panelWithoutSelection := noneSelected.renderOverviewPanel(p, accent, muted, dim, 30, 24, 0, 0, 0, nil, false)
 	if !strings.Contains(panelWithoutSelection, "no task selected") {
 		t.Fatalf("expected overview panel no-selection hint, got %q", panelWithoutSelection)
 	}
@@ -4267,7 +4553,7 @@ func TestModelRecentActivityPanelShowsOwnerPrefix(t *testing.T) {
 		},
 	}
 	m := loadReadyModel(t, NewModel(svc))
-	panel := stripANSI(m.renderOverviewPanel(p, lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), 80, 0, 0, 0, nil, false))
+	panel := stripANSI(m.renderOverviewPanel(p, lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), 80, 28, 0, 0, 0, nil, false))
 	if !strings.Contains(panel, "agent|Live Sync Bot update phase") {
 		t.Fatalf("expected owner-prefixed activity row, got %q", panel)
 	}
@@ -4455,6 +4741,635 @@ func TestModelNoticesWarningsAndAttentionRowsOpenTaskInfoWhenAssociated(t *testi
 	}
 }
 
+// TestModelProjectNotificationsEnterOnNonTaskAttentionRowOpensThread verifies project attention rows without task ids route to thread mode.
+func TestModelProjectNotificationsEnterOnNonTaskAttentionRowOpensThread(t *testing.T) {
+	now := time.Date(2026, 3, 2, 9, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})))
+	m.attentionItems = []domain.AttentionItem{
+		{
+			ID:                 "att-project-thread",
+			ProjectID:          project.ID,
+			ScopeType:          domain.ScopeLevelProject,
+			ScopeID:            project.ID,
+			State:              domain.AttentionStateOpen,
+			Kind:               domain.AttentionKindConsensusRequired,
+			Summary:            "project-level consensus required",
+			BodyMarkdown:       "Need collaborative review before execution.",
+			RequiresUserAction: true,
+		},
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m = applyMsg(t, m, keyRune('k'))
+	m = applyMsg(t, m, keyRune('k'))
+	if m.noticesSection != noticesSectionAttention {
+		t.Fatalf("expected notices focus on attention section, got %v", m.noticesSection)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeThread {
+		t.Fatalf("expected project attention enter to open thread mode, got %v", m.mode)
+	}
+	if m.threadTarget.TargetType != domain.CommentTargetTypeProject || m.threadTarget.TargetID != project.ID {
+		t.Fatalf("expected project attention thread target %q, got %#v", project.ID, m.threadTarget)
+	}
+	if !strings.Contains(strings.ToLower(m.threadTitle), "project attention") {
+		t.Fatalf("expected thread title to reflect notification scope, got %q", m.threadTitle)
+	}
+}
+
+// TestModelProjectNotificationsWarningRowsStayScopedAndActionable verifies warning rows remain notification-scoped and open threads when task routing is not applicable.
+func TestModelProjectNotificationsWarningRowsStayScopedAndActionable(t *testing.T) {
+	now := time.Date(2026, 3, 2, 9, 5, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})))
+	m.attentionItems = []domain.AttentionItem{
+		{
+			ID:                 "att-warning-project",
+			ProjectID:          project.ID,
+			ScopeType:          domain.ScopeLevelProject,
+			ScopeID:            project.ID,
+			State:              domain.AttentionStateOpen,
+			Kind:               domain.AttentionKindConsensusRequired,
+			Summary:            "project warning row",
+			RequiresUserAction: true,
+		},
+	}
+
+	sections := m.noticesSectionsForInteraction()
+	warningFound := false
+	for _, section := range sections {
+		if section.ID != noticesSectionWarnings {
+			continue
+		}
+		if len(section.Items) != 1 {
+			t.Fatalf("expected one warning row, got %d", len(section.Items))
+		}
+		row := section.Items[0]
+		if row.ScopeType != domain.ScopeLevelProject || row.ScopeID != project.ID {
+			t.Fatalf("expected scoped warning row for project %q, got scopeType=%q scopeID=%q", project.ID, row.ScopeType, row.ScopeID)
+		}
+		warningFound = true
+	}
+	if !warningFound {
+		t.Fatal("expected warnings section in project notifications")
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m = applyMsg(t, m, keyRune('k'))
+	m = applyMsg(t, m, keyRune('k'))
+	m = applyMsg(t, m, keyRune('k'))
+	if m.noticesSection != noticesSectionWarnings {
+		t.Fatalf("expected warnings section focus, got %v", m.noticesSection)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeThread {
+		t.Fatalf("expected warning-row enter to open thread mode, got %v", m.mode)
+	}
+	if m.threadTarget.ProjectID != project.ID || m.threadTarget.TargetType != domain.CommentTargetTypeProject || m.threadTarget.TargetID != project.ID {
+		t.Fatalf("expected project warning thread target %q, got %#v", project.ID, m.threadTarget)
+	}
+}
+
+// TestModelProjectNotificationsActionRequiredSectionFiltersRequiresUserAction verifies Agent/User Action rows only include requires-user-action records.
+func TestModelProjectNotificationsActionRequiredSectionFiltersRequiresUserAction(t *testing.T) {
+	now := time.Date(2026, 3, 2, 9, 10, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})))
+	m.attentionItems = []domain.AttentionItem{
+		{
+			ID:                 "att-no-action",
+			ProjectID:          project.ID,
+			ScopeType:          domain.ScopeLevelProject,
+			ScopeID:            project.ID,
+			State:              domain.AttentionStateOpen,
+			Kind:               domain.AttentionKindBlocker,
+			Summary:            "do not include",
+			RequiresUserAction: false,
+		},
+		{
+			ID:                 "att-requires-action",
+			ProjectID:          project.ID,
+			ScopeType:          domain.ScopeLevelProject,
+			ScopeID:            project.ID,
+			State:              domain.AttentionStateOpen,
+			Kind:               domain.AttentionKindConsensusRequired,
+			Summary:            "requires action include",
+			RequiresUserAction: true,
+		},
+	}
+
+	sections := m.noticesSectionsForInteraction()
+	attentionFound := false
+	for _, section := range sections {
+		if section.ID != noticesSectionAttention {
+			continue
+		}
+		if len(section.Items) != 1 {
+			t.Fatalf("expected one action-required row, got %d", len(section.Items))
+		}
+		if !strings.Contains(section.Items[0].Label, "requires action include") {
+			t.Fatalf("expected requires-user-action row label, got %q", section.Items[0].Label)
+		}
+		attentionFound = true
+	}
+	if !attentionFound {
+		t.Fatal("expected action-required section in project notifications")
+	}
+}
+
+// TestModelProjectNotificationsEnterFallsBackToThreadWhenTaskUnavailable verifies project-notification Enter opens a thread when the scoped task is not currently visible.
+func TestModelProjectNotificationsEnterFallsBackToThreadWhenTaskUnavailable(t *testing.T) {
+	now := time.Date(2026, 3, 2, 9, 15, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	archivedBlocked, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-archived",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Archived Blocked Task",
+		Priority:  domain.PriorityHigh,
+		Metadata: domain.TaskMetadata{
+			BlockedReason: "requires archived review",
+		},
+	}, now)
+	archivedBlocked.Archive(now.Add(time.Minute))
+
+	m := loadReadyModel(t, NewModel(newFakeService(
+		[]domain.Project{project},
+		[]domain.Column{column},
+		[]domain.Task{archivedBlocked},
+	)))
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m = applyMsg(t, m, keyRune('k'))
+	m = applyMsg(t, m, keyRune('k'))
+	if m.noticesSection != noticesSectionAttention {
+		t.Fatalf("expected attention section focus, got %v", m.noticesSection)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeThread {
+		t.Fatalf("expected unavailable task notice to open thread mode, got %v", m.mode)
+	}
+	if m.threadTarget.ProjectID != project.ID || m.threadTarget.TargetType != domain.CommentTargetTypeTask || m.threadTarget.TargetID != archivedBlocked.ID {
+		t.Fatalf("expected task-scoped thread target for archived item %q, got %#v", archivedBlocked.ID, m.threadTarget)
+	}
+}
+
+// TestModelProjectNotificationsScopedRowsFallbackToProjectThread verifies scoped notices with malformed scope metadata still produce deterministic thread navigation.
+func TestModelProjectNotificationsScopedRowsFallbackToProjectThread(t *testing.T) {
+	now := time.Date(2026, 3, 2, 9, 20, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})))
+	m.attentionItems = []domain.AttentionItem{
+		{
+			ID:                 "att-malformed-scope",
+			ProjectID:          project.ID,
+			ScopeType:          domain.ScopeLevelTask,
+			ScopeID:            "",
+			State:              domain.AttentionStateOpen,
+			Kind:               domain.AttentionKindConsensusRequired,
+			Summary:            "malformed scope metadata",
+			RequiresUserAction: true,
+		},
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m = applyMsg(t, m, keyRune('k'))
+	m = applyMsg(t, m, keyRune('k'))
+	if m.noticesSection != noticesSectionAttention {
+		t.Fatalf("expected attention section focus, got %v", m.noticesSection)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeThread {
+		t.Fatalf("expected malformed scoped row to open fallback thread mode, got %v", m.mode)
+	}
+	if m.threadTarget.ProjectID != project.ID || m.threadTarget.TargetType != domain.CommentTargetTypeProject || m.threadTarget.TargetID != project.ID {
+		t.Fatalf("expected project-thread fallback target for malformed scope, got %#v", m.threadTarget)
+	}
+}
+
+// TestModelPanelFocusTraversalIncludesGlobalNotifications verifies board/project/global panel focus traversal.
+func TestModelPanelFocusTraversalIncludesGlobalNotifications(t *testing.T) {
+	now := time.Date(2026, 3, 1, 13, 28, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Inbox", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task})))
+	m.globalNotices = []globalNoticesPanelItem{
+		{
+			StableKey:    globalNoticesStableKey(p.ID, "att-focus", domain.ScopeLevelTask, task.ID, "focus traversal"),
+			AttentionID:  "att-focus",
+			ProjectID:    p.ID,
+			ProjectLabel: p.Name,
+			ScopeType:    domain.ScopeLevelTask,
+			ScopeID:      task.ID,
+			Summary:      "focus traversal",
+			TaskID:       task.ID,
+		},
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	if !m.noticesFocused || m.noticesPanel != noticesPanelFocusProject {
+		t.Fatalf("expected project notifications focus after tab, got noticesFocused=%t panel=%v", m.noticesFocused, m.noticesPanel)
+	}
+
+	m = applyMsg(t, m, keyRune('l'))
+	if !m.noticesFocused || m.noticesPanel != noticesPanelFocusGlobal {
+		t.Fatalf("expected global notifications focus after right, got noticesFocused=%t panel=%v", m.noticesFocused, m.noticesPanel)
+	}
+
+	m = applyMsg(t, m, keyRune('h'))
+	if !m.noticesFocused || m.noticesPanel != noticesPanelFocusProject {
+		t.Fatalf("expected project notifications focus after left, got noticesFocused=%t panel=%v", m.noticesFocused, m.noticesPanel)
+	}
+
+	m = applyMsg(t, m, keyRune('h'))
+	if m.noticesFocused {
+		t.Fatalf("expected board focus after moving left from project notifications, got noticesFocused=%t", m.noticesFocused)
+	}
+}
+
+// TestModelGlobalNotificationsEnterSwitchesProjectAndOpensTaskInfo verifies global notifications Enter performs deterministic cross-project navigation.
+func TestModelGlobalNotificationsEnterSwitchesProjectAndOpensTaskInfo(t *testing.T) {
+	now := time.Date(2026, 3, 1, 13, 29, 0, 0, time.UTC)
+	p1, _ := domain.NewProject("p1", "Inbox", "", now)
+	p2, _ := domain.NewProject("p2", "Roadmap", "", now.Add(time.Minute))
+	c1, _ := domain.NewColumn("c1", p1.ID, "To Do", 0, 0, now)
+	c2, _ := domain.NewColumn("c2", p2.ID, "To Do", 0, 0, now)
+	base, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p1.ID,
+		ColumnID:  c1.ID,
+		Position:  0,
+		Title:     "Base",
+		Priority:  domain.PriorityLow,
+	}, now)
+	blocked, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t2",
+		ProjectID: p2.ID,
+		ColumnID:  c2.ID,
+		Position:  0,
+		Title:     "Cross Project Blocked",
+		Priority:  domain.PriorityHigh,
+		Metadata: domain.TaskMetadata{
+			BlockedReason: "waiting for external approval",
+		},
+	}, now.Add(2*time.Minute))
+
+	svc := newFakeService(
+		[]domain.Project{p1, p2},
+		[]domain.Column{c1, c2},
+		[]domain.Task{base, blocked},
+	)
+	m := loadReadyModel(t, NewModel(svc))
+	if m.projects[m.selectedProject].ID != p1.ID {
+		t.Fatalf("expected initial project %q, got %q", p1.ID, m.projects[m.selectedProject].ID)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m = applyMsg(t, m, keyRune('l'))
+	if !m.noticesFocused || m.noticesPanel != noticesPanelFocusGlobal {
+		t.Fatalf("expected global notifications focus before activation, got noticesFocused=%t panel=%v", m.noticesFocused, m.noticesPanel)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeTaskInfo {
+		t.Fatalf("expected global notification enter to open task info, got %v", m.mode)
+	}
+	if m.taskInfoTaskID != blocked.ID {
+		t.Fatalf("expected cross-project task-info target %q, got %q", blocked.ID, m.taskInfoTaskID)
+	}
+	if m.projects[m.selectedProject].ID != p2.ID {
+		t.Fatalf("expected project context to switch to %q, got %q", p2.ID, m.projects[m.selectedProject].ID)
+	}
+	if m.noticesFocused {
+		t.Fatalf("expected notices focus cleared after global notification activation, got noticesFocused=%t", m.noticesFocused)
+	}
+}
+
+// TestGlobalNoticesPanelItemFromAttentionCarriesStableIdentifiers verifies global-row mapping keeps stable row identifiers.
+func TestGlobalNoticesPanelItemFromAttentionCarriesStableIdentifiers(t *testing.T) {
+	now := time.Date(2026, 3, 1, 13, 30, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	item := domain.AttentionItem{
+		ID:           "att-1",
+		ProjectID:    project.ID,
+		ScopeType:    domain.ScopeLevelProject,
+		ScopeID:      project.ID,
+		State:        domain.AttentionStateOpen,
+		Kind:         domain.AttentionKindBlocker,
+		Summary:      "project-level blocker",
+		BodyMarkdown: "## Context\n\nNeeds a scoped response.",
+	}
+
+	row := globalNoticesPanelItemFromAttention(project, item)
+	if row.StableKey == "" {
+		t.Fatal("expected non-empty stable key")
+	}
+	if row.AttentionID != item.ID {
+		t.Fatalf("expected attention id %q, got %q", item.ID, row.AttentionID)
+	}
+	if row.ScopeType != domain.ScopeLevelProject || row.ScopeID != project.ID {
+		t.Fatalf("expected project scope tuple, got scopeType=%q scopeID=%q", row.ScopeType, row.ScopeID)
+	}
+	if row.StableKey != globalNoticesStableKey(project.ID, item.ID, item.ScopeType, item.ScopeID, item.Summary) {
+		t.Fatalf("expected deterministic stable key, got %q", row.StableKey)
+	}
+	if row.TaskID != "" {
+		t.Fatalf("expected project-scoped row without task id, got %q", row.TaskID)
+	}
+	if row.ThreadDescription != strings.TrimSpace(item.BodyMarkdown) {
+		t.Fatalf("expected thread description to carry body markdown, got %q", row.ThreadDescription)
+	}
+}
+
+// TestModelGlobalNotificationsSelectionReanchorsByStableKey verifies global-row selection survives reload reorder by stable row key.
+func TestModelGlobalNotificationsSelectionReanchorsByStableKey(t *testing.T) {
+	now := time.Date(2026, 3, 1, 13, 31, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})))
+
+	noticeA := globalNoticesPanelItem{
+		StableKey:    "row-a",
+		AttentionID:  "att-a",
+		ProjectID:    project.ID,
+		ProjectLabel: project.Name,
+		ScopeType:    domain.ScopeLevelTask,
+		ScopeID:      "t-a",
+		Summary:      "A",
+		TaskID:       "t-a",
+	}
+	noticeB := globalNoticesPanelItem{
+		StableKey:    "row-b",
+		AttentionID:  "att-b",
+		ProjectID:    project.ID,
+		ProjectLabel: project.Name,
+		ScopeType:    domain.ScopeLevelTask,
+		ScopeID:      "t-b",
+		Summary:      "B",
+		TaskID:       "t-b",
+	}
+	m.globalNotices = []globalNoticesPanelItem{noticeA, noticeB}
+	m.globalNoticesIdx = 1
+
+	reloaded := loadedMsg{
+		projects:        m.projects,
+		selectedProject: m.selectedProject,
+		columns:         m.columns,
+		tasks:           m.tasks,
+		globalNotices: []globalNoticesPanelItem{
+			noticeB,
+			noticeA,
+		},
+		rollup: m.dependencyRollup,
+	}
+	m = applyMsg(t, m, reloaded)
+	if m.globalNoticesIdx != 0 {
+		t.Fatalf("expected selection re-anchored to row-b at index 0, got %d", m.globalNoticesIdx)
+	}
+	selected, ok := m.selectedGlobalNoticesItem()
+	if !ok || selected.StableKey != "row-b" {
+		t.Fatalf("expected stable-key row-b still selected, got %#v ok=%t", selected, ok)
+	}
+}
+
+// TestModelGlobalNotificationsEnterOnProjectScopedRowOpensThread verifies non-task global rows open scoped comment threads.
+func TestModelGlobalNotificationsEnterOnProjectScopedRowOpensThread(t *testing.T) {
+	now := time.Date(2026, 3, 1, 13, 32, 0, 0, time.UTC)
+	p1, _ := domain.NewProject("p1", "Inbox", "", now)
+	p2, _ := domain.NewProject("p2", "Roadmap", "", now.Add(time.Minute))
+	c1, _ := domain.NewColumn("c1", p1.ID, "To Do", 0, 0, now)
+	c2, _ := domain.NewColumn("c2", p2.ID, "To Do", 0, 0, now)
+	t1, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p1.ID,
+		ColumnID:  c1.ID,
+		Position:  0,
+		Title:     "Inbox Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	t2, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t2",
+		ProjectID: p2.ID,
+		ColumnID:  c2.ID,
+		Position:  0,
+		Title:     "Roadmap Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	m := loadReadyModel(t, NewModel(newFakeService(
+		[]domain.Project{p1, p2},
+		[]domain.Column{c1, c2},
+		[]domain.Task{t1, t2},
+	)))
+
+	m.globalNotices = []globalNoticesPanelItem{
+		{
+			StableKey:         globalNoticesStableKey(p2.ID, "att-project", domain.ScopeLevelProject, p2.ID, "Project-level action"),
+			AttentionID:       "att-project",
+			ProjectID:         p2.ID,
+			ProjectLabel:      p2.Name,
+			ScopeType:         domain.ScopeLevelProject,
+			ScopeID:           p2.ID,
+			Summary:           "Project-level action",
+			ThreadDescription: "## Next Step\n\nCapture the decision in-thread.",
+		},
+	}
+	m.noticesFocused = true
+	m.noticesPanel = noticesPanelFocusGlobal
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeThread {
+		t.Fatalf("expected project-scoped global notice to open thread mode, got %v", m.mode)
+	}
+	if got := m.projects[m.selectedProject].ID; got != p2.ID {
+		t.Fatalf("expected project context switched to %q, got %q", p2.ID, got)
+	}
+	if m.threadTarget.ProjectID != p2.ID || m.threadTarget.TargetType != domain.CommentTargetTypeProject || m.threadTarget.TargetID != p2.ID {
+		t.Fatalf("expected project-scoped thread target for %q, got %#v", p2.ID, m.threadTarget)
+	}
+	if !strings.Contains(m.threadDescriptionMarkdown, "Next Step") {
+		t.Fatalf("expected thread view to include notification markdown body, got %q", m.threadDescriptionMarkdown)
+	}
+	if m.noticesFocused {
+		t.Fatalf("expected notices focus cleared after thread open, got noticesFocused=%t", m.noticesFocused)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.mode != modeNone {
+		t.Fatalf("expected esc to close thread modal opened from global notice, got %v", m.mode)
+	}
+}
+
+// TestModelGlobalNotificationsEnterRecoversFromSearchAndArchivedFilters verifies global-row enter recovery when target task is hidden by filters.
+func TestModelGlobalNotificationsEnterRecoversFromSearchAndArchivedFilters(t *testing.T) {
+	now := time.Date(2026, 3, 1, 13, 33, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	active, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-active",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Visible Active Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	archivedBlocked, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-archived",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  1,
+		Title:     "Archived Blocked Task",
+		Priority:  domain.PriorityHigh,
+		Metadata: domain.TaskMetadata{
+			BlockedReason: "requires archived review",
+		},
+	}, now.Add(time.Minute))
+	archivedBlocked.Archive(now.Add(2 * time.Minute))
+
+	m := loadReadyModel(t, NewModel(newFakeService(
+		[]domain.Project{project},
+		[]domain.Column{column},
+		[]domain.Task{active, archivedBlocked},
+	)))
+	if len(m.globalNotices) == 0 {
+		t.Fatal("expected archived blocked task to appear in global notices")
+	}
+	m.searchApplied = true
+	m.searchQuery = "visible active"
+	m.showArchived = false
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m = applyMsg(t, m, keyRune('l'))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	if m.mode != modeTaskInfo {
+		t.Fatalf("expected hidden global target to recover into task info, got %v", m.mode)
+	}
+	if m.taskInfoTaskID != archivedBlocked.ID {
+		t.Fatalf("expected archived task-info target %q, got %q", archivedBlocked.ID, m.taskInfoTaskID)
+	}
+	if !m.showArchived {
+		t.Fatal("expected global notice activation to enable archived visibility for archived target")
+	}
+	if m.searchApplied || m.searchQuery != "" {
+		t.Fatalf("expected search filters cleared during recovery, got searchApplied=%t query=%q", m.searchApplied, m.searchQuery)
+	}
+}
+
+// TestModelGlobalNoticesAggregationDegradesOnNonActiveProjectFailures verifies non-active project notice failures do not abort board load.
+func TestModelGlobalNoticesAggregationDegradesOnNonActiveProjectFailures(t *testing.T) {
+	now := time.Date(2026, 3, 1, 13, 34, 0, 0, time.UTC)
+	p1, _ := domain.NewProject("p1", "Inbox", "", now)
+	p2, _ := domain.NewProject("p2", "Roadmap", "", now.Add(time.Minute))
+	c1, _ := domain.NewColumn("c1", p1.ID, "To Do", 0, 0, now)
+	c2, _ := domain.NewColumn("c2", p2.ID, "To Do", 0, 0, now)
+	t1, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p1.ID,
+		ColumnID:  c1.ID,
+		Position:  0,
+		Title:     "Inbox Blocked",
+		Priority:  domain.PriorityHigh,
+		Metadata: domain.TaskMetadata{
+			BlockedReason: "active project blocker",
+		},
+	}, now)
+	t2, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t2",
+		ProjectID: p2.ID,
+		ColumnID:  c2.ID,
+		Position:  0,
+		Title:     "Roadmap Blocked",
+		Priority:  domain.PriorityHigh,
+		Metadata: domain.TaskMetadata{
+			BlockedReason: "non-active project blocker",
+		},
+	}, now.Add(time.Minute))
+	svc := newFakeService(
+		[]domain.Project{p1, p2},
+		[]domain.Column{c1, c2},
+		[]domain.Task{t1, t2},
+	)
+	svc.attentionErrByProject[p2.ID] = errors.New("attention load failed")
+
+	m := loadReadyModel(t, NewModel(svc))
+	if m.err != nil {
+		t.Fatalf("expected board load to continue on non-active attention failure, got err=%v", m.err)
+	}
+	if m.globalNoticesPartialCount != 1 {
+		t.Fatalf("expected partial-count=1, got %d", m.globalNoticesPartialCount)
+	}
+	if got := strings.Join(m.warnings, " | "); !strings.Contains(got, "global notices partial") {
+		t.Fatalf("expected warnings to include partial-results signal, got %q", got)
+	}
+
+	m = applyMsg(t, m, tea.WindowSizeMsg{Width: 128, Height: 40})
+	rendered := stripANSI(fmt.Sprint(m.View().Content))
+	if !strings.Contains(rendered, "partial results: 1 project") || !strings.Contains(rendered, "unavailable") {
+		t.Fatalf("expected visible partial-results signal in global panel, got\n%s", rendered)
+	}
+}
+
 // TestModelNoticesRecentActivityScrollAndFallbackDetail verifies notices activity scrolling and detail fallback for non-node events.
 func TestModelNoticesRecentActivityScrollAndFallbackDetail(t *testing.T) {
 	now := time.Date(2026, 3, 1, 13, 30, 0, 0, time.UTC)
@@ -4543,9 +5458,12 @@ func TestModelNoticesRecentActivityScrollAndFallbackDetail(t *testing.T) {
 	if m.noticesActivity != 4 {
 		t.Fatalf("expected notices activity cursor to reach older row index 4, got %d", m.noticesActivity)
 	}
-	panel := stripANSI(m.renderOverviewPanel(p, lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), 80, 0, 0, 0, nil, true))
-	if !strings.Contains(panel, "› user|unknown create task") {
-		t.Fatalf("expected scrolled activity window to mark the selected older entry, got %q", panel)
+	panel := stripANSI(m.renderOverviewPanel(p, lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), 80, 40, 0, 0, 0, nil, true))
+	if !strings.Contains(panel, "Recent Activity") {
+		t.Fatalf("expected recent-activity section to stay visible while scrolled, got %q", panel)
+	}
+	if !strings.Contains(panel, "↑ more") {
+		t.Fatalf("expected scrolled activity window to show overflow marker, got %q", panel)
 	}
 }
 
@@ -4879,7 +5797,7 @@ func TestModelRecentActivityPanelRefreshesFromPersistedEvents(t *testing.T) {
 	if got := m.activityLog[len(m.activityLog)-1].Summary; got != "update task" {
 		t.Fatalf("expected newest persisted event in recent activity after refresh, got %q", got)
 	}
-	panel := stripANSI(m.renderOverviewPanel(p, lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), 80, 0, 0, 0, nil, false))
+	panel := stripANSI(m.renderOverviewPanel(p, lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), 80, 28, 0, 0, 0, nil, false))
 	if !strings.Contains(panel, "user|unknown update task") {
 		t.Fatalf("expected notices panel to show refreshed update activity, got %q", panel)
 	}
@@ -6204,8 +7122,8 @@ func TestModelFocusSubtreeAllowsEmptyScope(t *testing.T) {
 		t.Fatalf("expected focused-subtree status, got %q", m.status)
 	}
 	rendered := stripANSI(fmt.Sprint(m.View().Content))
-	if !strings.Contains(rendered, "subtree focus active") {
-		t.Fatalf("expected subtree-focus banner for empty scope, got\n%s", rendered)
+	if !strings.Contains(rendered, "path: Roadmap -> Leaf Task") {
+		t.Fatalf("expected focused path line for empty scope, got\n%s", rendered)
 	}
 }
 
@@ -6276,20 +7194,59 @@ func TestModelViewShowsNoticesPanel(t *testing.T) {
 	// Notices panel rendering now starts at the clean-fit threshold; widen beyond default test viewport.
 	m = applyMsg(t, m, tea.WindowSizeMsg{Width: 128, Height: 40})
 	rendered := stripANSI(fmt.Sprint(m.View().Content))
-	if !strings.Contains(rendered, "Notices") {
-		t.Fatalf("expected notices panel title, got\n%s", rendered)
+	if !strings.Contains(rendered, "Project Notifications") {
+		t.Fatalf("expected project notifications panel title, got\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "Global Notifications") {
+		t.Fatalf("expected global notifications panel title, got\n%s", rendered)
 	}
 	if !strings.Contains(rendered, "Agent/User Action") {
 		t.Fatalf("expected notices panel attention section, got\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "tab/shift+tab panels") {
-		t.Fatalf("expected activity-log hint in notices panel, got\n%s", rendered)
+	if !strings.Contains(rendered, "requires user action across") {
+		t.Fatalf("expected global notifications subtitle, got\n%s", rendered)
+	}
+	if strings.Contains(rendered, "Notices\nproject:") || strings.Contains(rendered, "Notices\r\nproject:") {
+		t.Fatalf("expected legacy notices fallback block to be absent, got\n%s", rendered)
 	}
 	if !strings.Contains(rendered, "work items") {
 		t.Fatalf("expected blocker warning in notices panel, got\n%s", rendered)
 	}
 	if !strings.Contains(rendered, "attention items") {
 		t.Fatalf("expected attention warning in notices panel, got\n%s", rendered)
+	}
+}
+
+// TestRenderOverviewPanelOmitsLegacyNoticesFallbackWhenVisible verifies the side panel always renders project/global notifications layout.
+func TestRenderOverviewPanelOmitsLegacyNoticesFallbackWhenVisible(t *testing.T) {
+	now := time.Date(2026, 3, 2, 8, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})))
+
+	panel := stripANSI(m.renderOverviewPanel(project, lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), 44, 26, 0, 0, 0, nil, false))
+	if !strings.Contains(panel, "Project Notifications") {
+		t.Fatalf("expected project notifications panel title, got\n%s", panel)
+	}
+	if !strings.Contains(panel, "Global Notifications") {
+		t.Fatalf("expected global notifications panel title, got\n%s", panel)
+	}
+	if strings.Contains(panel, "Notices") {
+		t.Fatalf("expected legacy single-panel notices title to be absent, got\n%s", panel)
+	}
+	if strings.Contains(panel, "project: "+projectDisplayName(project)) {
+		t.Fatalf("expected legacy project fallback line to be absent, got\n%s", panel)
+	}
+	if strings.Contains(panel, "path: "+projectDisplayName(project)) {
+		t.Fatalf("expected legacy path fallback line to be absent, got\n%s", panel)
 	}
 }
 
@@ -6414,8 +7371,8 @@ func TestModelViewShowsAttentionMarkersAndSummary(t *testing.T) {
 	if !strings.Contains(rendered, "attention scope: 2 items • unresolved 3 • blocked 1") {
 		t.Fatalf("expected attention summary line, got\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "attention panel:") {
-		t.Fatalf("expected compact attention panel line, got\n%s", rendered)
+	if !strings.Contains(rendered, "Project Notifications") {
+		t.Fatalf("expected project notifications panel to render, got\n%s", rendered)
 	}
 	if !strings.Contains(rendered, "Blocked Task !2") {
 		t.Fatalf("expected row marker for blocked task, got\n%s", rendered)

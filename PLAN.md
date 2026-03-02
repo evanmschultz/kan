@@ -1,8 +1,8 @@
 # Kan Plan
 
 Created: 2026-02-21
-Updated: 2026-02-27
-Status: Execution plan locked; immediate next action is collaborative test closeout
+Updated: 2026-03-02
+Status: In progress; Wave 4 markdown-first summary/details/comments remediation is gate-green and awaiting final independent QA sign-off (code + docs), plus worksheet completion (`C1`-`C3` user-collaborative and `C4` agent verification)
 
 ## 1) Primary Goal
 
@@ -56,7 +56,7 @@ Finish `kan` as a reliable local-first planning system for human + agent collabo
 
 ## 5) Phase Plan (Complete Execution Sequence)
 
-## Phase 0: Collaborative Test Closeout (Immediate Next Action)
+## Phase 0: Collaborative Test Closeout (Historical Baseline; superseded by Wave 4 worksheet)
 
 Objective:
 - finish all collaborative test work and update worksheet evidence to current truth.
@@ -199,8 +199,10 @@ Exit criteria:
 
 ## 6) Immediate Next Action Lock
 
-The very next work to run is **Phase 0: Collaborative Test Closeout**.
-No new feature phase should start until Phase 0 produces updated evidence and explicit task outcomes.
+Current next action lock:
+1. complete Wave 4 independent QA docs sign-off,
+2. run collaborative worksheet `COLLAB_TEST_2026-03-02_DOGFOOD.md` section-by-section with user evidence capture,
+3. only then mark Wave 4 dogfood readiness as complete.
 
 ## 7) Definition Of Done For Current Finish Target
 
@@ -1725,3 +1727,138 @@ Commands/tests run and outcomes:
 
 Current status:
 - all parallel implementation lanes and independent review lanes remain closed with green integrator gates.
+
+## Checkpoint 2026-03-02: AGENTS Flow Lock Update (User-Requested)
+
+Objective:
+- encode required collaborative remediation flow in `AGENTS.md` before launching next subagent wave.
+
+Commands/tests run and outcomes:
+1. `rg -n "Temporary Next-Step Directive|Locked execution flow|Parallel/Subagent Mode|Worker Handoff Contract|PLAN.md" AGENTS.md` -> PASS (located policy sections).
+2. `sed -n '1,260p' AGENTS.md` and `sed -n '260,520p' AGENTS.md` -> PASS (reviewed current directives before patch).
+3. `apply_patch` on `AGENTS.md` -> PASS (added explicit gates: user go-ahead before implementation launch, mandatory independent QA subagent code+MD sign-off, and user confirmation before section completion).
+4. Tests/checks -> `test_not_applicable` (docs/process-only policy update).
+
+Current status:
+- policy now matches requested flow; waiting for explicit user "go ahead" before any new implementation subagents are launched.
+
+## Checkpoint 2026-03-02: Wave 3 Notifications/Global Panel Remediation Kickoff
+
+Objective:
+- remediate the unresolved notifications/global-panel UX gap reported by user:
+  - visible notifications redesign in TUI,
+  - separate global notifications panel below project notifications,
+  - focusable/scrollable/selectable lists with Enter actions.
+
+Execution constraints (locked):
+1. worker implementation lane in `internal/tui/model.go` + `internal/tui/model_test.go`.
+2. independent QA subagent review required on code + collaborative markdown docs before completion.
+3. tests required before any completion mark:
+   - `just test-pkg ./internal/tui`
+   - `just check`
+   - `just ci`
+4. final section completion requires explicit user-run confirmation after integrated changes.
+
+Commands/tests run and outcomes:
+1. Context gathering + lock-table docs update -> PASS.
+2. Tests/checks -> `test_not_applicable` (kickoff/docs-only checkpoint).
+
+Current status:
+- wave started; worker implementation lane is being dispatched.
+
+## Checkpoint 2026-03-02: Wave 3 Worker Handoff + QA Findings + Remediation
+
+Objective:
+- complete requested notifications/global-panel redesign with independent QA and green gates before user manual confirmation.
+
+Execution summary:
+1. Worker lane `LANE-NOTIFICATIONS-REDESIGN` delivered initial implementation in:
+   - `internal/tui/model.go`
+   - `internal/tui/model_test.go`
+2. Independent QA review lanes returned FAIL:
+   - code QA found actionability/stability/resilience gaps and red TUI package gate,
+   - docs QA found missing Wave 3 acceptance coverage and tracker/worklog consistency gaps.
+3. Remediation worker lane `LANE-NOTIFICATIONS-REMEDIATION` delivered fixes in same TUI lock scope:
+   - stable-key global notifications selection re-anchor after reload,
+   - deterministic Enter path for non-task global rows via modal fallback,
+   - partial-results handling for non-active project attention fetch failures,
+   - additional edge-case tests.
+4. Integrator reran gates after remediation:
+   - `just test-pkg ./internal/tui` -> PASS
+   - `just check` -> PASS
+   - `just ci` -> PASS
+
+Current status:
+- implementation and integrator gates are green,
+- refreshed independent QA outcomes:
+  1. code QA -> PASS (no remaining high/medium findings),
+  2. docs QA -> remediated (added explicit scrolling acceptance row + synchronized pending-state wording).
+- final Wave 3 sign-off remaining gate:
+  1. user-run manual confirmation in the live collaborative worksheet flow (`C-08` through `C-12`).
+
+## Checkpoint 2026-03-02: Wave 3 Final QA Status Consolidation
+
+Objective:
+- consolidate final independent QA status and align process docs before collaborative manual run.
+
+Commands/tests run and outcomes:
+1. Independent code QA lane (`REVIEW-NOTIFICATIONS-FINAL-CODE`) -> PASS.
+2. Independent docs QA lane (`REVIEW-NOTIFICATIONS-FINAL-DOCS`) -> initial FAIL; remediated via worksheet/process doc updates.
+3. Integrator gates remained green (`just test-pkg ./internal/tui`, `just check`, `just ci`) -> PASS.
+
+Current status:
+- Wave 3 is QA-signed and gate-green.
+- Remaining closeout requirement is user collaborative confirmation (`C-08` through `C-12`).
+- Final docs recheck reports FAIL only because those user confirmation rows are still intentionally pending.
+
+## Checkpoint 2026-03-02: Wave 4 Markdown-First Summary/Details/Comments
+
+Objective:
+- implement markdown-first summary/details/comments improvements for dogfood readiness,
+- add summary schema migration,
+- update MCP contracts/tool guidance,
+- improve TUI read-first details flow and comment visibility,
+- keep validation MCP-only (no HTTP/curl probes) and inside repo scope.
+
+Commands/tests run and outcomes:
+1. `mcp__gopls__go_workspace` -> PASS (workspace/module verified).
+2. Context7 consults before implementation lanes:
+   - Bubble Tea, Lip Gloss, Glamour, SQLite, mcp-go -> PASS.
+3. Worker lane package tests (integrator rerun):
+   - `just test-pkg ./internal/domain` -> PASS
+   - `just test-pkg ./internal/app` -> PASS
+   - `just test-pkg ./internal/adapters/storage/sqlite` -> PASS
+   - `just test-pkg ./internal/adapters/server/mcpapi` -> PASS
+   - `just test-pkg ./internal/tui` -> PASS
+4. Full gates:
+   - `just check` -> PASS
+   - `just ci` -> PASS
+5. Visual regression tapes:
+   - `just vhs` -> PASS (`vhs/board.tape`, `vhs/regression_scroll.tape`, `vhs/regression_subtasks.tape`, `vhs/workflow.tape`).
+
+Edits completed:
+1. Domain/app/snapshot comment summary model support + fallback normalization.
+2. SQLite `comments.summary` column migration/backfill + persistence read/write.
+3. MCP/common contract updates:
+   - comment `summary` in requests/responses,
+   - markdown-rich argument guidance for summary/details/comments,
+   - capture-state comment-overview population from persisted comments.
+4. TUI thread/task info improvements:
+   - read-first details overlay flow in thread mode,
+   - explicit edit transition from details overlay,
+   - comment summary visibility in thread/task-info read surfaces,
+   - notification actionability behavior preserved.
+5. Policy/docs updates:
+   - `AGENTS.md` updated with strict repo-scope, MCP-only protocol validation, and never-push default.
+
+Commit sequence:
+1. `f28e9f3` -> `Add markdown-first comment summary schema and MCP contracts`
+2. (pending) TUI + docs/worksheet closeout commit after QA sign-off.
+
+Current status:
+- Implementation lanes complete and gates green.
+- New collaborative worksheet created: `COLLAB_TEST_2026-03-02_DOGFOOD.md`.
+- Remaining required steps before final closeout:
+  1. independent QA subagent sign-off on code + markdown trackers/worksheet,
+  2. user+agent collaborative run through worksheet sections C1-C4,
+  3. final closeout commit for TUI/docs wave.

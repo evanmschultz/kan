@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"image/color"
 	"strings"
 	"time"
 
@@ -36,10 +37,17 @@ func (m Model) renderThreadModeView() tea.View {
 	wrapWidth := max(24, m.width-8)
 	bodyLines := m.threadBodyLines(wrapWidth, sectionStyle, hintStyle)
 
-	in := m.threadInput
-	in.SetWidth(max(20, m.width-18))
-	composerLine := "comment: " + in.View()
-	hints := hintStyle.Render("enter post • pgup/pgdown scroll • mouse wheel scroll • ctrl+r reload • ? help • esc back")
+	afterParts := []string{""}
+	if m.threadComposerActive {
+		in := m.threadInput
+		in.SetWidth(max(20, m.width-18))
+		afterParts = append(afterParts, "comment: "+in.View())
+		afterParts = append(afterParts, hintStyle.Render("enter post • tab read mode • pgup/pgdown scroll • mouse wheel scroll • ctrl+r reload • ? help • esc read mode"))
+	} else if m.threadDetailsActive {
+		afterParts = append(afterParts, hintStyle.Render("details mode • enter edit target • esc read mode • ? help"))
+	} else {
+		afterParts = append(afterParts, hintStyle.Render("read mode • e details • i compose comment • pgup/pgdown scroll • mouse wheel scroll • ctrl+r reload • ? help • esc back"))
+	}
 
 	statusLine := ""
 	statusText := strings.TrimSpace(m.status)
@@ -48,7 +56,6 @@ func (m Model) renderThreadModeView() tea.View {
 	}
 
 	beforeBody := strings.Join([]string{header, targetLine, ""}, "\n")
-	afterParts := []string{"", composerLine, hints}
 	if statusLine != "" {
 		afterParts = append(afterParts, statusLine)
 	}
@@ -73,6 +80,16 @@ func (m Model) renderThreadModeView() tea.View {
 	if m.height > 0 {
 		content = fitLines(content, m.height)
 	}
+	if m.threadDetailsActive {
+		overlay := m.renderThreadDetailsOverlay(accent, muted, max(0, m.width-10))
+		if overlay != "" {
+			overlayHeight := lipgloss.Height(content)
+			if m.height > 0 {
+				overlayHeight = m.height
+			}
+			content = overlayOnContent(content, overlay, max(1, m.width), max(1, overlayHeight))
+		}
+	}
 	if m.help.ShowAll {
 		overlay := m.renderHelpOverlay(accent, muted, dim, hintStyle, m.width-8)
 		if overlay != "" {
@@ -88,6 +105,42 @@ func (m Model) renderThreadModeView() tea.View {
 	v.MouseMode = m.activeMouseMode()
 	v.AltScreen = true
 	return v
+}
+
+// renderThreadDetailsOverlay renders a read-first markdown details modal for the active thread target.
+func (m Model) renderThreadDetailsOverlay(accent, muted color.Color, maxWidth int) string {
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
+	hintStyle := lipgloss.NewStyle().Foreground(muted)
+	boxWidth := 88
+	if maxWidth > 0 {
+		boxWidth = clamp(maxWidth, 42, 108)
+	}
+	contentWidth := max(24, boxWidth-8)
+	title := "Task Details"
+	if m.threadTarget.TargetType == domain.CommentTargetTypeProject {
+		title = "Project Details"
+	}
+	lines := []string{
+		titleStyle.Render(title),
+		hintStyle.Render("markdown read mode"),
+		"",
+	}
+	details := strings.TrimSpace(m.threadDescriptionMarkdown)
+	if details == "" {
+		lines = append(lines, hintStyle.Render("(no description)"))
+	} else {
+		rendered := m.threadMarkdown.render(details, contentWidth)
+		lines = append(lines, splitThreadMarkdownLines(rendered)...)
+	}
+	lines = append(lines, "", hintStyle.Render("enter edit • esc back"))
+	style := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(accent).
+		Padding(0, 1)
+	if maxWidth > 0 {
+		style = style.Width(boxWidth)
+	}
+	return style.Render(strings.Join(lines, "\n"))
 }
 
 // threadBodyLines renders thread description and comments into scrollable body lines.
@@ -111,6 +164,9 @@ func (m Model) threadBodyLines(width int, sectionStyle, hintStyle lipgloss.Style
 		owner := threadCommentOwnerLabel(comment)
 		actor := string(normalizeCommentActorType(string(comment.ActorType)))
 		lines = append(lines, hintStyle.Render(fmt.Sprintf("[%s] %s • %s", actor, owner, formatThreadTimestamp(comment.CreatedAt))))
+		if summary := commentSummaryText(comment); summary != "" {
+			lines = append(lines, hintStyle.Render("summary: "+truncate(summary, max(24, width))))
+		}
 
 		body := m.threadMarkdown.render(comment.BodyMarkdown, width)
 		if strings.TrimSpace(body) == "" {
@@ -200,13 +256,49 @@ func (m Model) startThread(backMode inputMode, target domain.CommentTarget, titl
 	m.threadComments = nil
 	m.threadScroll = 0
 	m.threadPendingCommentBody = ""
+	m.threadComposerActive = false
+	m.threadDetailsActive = false
 	m.threadInput.SetValue("")
 	m.threadInput.CursorEnd()
-	// Set focused state eagerly so both runtime behavior and unit-test command loops
-	// see the composer as active even when only one command is returned.
-	m.threadInput.Focus()
+	m.threadInput.Blur()
 	m.status = "loading thread..."
 	return m, m.loadThreadCommentsCmd(target)
+}
+
+// startThreadEditFlow transitions thread read mode into the matching project/task edit flow.
+func (m Model) startThreadEditFlow() (tea.Model, tea.Cmd) {
+	target := m.threadTarget
+	switch target.TargetType {
+	case domain.CommentTargetTypeProject:
+		projectID := strings.TrimSpace(target.TargetID)
+		if projectID == "" {
+			projectID = strings.TrimSpace(target.ProjectID)
+		}
+		if projectID == "" {
+			m.status = "thread project target unavailable"
+			return m, nil
+		}
+		for _, project := range m.projects {
+			if strings.TrimSpace(project.ID) != projectID {
+				continue
+			}
+			return m, m.startProjectForm(&project)
+		}
+		m.status = "thread project not found"
+		return m, nil
+	default:
+		taskID := strings.TrimSpace(target.TargetID)
+		if taskID == "" {
+			m.status = "thread work item target unavailable"
+			return m, nil
+		}
+		task, ok := m.taskByID(taskID)
+		if !ok {
+			m.status = "thread work item not found"
+			return m, nil
+		}
+		return m, m.startTaskForm(&task)
+	}
 }
 
 // loadThreadCommentsCmd loads comments for one thread target.
@@ -302,6 +394,11 @@ func threadCommentOwnerLabel(comment domain.Comment) string {
 		return actorName
 	}
 	return fmt.Sprintf("%s (%s)", actorName, actorID)
+}
+
+// commentSummaryText returns the normalized summary text used in thread and task-info read views.
+func commentSummaryText(comment domain.Comment) string {
+	return domain.NormalizeCommentSummary(comment.Summary, comment.BodyMarkdown)
 }
 
 // commentTargetTypeForTask maps one work item into comment target types with scope-aware overrides.

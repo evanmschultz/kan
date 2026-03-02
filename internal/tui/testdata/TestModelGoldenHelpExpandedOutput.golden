@@ -6,41 +6,43 @@
 
  ╭─────────────────────────────────────────────────────╮ ╭────────────────────────────────────╮
  │                                                     │ │                                    │
- │  To Do (1)                                          │ │ Notices                            │
- │  │  Help Golden Task                                │ │ project: Inbox                     │
- │     [low]                                           │ │ path: Inbox                        │
- │                                                     │ │                                    │
- │                                                     │ │ Warnings                           │
+ │  To Do (1)                                          │ │ Project Notifications              │
+ │  │  Help Golden Task                                │ │                                    │
+ │     [low]                                           │ │ Warnings                           │
  │                                                     │ │ none                               │
+ │                                                     │ │ …                                  │
  │                                                     │ │                                    │
- │                                                     │ │ Agent/User Action                  │
- │                                                     │ │ no unresolved notices              │
+ │                                                     │ ╰────────────────────────────────────╯
+ │                                                     │ ╭────────────────────────────────────╮
  │                                                     │ │                                    │
- │                                                     │ │ Selection                          │
- │                                                     │ │ Help Golden Task                   │
- │                                                     │ │ [low]                              │
+ │                                                     │ │ Global Notifications               │
+ │                                                     │ │ requires user action across        │
+ │                                                     │ │ projects                           │
  │                                                     │ │                                    │
- ╰─────────────────────────────────────────────────────╯ │ Recent Activity                    │[24;58H│ (no activity yet)                  │[25;58H│                                    │[26;58H│ tab/shift+tab panels • enter       │
-…
+ │                                                     │ │ …                                  │
+ ╰─────────────────────────────────────────────────────╯ │                                    │[24;58H╰────────────────────────────────────╯
+ tasks: 1 • selected: Help Golden Task • level: task
+ deps: total 1 • blocked 0 • unresolved 0 • edges 0
+ 0 overdue * 0 due soon
  n new task • s new subtask • i/enter task info • e edit task • f focus subtree …[6A[J[H[K
 [K
 [K
 [K
 [K
-[4C╭──────────────────────────────────────────────────────────────────────────────────────╮
-    │ TILLSYN Help                                                                         │[K
-    │ screen: board                                     [3P
-    │                                                           [3P
+
+    ╭───────────────────────────────────────────────────[3P
+    │ TILLSYN Help                                      [3P
+    │ screen: board                                                           [3P
+    │                                                   [3P
     │ - h/l or left/right move columns; j/k or up/down move task selection [3P
-    │ - n new task; s new subtask; i/enter task info; e edit task   [3P
+    │ - n new task; s new subtask; i/enter task info; e edit task [3P
     │ - space multi-select; [ / ] move task; d delete; D hard delete; u restore [3P
-    │ - f focus subtree; F full board; t toggle archived         [3P
-    │ - / search; p project picker; : command palette; . quick actions [3P
-    │ - tab/shift+tab cycle focused panel; left/right move adjacent panel; enter opens [3P
-    │ notices detail                                                      [3P
+    │ - f focus subtree; F full board; t toggle archived [3P
+    │ - / search; p project picker; : command palette; . quick actions                     │[K
+    │ - tab/shift+tab cycle board/project/global panels; left/right move adjacent panel    │[K
     │ - ctrl+y toggles text selection mode; ctrl+c/ctrl+v copy/paste in text inputs [3P
-    │ - z undo; Z redo; g activity log; q quit          [3P
-    │                                                             [3P
-    │ selection mode: off (ctrl+y toggles)                               [3P
-    │ press ? or esc to close help                            [3P
+    │ - z undo; Z redo; g activity log; q quit                               [3P
+    │                                                                               [3P
+    │ selection mode: off (ctrl+y toggles)                       [3P
+    │ press ? or esc to close help                      [3P
 [4C╰──────────────────────────────────────────────────────────────────────────────────────╯[?1049l[?25h[?2004l[?1002l[?1003l[?1006l[=0;1u

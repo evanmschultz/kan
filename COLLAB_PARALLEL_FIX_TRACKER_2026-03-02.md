@@ -1,12 +1,12 @@
 # Collaborative Parallel Fix Tracker (2026-03-02)
 
-This tracker is the execution log for the active parallel remediation wave.
+This tracker is the execution log for parallel remediation waves on 2026-03-02.
 Reference policy: `PARALLEL_AGENT_RUNBOOK.md`.
 
 ## Goals
 
-1. Fix comment coverage gaps across all node types used in scope hierarchy.
-2. Fix TUI right-side notices workflow into focusable/scrollable/selectable triage lists.
+1. Close collaborative remediation gaps with lock-scoped parallel lanes.
+2. Preserve independent QA sign-off + gate evidence before marking any section complete.
 3. Keep work non-overlapping by lane lock scope and integrate with targeted package checks.
 
 ## Lock Table
@@ -191,4 +191,107 @@ Reference policy: `PARALLEL_AGENT_RUNBOOK.md`.
 - Revalidated gate health after final tracker/doc synchronization:
   - `just check` PASS
   - `just ci` PASS
-- Sign-off status: COMPLETE. Parallel lanes + independent review lanes are closed with green integrator gates.
+- Sign-off status (Wave 2 only): COMPLETE. Wave 3 remains active below.
+
+## Wave 3: Notifications + Global Panel Redesign (User-Requested)
+
+### Lock Table (Wave 3)
+
+| Lane ID | Owner | Lock Scope | Out of Scope | Objective | Status |
+|---|---|---|---|---|---|
+| LANE-NOTIFICATIONS-REDESIGN | worker-subagent | `internal/tui/model.go`, `internal/tui/model_test.go` | non-`internal/tui/*` paths, docs/worklogs | Implement requested notifications redesign: remove redundant header rows, preserve focusable section lists, and add separate global notifications panel below project notifications with selectable rows/actions. | COMPLETE (superseded by remediation lane) |
+| LANE-NOTIFICATIONS-REMEDIATION | worker-subagent | `internal/tui/model.go`, `internal/tui/model_test.go` | non-`internal/tui/*` paths, docs/worklogs | Address QA findings (actionability, stable-key selection, partial-fetch resilience, edge-case tests, and gate recovery). | COMPLETE |
+| REVIEW-NOTIFICATIONS-REDESIGN | explorer-subagent | `LANE-NOTIFICATIONS-REDESIGN` + remediation delta + affected collaborative markdown docs | direct code edits | Independent QA review for correctness, UX parity with user intent, test adequacy, and markdown/worklog consistency before sign-off. | COMPLETE (initial FAIL, final PASS after remediation) |
+
+### Checkpoint 10 - Wave 3 Kickoff
+
+- Trigger: user reported zero visible change for requested notifications/global-panel redesign.
+- Scope locked to TUI panel architecture and navigation behavior for this remediation section.
+- Completion gate (explicit):
+  1. worker implementation handoff,
+  2. independent QA subagent sign-off on code + markdown docs,
+  3. passing tests (`just test-pkg ./internal/tui`, `just check`, `just ci`),
+  4. user-run confirmation before marking section complete.
+
+### Checkpoint 11 - Initial Worker Handoff + Independent QA (FAIL)
+
+- Worker handoff received for `LANE-NOTIFICATIONS-REDESIGN` with TUI model/test changes.
+- Independent QA outcomes:
+  - code QA: FAIL (global Enter actionability/stability/resilience gaps + red TUI package gate),
+  - docs QA: FAIL (Wave 3 acceptance coverage and tracker/worklog consistency gaps).
+- Decision: dispatched remediation lane before any completion mark.
+
+### Checkpoint 12 - Remediation + Integrator Gates (Green, Pending Final QA/User)
+
+- Remediation handoff received for `LANE-NOTIFICATIONS-REMEDIATION`:
+  - stable-key global row identity + selection re-anchor,
+  - deterministic non-task Enter modal fallback,
+  - resilient non-active project global fetch handling with partial-results signaling,
+  - expanded edge-case TUI tests.
+- Integrator gate evidence after remediation:
+  - `just test-pkg ./internal/tui` PASS
+  - `just check` PASS
+  - `just ci` PASS
+- Wave 3 status: implementation ready, final QA sign-off + user-run confirmation still required before closeout.
+
+### Checkpoint 13 - Final QA Outcomes
+
+- Independent code QA (`REVIEW-NOTIFICATIONS-FINAL-CODE`): PASS (no remaining high/medium findings in TUI scope).
+- Independent docs/process QA initially flagged:
+  1. missing explicit scrollable acceptance row in active collaborative worksheet,
+  2. wording drift on QA-pending vs user-confirmation-pending state.
+- Doc gaps remediated:
+  - added explicit manual row for notifications scrolling behavior in `COLLAB_TEST_2026-03-02.md` (`C-12`),
+  - synchronized wording to reflect QA pass and remaining user confirmation gate.
+- Current Wave 3 closeout state: QA complete, tests green, awaiting user-run collaborative confirmation before final completion mark.
+
+### Checkpoint 14 - Final Docs Recheck Interpretation
+
+- Final docs recheck confirms no remaining process/doc drift defects.
+- Reported FAIL is expected because user confirmation rows (`C-08`..`C-12`) are intentionally still `PENDING_USER` until collaborative run completes.
+- Wave 3 remains intentionally open pending user-run evidence capture.
+
+## Wave 4: Markdown-First Summary/Details/Comments Closeout
+
+### Lock Table (Wave 4)
+
+| Lane ID | Owner | Lock Scope | Objective | Status |
+|---|---|---|---|---|
+| LANE-COMMENT-MODEL | worker-subagent | `internal/domain/comment.go`, `internal/domain/comment_test.go`, `internal/app/service.go`, `internal/app/service_test.go`, `internal/app/snapshot.go`, `internal/app/snapshot_test.go`, `internal/app/ports.go` | Add canonical comment `summary` field semantics (fallback from body) through domain/app/snapshot. | COMPLETE |
+| LANE-SQLITE-MIGRATION | worker-subagent | `internal/adapters/storage/sqlite/repo.go`, `internal/adapters/storage/sqlite/repo_test.go` | Add `comments.summary` schema + migration/backfill + persistence read/write coverage. | COMPLETE |
+| LANE-MCP-CONTRACT-MD | worker-subagent | `internal/adapters/server/common/*`, `internal/adapters/server/mcpapi/*` (scoped set from lane prompt) | Add summary-aware comment MCP contracts and markdown-rich schema guidance; populate capture comment overview from real data. | COMPLETE |
+| LANE-TUI-MD-UX-PASSA | worker-subagent | `internal/tui/model.go`, `internal/tui/model_test.go`, `internal/tui/thread_mode.go`, `internal/tui/thread_mode_test.go`, `internal/tui/keymap.go`, `internal/tui/model_teatest_test.go`, `internal/tui/testdata/**` | Read-first markdown UX for details/comments, comment summary visibility, and preserved notification actionability. | COMPLETE |
+
+### Checkpoint W4-01 - User Constraint Sync
+
+- Added explicit constraints in `AGENTS.md`:
+  - never operate outside `/Users/evanschultz/Documents/Code/hylla/tillsyn`,
+  - MCP-only protocol validation (no HTTP/curl probes),
+  - `just build` + `./till serve` permitted for runtime MCP checks,
+  - never push unless explicitly requested.
+
+### Checkpoint W4-02 - Lane Execution + Integrator Verification
+
+- Worker lanes completed with non-overlapping lock scopes.
+- Integrator reran package checks for non-TUI lanes:
+  - `just test-pkg ./internal/domain` PASS
+  - `just test-pkg ./internal/app` PASS
+  - `just test-pkg ./internal/adapters/storage/sqlite` PASS
+  - `just test-pkg ./internal/adapters/server/mcpapi` PASS
+- Integrator reran TUI package gate after TUI lane:
+  - `just test-pkg ./internal/tui` PASS
+- Integrator full gates:
+  - `just check` PASS
+  - `just ci` PASS
+- VHS sweep:
+  - `just vhs` PASS (`board`, `regression_scroll`, `regression_subtasks`, `workflow`)
+
+### Checkpoint W4-03 - Commit + Collaborative Worksheet Refresh
+
+- Committed non-TUI wave integration:
+  - `f28e9f3` — `Add markdown-first comment summary schema and MCP contracts`
+- Created active collaborative worksheet for this wave:
+  - `COLLAB_TEST_2026-03-02_DOGFOOD.md`
+- Remaining closeout gate:
+  - independent QA sign-off on code + docs for Wave 4,
+  - collaborative user run of worksheet sections (`C1`-`C3`) and agent completion of section `C4` before final dogfood-ready mark.
