@@ -20,6 +20,11 @@ type CaptureStateService struct {
 	now       func() time.Time
 }
 
+// captureStateCommentReadModel defines optional comment reads for capture comment counters.
+type captureStateCommentReadModel interface {
+	ListCommentsByTarget(context.Context, domain.CommentTarget) ([]domain.Comment, error)
+}
+
 // NewCaptureStateService constructs one capture-state adapter over app-level read methods.
 func NewCaptureStateService(read CaptureStateReadModel, attention AttentionService, now func() time.Time) *CaptureStateService {
 	if now == nil {
@@ -66,6 +71,10 @@ func (s *CaptureStateService) CaptureState(ctx context.Context, in CaptureStateR
 	if err != nil {
 		return CaptureState{}, err
 	}
+	commentOverview, err := s.buildCommentOverview(ctx, req)
+	if err != nil {
+		return CaptureState{}, err
+	}
 	workOverview := buildWorkOverview(tasks)
 	warningsOverview := buildWarningsOverview(workOverview, attentionOverview)
 
@@ -101,11 +110,8 @@ func (s *CaptureStateService) CaptureState(ctx context.Context, in CaptureStateR
 		},
 		AttentionOverview: attentionOverview,
 		WorkOverview:      workOverview,
-		CommentOverview: CommentOverview{
-			RecentCount:    0,
-			ImportantCount: 0,
-		},
-		WarningsOverview: warningsOverview,
+		CommentOverview:   commentOverview,
+		WarningsOverview:  warningsOverview,
 		ResumeHints: []ResumeHint{
 			{
 				Rel:  "till.capture_state",
@@ -299,6 +305,27 @@ func canonicalLifecycleState(state domain.LifecycleState) domain.LifecycleState 
 	default:
 		return domain.StateTodo
 	}
+}
+
+// buildCommentOverview resolves scoped comment counters when the read model supports comment queries.
+func (s *CaptureStateService) buildCommentOverview(ctx context.Context, req CaptureStateRequest) (CommentOverview, error) {
+	commentRead, ok := s.read.(captureStateCommentReadModel)
+	if !ok {
+		return CommentOverview{}, nil
+	}
+	targetType, ok := commentTargetTypeFromScope(req.ScopeType)
+	if !ok {
+		return CommentOverview{}, nil
+	}
+	comments, err := commentRead.ListCommentsByTarget(ctx, domain.CommentTarget{
+		ProjectID:  req.ProjectID,
+		TargetType: targetType,
+		TargetID:   req.ScopeID,
+	})
+	if err != nil {
+		return CommentOverview{}, fmt.Errorf("list comments by target: %w", err)
+	}
+	return summarizeCommentOverview(comments), nil
 }
 
 // compareAttentionItems deterministically sorts attention records for stable outputs and hashes.

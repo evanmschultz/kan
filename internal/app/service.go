@@ -331,6 +331,7 @@ type CreateCommentInput struct {
 	ProjectID    string
 	TargetType   domain.CommentTargetType
 	TargetID     string
+	Summary      string
 	BodyMarkdown string
 	ActorID      string
 	ActorName    string
@@ -738,6 +739,7 @@ func (s *Service) CreateComment(ctx context.Context, in CreateCommentInput) (dom
 		ProjectID:    target.ProjectID,
 		TargetType:   target.TargetType,
 		TargetID:     target.TargetID,
+		Summary:      in.Summary,
 		BodyMarkdown: body,
 		ActorID:      strings.TrimSpace(in.ActorID),
 		ActorName:    strings.TrimSpace(in.ActorName),

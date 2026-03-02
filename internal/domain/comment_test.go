@@ -30,6 +30,9 @@ func TestNewCommentDefaultsAndNormalization(t *testing.T) {
 	if comment.BodyMarkdown != "**done**" {
 		t.Fatalf("expected trimmed markdown body, got %q", comment.BodyMarkdown)
 	}
+	if comment.Summary != "**done**" {
+		t.Fatalf("expected default summary from first non-empty body line, got %q", comment.Summary)
+	}
 	if comment.ActorType != ActorTypeUser {
 		t.Fatalf("expected default actor type user, got %q", comment.ActorType)
 	}
@@ -41,6 +44,43 @@ func TestNewCommentDefaultsAndNormalization(t *testing.T) {
 	}
 	if !comment.CreatedAt.Equal(now.UTC()) || !comment.UpdatedAt.Equal(now.UTC()) {
 		t.Fatalf("expected UTC timestamps at input time, got created=%s updated=%s", comment.CreatedAt, comment.UpdatedAt)
+	}
+}
+
+// TestNewCommentUsesProvidedSummary verifies explicit summary normalization behavior.
+func TestNewCommentUsesProvidedSummary(t *testing.T) {
+	now := time.Date(2026, 2, 23, 9, 0, 0, 0, time.UTC)
+	comment, err := NewComment(CommentInput{
+		ID:           "comment-1",
+		ProjectID:    "project-1",
+		TargetType:   CommentTargetTypeTask,
+		TargetID:     "item-1",
+		Summary:      "  Explicit summary  ",
+		BodyMarkdown: "\n\n# Heading\nbody detail",
+	}, now)
+	if err != nil {
+		t.Fatalf("NewComment() error = %v", err)
+	}
+	if comment.Summary != "Explicit summary" {
+		t.Fatalf("expected explicit summary to be trimmed and preserved, got %q", comment.Summary)
+	}
+}
+
+// TestNewCommentDerivesSummaryFromFirstNonEmptyBodyLine verifies fallback summary behavior.
+func TestNewCommentDerivesSummaryFromFirstNonEmptyBodyLine(t *testing.T) {
+	now := time.Date(2026, 2, 23, 9, 0, 0, 0, time.UTC)
+	comment, err := NewComment(CommentInput{
+		ID:           "comment-1",
+		ProjectID:    "project-1",
+		TargetType:   CommentTargetTypeTask,
+		TargetID:     "item-1",
+		BodyMarkdown: "\n\n  ## Heading \n\nMore details",
+	}, now)
+	if err != nil {
+		t.Fatalf("NewComment() error = %v", err)
+	}
+	if comment.Summary != "## Heading" {
+		t.Fatalf("expected fallback summary from first non-empty markdown line, got %q", comment.Summary)
 	}
 }
 

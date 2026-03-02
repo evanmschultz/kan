@@ -57,8 +57,12 @@ func (a *AppServiceAdapter) CaptureState(ctx context.Context, in CaptureStateReq
 	if err != nil {
 		return CaptureState{}, err
 	}
+	commentOverview, err := a.buildCommentOverview(ctx, summary.Level)
+	if err != nil {
+		return CaptureState{}, err
+	}
 
-	out, err := convertCaptureStateSummary(summary, req, project)
+	out, err := convertCaptureStateSummary(summary, req, project, commentOverview)
 	if err != nil {
 		return CaptureState{}, err
 	}
@@ -272,7 +276,7 @@ func normalizeAttentionStateFilter(raw string) (string, error) {
 }
 
 // convertCaptureStateSummary maps app.CaptureStateSummary into transport-facing CaptureState.
-func convertCaptureStateSummary(summary app.CaptureStateSummary, req CaptureStateRequest, project domain.Project) (CaptureState, error) {
+func convertCaptureStateSummary(summary app.CaptureStateSummary, req CaptureStateRequest, project domain.Project, commentOverview CommentOverview) (CaptureState, error) {
 	stateHash, err := computeCaptureSummaryHash(summary)
 	if err != nil {
 		return CaptureState{}, fmt.Errorf("compute capture summary hash: %w", err)
@@ -324,12 +328,56 @@ func convertCaptureStateSummary(summary app.CaptureStateSummary, req CaptureStat
 		GoalOverview:       GoalOverview{ProjectID: project.ID, ProjectName: project.Name, ProjectDescription: project.Description},
 		AttentionOverview:  attentionOverview,
 		WorkOverview:       workOverview,
-		CommentOverview:    CommentOverview{RecentCount: 0, ImportantCount: 0},
+		CommentOverview:    commentOverview,
 		WarningsOverview:   buildWarningsOverview(workOverview, attentionOverview),
 		ResumeHints:        buildResumeHintsFromFollowUps(summary.FollowUpPointers),
 		RequestedView:      req.View,
 		RequestedScopeType: req.ScopeType,
 	}, nil
+}
+
+// buildCommentOverview resolves capture comment counters for one level tuple.
+func (a *AppServiceAdapter) buildCommentOverview(ctx context.Context, level domain.LevelTuple) (CommentOverview, error) {
+	targetType, ok := commentTargetTypeFromScope(string(level.ScopeType))
+	if !ok {
+		return CommentOverview{}, nil
+	}
+	comments, err := a.service.ListCommentsByTarget(ctx, app.ListCommentsByTargetInput{
+		ProjectID:  level.ProjectID,
+		TargetType: targetType,
+		TargetID:   level.ScopeID,
+	})
+	if err != nil {
+		return CommentOverview{}, mapAppError("list comments by target", err)
+	}
+	return summarizeCommentOverview(comments), nil
+}
+
+// summarizeCommentOverview computes comment counters from one deterministic comment set.
+func summarizeCommentOverview(comments []domain.Comment) CommentOverview {
+	overview := CommentOverview{
+		RecentCount: len(comments),
+	}
+	for _, comment := range comments {
+		if isImportantCommentMarkdown(comment.BodyMarkdown) {
+			overview.ImportantCount++
+		}
+	}
+	return overview
+}
+
+// isImportantCommentMarkdown reports whether markdown text carries high-priority signals.
+func isImportantCommentMarkdown(markdown string) bool {
+	markdown = strings.ToLower(strings.TrimSpace(markdown))
+	if markdown == "" {
+		return false
+	}
+	for _, signal := range []string{"important", "urgent", "blocker", "decision", "requires user action"} {
+		if strings.Contains(markdown, signal) {
+			return true
+		}
+	}
+	return false
 }
 
 // buildScopePathFromLevel maps one app-level tuple into a transport scope path.

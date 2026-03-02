@@ -164,13 +164,13 @@ func registerAttentionTools(srv *mcpserver.MCPServer, attention common.Attention
 	srv.AddTool(
 		mcp.NewTool(
 			"till.raise_attention_item",
-			mcp.WithDescription("Create a new attention item for a project scope."),
+			mcp.WithDescription("Create a new attention item with markdown-rich summary/details for a project scope."),
 			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
 			mcp.WithString("scope_type", mcp.Required(), mcp.Description("Scope type")),
 			mcp.WithString("scope_id", mcp.Required(), mcp.Description("Scope identifier")),
 			mcp.WithString("kind", mcp.Required(), mcp.Description("Attention kind")),
-			mcp.WithString("summary", mcp.Required(), mcp.Description("Short summary")),
-			mcp.WithString("body_markdown", mcp.Description("Optional markdown body")),
+			mcp.WithString("summary", mcp.Required(), mcp.Description("Markdown-rich summary for quick triage")),
+			mcp.WithString("body_markdown", mcp.Description("Optional markdown-rich details for deeper context")),
 			mcp.WithBoolean("requires_user_action", mcp.Description("Whether this item blocks on user action")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

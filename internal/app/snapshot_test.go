@@ -109,6 +109,9 @@ func TestExportSnapshotIncludesExpectedData(t *testing.T) {
 	if len(snapAll.Comments) != 1 || snapAll.Comments[0].ID != "comment-1" {
 		t.Fatalf("expected comment closure in snapshot, got %#v", snapAll.Comments)
 	}
+	if snapAll.Comments[0].Summary != "Project comment" {
+		t.Fatalf("expected comment summary in snapshot export, got %#v", snapAll.Comments[0])
+	}
 	if len(snapAll.CapabilityLeases) != 1 || snapAll.CapabilityLeases[0].InstanceID != "lease-1" {
 		t.Fatalf("expected capability lease closure in snapshot, got %#v", snapAll.CapabilityLeases)
 	}
@@ -230,6 +233,9 @@ func TestImportSnapshotCreatesAndUpdates(t *testing.T) {
 	commentKey := "p1|project|p1"
 	if len(repo.comments[commentKey]) != 1 || repo.comments[commentKey][0].ID != "comment-1" {
 		t.Fatalf("expected imported project comment closure, got %#v", repo.comments[commentKey])
+	}
+	if repo.comments[commentKey][0].Summary != "Imported project comment" {
+		t.Fatalf("expected imported comment summary fallback from body markdown, got %#v", repo.comments[commentKey][0])
 	}
 	if _, ok := repo.capabilityLeases["lease-1"]; !ok {
 		t.Fatal("expected imported capability lease lease-1")

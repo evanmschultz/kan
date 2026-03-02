@@ -65,7 +65,7 @@ func registerProjectTools(srv *mcpserver.MCPServer, projects common.ProjectServi
 			"till.create_project",
 			mcp.WithDescription("Create one project."),
 			mcp.WithString("name", mcp.Required(), mcp.Description("Project name")),
-			mcp.WithString("description", mcp.Description("Project description")),
+			mcp.WithString("description", mcp.Description("Project details in markdown-rich text")),
 			mcp.WithString("kind", mcp.Description("Project kind id")),
 			mcp.WithObject("metadata", mcp.Description("Optional project metadata object")),
 			mcp.WithString("actor_type", mcp.Description("user|agent|system"), mcp.Enum("user", "agent", "system")),
@@ -122,7 +122,7 @@ func registerProjectTools(srv *mcpserver.MCPServer, projects common.ProjectServi
 			mcp.WithDescription("Update one project."),
 			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
 			mcp.WithString("name", mcp.Required(), mcp.Description("Project name")),
-			mcp.WithString("description", mcp.Description("Project description")),
+			mcp.WithString("description", mcp.Description("Project details in markdown-rich text")),
 			mcp.WithString("kind", mcp.Description("Project kind id")),
 			mcp.WithObject("metadata", mcp.Description("Optional project metadata object")),
 			mcp.WithString("actor_type", mcp.Description("user|agent|system"), mcp.Enum("user", "agent", "system")),
@@ -221,7 +221,7 @@ func registerTaskTools(
 				mcp.WithString("parent_id", mcp.Description("Optional parent task id")),
 				mcp.WithString("kind", mcp.Description("Kind identifier")),
 				mcp.WithString("scope", mcp.Description("project|branch|phase|subphase|task|subtask"), mcp.Enum(common.SupportedScopeTypes()...)),
-				mcp.WithString("description", mcp.Description("Task description")),
+				mcp.WithString("description", mcp.Description("Task details in markdown-rich text")),
 				mcp.WithString("priority", mcp.Description("low|medium|high"), mcp.Enum("low", "medium", "high")),
 				mcp.WithString("due_at", mcp.Description("Optional RFC3339 timestamp")),
 				mcp.WithArray("labels", mcp.Description("Optional labels"), mcp.WithStringItems()),
@@ -306,7 +306,7 @@ func registerTaskTools(
 				mcp.WithDescription("Update one task/work-item."),
 				mcp.WithString("task_id", mcp.Required(), mcp.Description("Task identifier")),
 				mcp.WithString("title", mcp.Required(), mcp.Description("Task title")),
-				mcp.WithString("description", mcp.Description("Task description")),
+				mcp.WithString("description", mcp.Description("Task details in markdown-rich text")),
 				mcp.WithString("priority", mcp.Description("low|medium|high"), mcp.Enum("low", "medium", "high")),
 				mcp.WithString("due_at", mcp.Description("Optional RFC3339 timestamp")),
 				mcp.WithArray("labels", mcp.Description("Optional labels"), mcp.WithStringItems()),
@@ -987,11 +987,12 @@ func registerCommentTools(srv *mcpserver.MCPServer, comments common.CommentServi
 	srv.AddTool(
 		mcp.NewTool(
 			"till.create_comment",
-			mcp.WithDescription("Create one markdown comment for a project/branch/phase/subphase/task/subtask/decision/note target."),
+			mcp.WithDescription("Create one thread comment with markdown-rich summary/details for a project/branch/phase/subphase/task/subtask/decision/note target."),
 			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
 			mcp.WithString("target_type", mcp.Required(), mcp.Description("project|branch|phase|subphase|task|subtask|decision|note"), mcp.Enum("project", "branch", "phase", "subphase", "task", "subtask", "decision", "note")),
 			mcp.WithString("target_id", mcp.Required(), mcp.Description("Target identifier")),
-			mcp.WithString("body_markdown", mcp.Required(), mcp.Description("Markdown body")),
+			mcp.WithString("summary", mcp.Required(), mcp.Description("Markdown-rich summary for thread previews")),
+			mcp.WithString("body_markdown", mcp.Description("Optional markdown-rich details/body for the comment")),
 			mcp.WithString("actor_id", mcp.Description("Optional actor id override")),
 			mcp.WithString("actor_name", mcp.Description("Optional actor display name override")),
 			mcp.WithString("actor_type", mcp.Description("user|agent|system"), mcp.Enum("user", "agent", "system")),
@@ -1013,7 +1014,7 @@ func registerCommentTools(srv *mcpserver.MCPServer, comments common.CommentServi
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			bodyMarkdown, err := req.RequireString("body_markdown")
+			summary, err := req.RequireString("summary")
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -1021,7 +1022,8 @@ func registerCommentTools(srv *mcpserver.MCPServer, comments common.CommentServi
 				ProjectID:    projectID,
 				TargetType:   targetType,
 				TargetID:     targetID,
-				BodyMarkdown: bodyMarkdown,
+				Summary:      summary,
+				BodyMarkdown: req.GetString("body_markdown", ""),
 				Actor: common.ActorLeaseTuple{
 					ActorID:         req.GetString("actor_id", ""),
 					ActorName:       req.GetString("actor_name", ""),
@@ -1046,7 +1048,7 @@ func registerCommentTools(srv *mcpserver.MCPServer, comments common.CommentServi
 	srv.AddTool(
 		mcp.NewTool(
 			"till.list_comments_by_target",
-			mcp.WithDescription("List comments for one target."),
+			mcp.WithDescription("List comments for one target, including markdown-rich summary/details fields."),
 			mcp.WithString("project_id", mcp.Required(), mcp.Description("Project identifier")),
 			mcp.WithString("target_type", mcp.Required(), mcp.Description("project|branch|phase|subphase|task|subtask|decision|note"), mcp.Enum("project", "branch", "phase", "subphase", "task", "subtask", "decision", "note")),
 			mcp.WithString("target_id", mcp.Required(), mcp.Description("Target identifier")),

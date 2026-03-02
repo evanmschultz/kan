@@ -46,6 +46,7 @@ type Comment struct {
 	ProjectID    string
 	TargetType   CommentTargetType
 	TargetID     string
+	Summary      string
 	BodyMarkdown string
 	ActorID      string
 	ActorName    string
@@ -60,6 +61,7 @@ type CommentInput struct {
 	ProjectID    string
 	TargetType   CommentTargetType
 	TargetID     string
+	Summary      string
 	BodyMarkdown string
 	ActorID      string
 	ActorName    string
@@ -86,6 +88,10 @@ func NewComment(in CommentInput, now time.Time) (Comment, error) {
 	if body == "" {
 		return Comment{}, ErrInvalidBodyMarkdown
 	}
+	summary := NormalizeCommentSummary(in.Summary, body)
+	if summary == "" {
+		return Comment{}, ErrInvalidSummary
+	}
 
 	actorType := normalizeActorTypeValue(in.ActorType)
 	if actorType == "" {
@@ -111,6 +117,7 @@ func NewComment(in CommentInput, now time.Time) (Comment, error) {
 		ProjectID:    target.ProjectID,
 		TargetType:   target.TargetType,
 		TargetID:     target.TargetID,
+		Summary:      summary,
 		BodyMarkdown: body,
 		ActorID:      actorID,
 		ActorName:    actorName,
@@ -147,6 +154,26 @@ func NormalizeCommentTargetType(targetType CommentTargetType) CommentTargetType 
 func IsValidCommentTargetType(targetType CommentTargetType) bool {
 	targetType = NormalizeCommentTargetType(targetType)
 	return slices.Contains(validCommentTargetTypes, targetType)
+}
+
+// NormalizeCommentSummary trims the explicit summary and falls back to body markdown.
+func NormalizeCommentSummary(summary, bodyMarkdown string) string {
+	summary = strings.TrimSpace(summary)
+	if summary != "" {
+		return summary
+	}
+	return firstNonEmptyMarkdownLine(bodyMarkdown)
+}
+
+// firstNonEmptyMarkdownLine returns the first non-empty markdown line from body text.
+func firstNonEmptyMarkdownLine(bodyMarkdown string) string {
+	for _, line := range strings.Split(bodyMarkdown, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			return line
+		}
+	}
+	return ""
 }
 
 // normalizeActorTypeValue canonicalizes actor type values without applying defaults.

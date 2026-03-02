@@ -1465,25 +1465,33 @@ func TestCreateAndListCommentsByTarget(t *testing.T) {
 		return now
 	}, ServiceConfig{})
 
-	if _, err := svc.CreateComment(context.Background(), CreateCommentInput{
+	first, err := svc.CreateComment(context.Background(), CreateCommentInput{
 		ProjectID:    project.ID,
 		TargetType:   domain.CommentTargetTypeTask,
 		TargetID:     task.ID,
+		Summary:      "  explicit summary  ",
 		BodyMarkdown: "first",
 		ActorType:    domain.ActorType("USER"),
 		ActorID:      "user-1",
 		ActorName:    "user-1",
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("CreateComment(first) error = %v", err)
 	}
 	second, err := svc.CreateComment(context.Background(), CreateCommentInput{
 		ProjectID:    project.ID,
 		TargetType:   domain.CommentTargetTypeTask,
 		TargetID:     task.ID,
-		BodyMarkdown: "second",
+		BodyMarkdown: "\n\nsecond",
 	})
 	if err != nil {
 		t.Fatalf("CreateComment(second) error = %v", err)
+	}
+	if first.Summary != "explicit summary" {
+		t.Fatalf("expected explicit summary normalization, got %q", first.Summary)
+	}
+	if second.Summary != "second" {
+		t.Fatalf("expected summary fallback from body markdown, got %q", second.Summary)
 	}
 	if second.ActorType != domain.ActorTypeUser {
 		t.Fatalf("expected default actor type user, got %q", second.ActorType)

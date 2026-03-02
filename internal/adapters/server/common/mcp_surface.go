@@ -190,6 +190,7 @@ type CreateCommentRequest struct {
 	ProjectID    string
 	TargetType   string
 	TargetID     string
+	Summary      string
 	BodyMarkdown string
 	Actor        ActorLeaseTuple
 }
@@ -199,6 +200,21 @@ type ListCommentsByTargetRequest struct {
 	ProjectID  string
 	TargetType string
 	TargetID   string
+}
+
+// CommentRecord stores transport-facing comment payloads with summary and markdown details.
+type CommentRecord struct {
+	ID           string    `json:"id"`
+	ProjectID    string    `json:"project_id"`
+	TargetType   string    `json:"target_type"`
+	TargetID     string    `json:"target_id"`
+	Summary      string    `json:"summary"`
+	BodyMarkdown string    `json:"body_markdown"`
+	ActorID      string    `json:"actor_id"`
+	ActorName    string    `json:"actor_name"`
+	ActorType    string    `json:"actor_type"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 // BootstrapGuideReader resolves onboarding guidance for empty-instance flows.
@@ -255,8 +271,8 @@ type CapabilityLeaseService interface {
 
 // CommentService exposes comment create/list operations for target scopes.
 type CommentService interface {
-	CreateComment(context.Context, CreateCommentRequest) (domain.Comment, error)
-	ListCommentsByTarget(context.Context, ListCommentsByTargetRequest) ([]domain.Comment, error)
+	CreateComment(context.Context, CreateCommentRequest) (CommentRecord, error)
+	ListCommentsByTarget(context.Context, ListCommentsByTargetRequest) ([]CommentRecord, error)
 }
 
 // durationFromSeconds converts positive integer seconds to a transport duration.

@@ -451,33 +451,39 @@ func (a *AppServiceAdapter) RevokeAllCapabilityLeases(ctx context.Context, in Re
 	return nil
 }
 
-// CreateComment creates one markdown comment for a concrete target.
-func (a *AppServiceAdapter) CreateComment(ctx context.Context, in CreateCommentRequest) (domain.Comment, error) {
+// CreateComment creates one markdown-rich comment for a concrete target.
+func (a *AppServiceAdapter) CreateComment(ctx context.Context, in CreateCommentRequest) (CommentRecord, error) {
 	if a == nil || a.service == nil {
-		return domain.Comment{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+		return CommentRecord{}, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
+	}
+	summary := strings.TrimSpace(in.Summary)
+	if summary == "" {
+		return CommentRecord{}, fmt.Errorf("summary is required: %w", ErrInvalidCaptureStateRequest)
 	}
 	ctx, actorType, err := withMutationGuardContext(ctx, in.Actor)
 	if err != nil {
-		return domain.Comment{}, err
+		return CommentRecord{}, err
 	}
 	actorID, actorName := deriveMutationActorIdentity(in.Actor)
 	comment, err := a.service.CreateComment(ctx, app.CreateCommentInput{
 		ProjectID:    strings.TrimSpace(in.ProjectID),
 		TargetType:   domain.CommentTargetType(strings.TrimSpace(in.TargetType)),
 		TargetID:     strings.TrimSpace(in.TargetID),
-		BodyMarkdown: strings.TrimSpace(in.BodyMarkdown),
+		BodyMarkdown: buildCommentBodyMarkdown(summary, in.BodyMarkdown),
 		ActorID:      actorID,
 		ActorName:    actorName,
 		ActorType:    actorType,
 	})
 	if err != nil {
-		return domain.Comment{}, mapAppError("create comment", err)
+		return CommentRecord{}, mapAppError("create comment", err)
 	}
-	return comment, nil
+	record := mapDomainCommentRecord(comment)
+	record.Summary = summary
+	return record, nil
 }
 
 // ListCommentsByTarget lists comments for one concrete target.
-func (a *AppServiceAdapter) ListCommentsByTarget(ctx context.Context, in ListCommentsByTargetRequest) ([]domain.Comment, error) {
+func (a *AppServiceAdapter) ListCommentsByTarget(ctx context.Context, in ListCommentsByTargetRequest) ([]CommentRecord, error) {
 	if a == nil || a.service == nil {
 		return nil, fmt.Errorf("app service adapter is not configured: %w", ErrInvalidCaptureStateRequest)
 	}
@@ -489,7 +495,58 @@ func (a *AppServiceAdapter) ListCommentsByTarget(ctx context.Context, in ListCom
 	if err != nil {
 		return nil, mapAppError("list comments by target", err)
 	}
-	return comments, nil
+	out := make([]CommentRecord, 0, len(comments))
+	for _, comment := range comments {
+		out = append(out, mapDomainCommentRecord(comment))
+	}
+	return out, nil
+}
+
+// mapDomainCommentRecord maps one domain comment into the transport comment contract.
+func mapDomainCommentRecord(comment domain.Comment) CommentRecord {
+	return CommentRecord{
+		ID:           comment.ID,
+		ProjectID:    comment.ProjectID,
+		TargetType:   string(comment.TargetType),
+		TargetID:     comment.TargetID,
+		Summary:      commentSummaryFromMarkdown(comment.BodyMarkdown),
+		BodyMarkdown: comment.BodyMarkdown,
+		ActorID:      comment.ActorID,
+		ActorName:    comment.ActorName,
+		ActorType:    string(comment.ActorType),
+		CreatedAt:    comment.CreatedAt.UTC(),
+		UpdatedAt:    comment.UpdatedAt.UTC(),
+	}
+}
+
+// commentSummaryFromMarkdown extracts one deterministic summary line from markdown text.
+func commentSummaryFromMarkdown(markdown string) string {
+	lines := strings.Split(strings.TrimSpace(markdown), "\n")
+	for _, line := range lines {
+		candidate := strings.TrimSpace(line)
+		candidate = strings.TrimLeft(candidate, "#>*-` ")
+		candidate = strings.TrimSpace(candidate)
+		if candidate != "" {
+			return candidate
+		}
+	}
+	return ""
+}
+
+// buildCommentBodyMarkdown combines summary and optional markdown details into one comment body.
+func buildCommentBodyMarkdown(summary, bodyMarkdown string) string {
+	summary = strings.TrimSpace(summary)
+	bodyMarkdown = strings.TrimSpace(bodyMarkdown)
+	switch {
+	case summary == "":
+		return bodyMarkdown
+	case bodyMarkdown == "":
+		return summary
+	case bodyMarkdown == summary:
+		return summary
+	default:
+		return summary + "\n\n" + bodyMarkdown
+	}
 }
 
 // parseOptionalRFC3339 parses one optional RFC3339 timestamp string.

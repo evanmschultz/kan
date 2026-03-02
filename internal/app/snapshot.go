@@ -106,6 +106,7 @@ type SnapshotComment struct {
 	ProjectID    string                   `json:"project_id"`
 	TargetType   domain.CommentTargetType `json:"target_type"`
 	TargetID     string                   `json:"target_id"`
+	Summary      string                   `json:"summary"`
 	BodyMarkdown string                   `json:"body_markdown"`
 	ActorID      string                   `json:"actor_id"`
 	ActorName    string                   `json:"actor_name"`
@@ -478,6 +479,10 @@ func (s *Snapshot) Validate() error {
 		if body == "" {
 			return fmt.Errorf("comments[%d].body_markdown is required", i)
 		}
+		summary := domain.NormalizeCommentSummary(c.Summary, body)
+		if summary == "" {
+			return fmt.Errorf("comments[%d].summary is required", i)
+		}
 		actorType := domain.ActorType(strings.TrimSpace(strings.ToLower(string(c.ActorType))))
 		if actorType == "" {
 			actorType = domain.ActorTypeUser
@@ -505,6 +510,7 @@ func (s *Snapshot) Validate() error {
 		s.Comments[i].ProjectID = target.ProjectID
 		s.Comments[i].TargetType = target.TargetType
 		s.Comments[i].TargetID = target.TargetID
+		s.Comments[i].Summary = summary
 		s.Comments[i].BodyMarkdown = body
 		s.Comments[i].ActorID = actorID
 		s.Comments[i].ActorName = actorName
@@ -925,6 +931,7 @@ func snapshotCommentFromDomain(comment domain.Comment) SnapshotComment {
 		ProjectID:    comment.ProjectID,
 		TargetType:   comment.TargetType,
 		TargetID:     comment.TargetID,
+		Summary:      comment.Summary,
 		BodyMarkdown: comment.BodyMarkdown,
 		ActorID:      comment.ActorID,
 		ActorName:    comment.ActorName,
@@ -1071,6 +1078,8 @@ func (c SnapshotComment) toDomain() domain.Comment {
 	if actorType == "" {
 		actorType = domain.ActorTypeUser
 	}
+	body := strings.TrimSpace(c.BodyMarkdown)
+	summary := domain.NormalizeCommentSummary(c.Summary, body)
 	actorID := strings.TrimSpace(c.ActorID)
 	if actorID == "" {
 		actorID = "tillsyn-user"
@@ -1084,7 +1093,8 @@ func (c SnapshotComment) toDomain() domain.Comment {
 		ProjectID:    strings.TrimSpace(c.ProjectID),
 		TargetType:   domain.NormalizeCommentTargetType(c.TargetType),
 		TargetID:     strings.TrimSpace(c.TargetID),
-		BodyMarkdown: strings.TrimSpace(c.BodyMarkdown),
+		Summary:      summary,
+		BodyMarkdown: body,
 		ActorID:      actorID,
 		ActorName:    actorName,
 		ActorType:    actorType,

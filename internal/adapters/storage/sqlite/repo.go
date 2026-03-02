@@ -64,7 +64,7 @@ func (r *Repository) Close() error {
 	return r.db.Close()
 }
 
-// migrate handles migrate.
+// migrate applies schema and data migrations required for compatibility.
 func (r *Repository) migrate(ctx context.Context) error {
 	stmts := []string{
 		`PRAGMA foreign_keys = ON;`,
@@ -162,6 +162,7 @@ func (r *Repository) migrate(ctx context.Context) error {
 			project_id TEXT NOT NULL,
 				target_type TEXT NOT NULL,
 				target_id TEXT NOT NULL,
+				summary TEXT NOT NULL DEFAULT '',
 				body_markdown TEXT NOT NULL,
 				actor_id TEXT NOT NULL DEFAULT 'tillsyn-user',
 				actor_name TEXT NOT NULL DEFAULT 'tillsyn-user',
@@ -293,6 +294,9 @@ func (r *Repository) migrate(ctx context.Context) error {
 	if err := r.migrateCommentsOwnershipTuple(ctx); err != nil {
 		return err
 	}
+	if err := r.migrateCommentSummary(ctx); err != nil {
+		return err
+	}
 	if err := r.migrateChangeEventsActorName(ctx); err != nil {
 		return err
 	}
@@ -352,6 +356,7 @@ func (r *Repository) migrateCommentsOwnershipTuple(ctx context.Context) error {
 			project_id TEXT NOT NULL,
 			target_type TEXT NOT NULL,
 			target_id TEXT NOT NULL,
+			summary TEXT NOT NULL DEFAULT '',
 			body_markdown TEXT NOT NULL,
 			actor_id TEXT NOT NULL DEFAULT 'tillsyn-user',
 			actor_name TEXT NOT NULL DEFAULT 'tillsyn-user',
@@ -385,8 +390,8 @@ func (r *Repository) migrateCommentsOwnershipTuple(ctx context.Context) error {
 	actorIDSelect := fmt.Sprintf("COALESCE(%s, 'tillsyn-user')", actorIDExpr)
 	actorNameSelect := fmt.Sprintf("COALESCE(%s, %s, 'tillsyn-user')", actorNameExpr, actorIDSelect)
 	copyStmt := fmt.Sprintf(`
-		INSERT INTO comments(id, project_id, target_type, target_id, body_markdown, actor_id, actor_name, actor_type, created_at, updated_at)
-		SELECT id, project_id, target_type, target_id, body_markdown, %s, %s, %s, created_at, updated_at
+		INSERT INTO comments(id, project_id, target_type, target_id, summary, body_markdown, actor_id, actor_name, actor_type, created_at, updated_at)
+		SELECT id, project_id, target_type, target_id, '', body_markdown, %s, %s, %s, created_at, updated_at
 		FROM comments_legacy
 	`, actorIDSelect, actorNameSelect, actorTypeExpr)
 	if _, err = tx.ExecContext(ctx, copyStmt); err != nil {
@@ -397,6 +402,54 @@ func (r *Repository) migrateCommentsOwnershipTuple(ctx context.Context) error {
 	}
 	if err = tx.Commit(); err != nil {
 		return fmt.Errorf("migrate sqlite comments commit: %w", err)
+	}
+	return nil
+}
+
+// migrateCommentSummary adds and backfills the canonical comments.summary column.
+func (r *Repository) migrateCommentSummary(ctx context.Context) error {
+	if _, err := r.db.ExecContext(ctx, `ALTER TABLE comments ADD COLUMN summary TEXT NOT NULL DEFAULT ''`); err != nil && !isDuplicateColumnErr(err) {
+		return fmt.Errorf("migrate sqlite add comments.summary: %w", err)
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, body_markdown
+		FROM comments
+		WHERE NULLIF(TRIM(summary), '') IS NULL
+	`)
+	if err != nil {
+		return fmt.Errorf("migrate sqlite list comments missing summary: %w", err)
+	}
+	defer rows.Close()
+
+	type summaryBackfill struct {
+		commentID string
+		summary   string
+	}
+	backfillRows := make([]summaryBackfill, 0)
+
+	for rows.Next() {
+		var (
+			commentID    string
+			bodyMarkdown string
+		)
+		if err := rows.Scan(&commentID, &bodyMarkdown); err != nil {
+			return fmt.Errorf("migrate sqlite scan comments summary row: %w", err)
+		}
+		backfillRows = append(backfillRows, summaryBackfill{
+			commentID: commentID,
+			summary:   commentSummaryFromBody(bodyMarkdown),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("migrate sqlite iterate comments summary rows: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("migrate sqlite close comments summary rows: %w", err)
+	}
+	for _, row := range backfillRows {
+		if _, err := r.db.ExecContext(ctx, `UPDATE comments SET summary = ? WHERE id = ?`, row.summary, row.commentID); err != nil {
+			return fmt.Errorf("migrate sqlite backfill comments.summary for %q: %w", row.commentID, err)
+		}
 	}
 	return nil
 }
@@ -1269,7 +1322,7 @@ func (r *Repository) DeleteTask(ctx context.Context, id string) error {
 	return err
 }
 
-// CreateComment creates comment.
+// CreateComment persists one normalized comment row.
 func (r *Repository) CreateComment(ctx context.Context, comment domain.Comment) error {
 	commentID := strings.TrimSpace(comment.ID)
 	if commentID == "" {
@@ -1289,6 +1342,7 @@ func (r *Repository) CreateComment(ctx context.Context, comment domain.Comment) 
 	if bodyMarkdown == "" {
 		return domain.ErrInvalidBodyMarkdown
 	}
+	summary := commentSummaryFromBody(bodyMarkdown)
 
 	actorID := chooseActorID(comment.ActorID, "tillsyn-user")
 	actorName := chooseActorName(actorID, comment.ActorName)
@@ -1305,13 +1359,14 @@ func (r *Repository) CreateComment(ctx context.Context, comment domain.Comment) 
 	}
 
 	_, err = r.db.ExecContext(ctx, `
-		INSERT INTO comments(id, project_id, target_type, target_id, body_markdown, actor_id, actor_name, actor_type, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO comments(id, project_id, target_type, target_id, summary, body_markdown, actor_id, actor_name, actor_type, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		commentID,
 		target.ProjectID,
 		string(target.TargetType),
 		target.TargetID,
+		summary,
 		bodyMarkdown,
 		actorID,
 		actorName,
@@ -1333,7 +1388,7 @@ func (r *Repository) ListCommentsByTarget(ctx context.Context, target domain.Com
 	}
 
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, project_id, target_type, target_id, body_markdown, actor_id, actor_name, actor_type, created_at, updated_at
+		SELECT id, project_id, target_type, target_id, summary, body_markdown, actor_id, actor_name, actor_type, created_at, updated_at
 		FROM comments
 		WHERE project_id = ? AND target_type = ? AND target_id = ?
 		ORDER BY created_at ASC, id ASC
@@ -1914,6 +1969,17 @@ func chooseActorName(actorID string, candidates ...string) string {
 	return actorID
 }
 
+// commentSummaryFromBody returns the first non-empty markdown line as summary text.
+func commentSummaryFromBody(bodyMarkdown string) string {
+	for _, line := range strings.Split(bodyMarkdown, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			return line
+		}
+	}
+	return ""
+}
+
 // normalizeActorType applies a default when actor type is unset or unsupported.
 func normalizeActorType(actorType domain.ActorType) domain.ActorType {
 	switch strings.TrimSpace(strings.ToLower(string(actorType))) {
@@ -2089,11 +2155,12 @@ func scanTask(s scanner) (domain.Task, error) {
 	return t, nil
 }
 
-// scanComment handles scan comment.
+// scanComment scans one comments row into a domain.Comment.
 func scanComment(s scanner) (domain.Comment, error) {
 	var (
 		comment       domain.Comment
 		targetTypeRaw string
+		summaryRaw    string
 		actorTypeRaw  string
 		createdRaw    string
 		updatedRaw    string
@@ -2103,6 +2170,7 @@ func scanComment(s scanner) (domain.Comment, error) {
 		&comment.ProjectID,
 		&targetTypeRaw,
 		&comment.TargetID,
+		&summaryRaw,
 		&comment.BodyMarkdown,
 		&comment.ActorID,
 		&comment.ActorName,
@@ -2123,6 +2191,9 @@ func scanComment(s scanner) (domain.Comment, error) {
 	comment.ActorID = chooseActorID(comment.ActorID, "tillsyn-user")
 	comment.ActorName = chooseActorName(comment.ActorID, comment.ActorName)
 	comment.BodyMarkdown = strings.TrimSpace(comment.BodyMarkdown)
+	if comment.BodyMarkdown == "" {
+		comment.BodyMarkdown = strings.TrimSpace(summaryRaw)
+	}
 	comment.CreatedAt = parseTS(createdRaw)
 	comment.UpdatedAt = parseTS(updatedRaw)
 	return comment, nil

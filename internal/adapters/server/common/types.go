@@ -4,6 +4,7 @@ package common
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/hylla/tillsyn/internal/domain"
@@ -40,6 +41,26 @@ var supportedScopeTypes = []string{
 // SupportedScopeTypes returns all canonical scope_type values accepted by transport adapters.
 func SupportedScopeTypes() []string {
 	return append([]string(nil), supportedScopeTypes...)
+}
+
+// commentTargetTypeFromScope maps transport scope_type values to comment target types.
+func commentTargetTypeFromScope(scopeType string) (domain.CommentTargetType, bool) {
+	switch strings.ToLower(strings.TrimSpace(scopeType)) {
+	case ScopeTypeProject:
+		return domain.CommentTargetTypeProject, true
+	case ScopeTypeBranch:
+		return domain.CommentTargetTypeBranch, true
+	case ScopeTypePhase:
+		return domain.CommentTargetTypePhase, true
+	case ScopeTypeSubphase:
+		return domain.CommentTargetTypeSubphase, true
+	case ScopeTypeTask:
+		return domain.CommentTargetTypeTask, true
+	case ScopeTypeSubtask:
+		return domain.CommentTargetTypeSubtask, true
+	default:
+		return "", false
+	}
 }
 
 // AttentionStateOpen identifies unresolved attention records.

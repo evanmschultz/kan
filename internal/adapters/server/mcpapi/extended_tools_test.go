@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -329,36 +330,76 @@ func (s *stubExpandedService) RevokeAllCapabilityLeases(_ context.Context, _ com
 }
 
 // CreateComment returns one deterministic comment row.
-func (s *stubExpandedService) CreateComment(_ context.Context, in common.CreateCommentRequest) (domain.Comment, error) {
+func (s *stubExpandedService) CreateComment(_ context.Context, in common.CreateCommentRequest) (common.CommentRecord, error) {
 	s.lastCreateCommentReq = in
 	now := time.Date(2026, 2, 24, 12, 0, 0, 0, time.UTC)
 	targetType := domain.NormalizeCommentTargetType(domain.CommentTargetType(in.TargetType))
 	if targetType == "" {
 		targetType = domain.CommentTargetTypeTask
 	}
-	return domain.Comment{
+	return common.CommentRecord{
 		ID:           "c1",
 		ProjectID:    in.ProjectID,
-		TargetType:   targetType,
+		TargetType:   string(targetType),
 		TargetID:     in.TargetID,
-		BodyMarkdown: "hello",
+		Summary:      in.Summary,
+		BodyMarkdown: in.BodyMarkdown,
 		ActorID:      "tester",
 		ActorName:    "tester",
-		ActorType:    domain.ActorTypeUser,
+		ActorType:    string(domain.ActorTypeUser),
 		CreatedAt:    now,
 		UpdatedAt:    now,
 	}, nil
 }
 
 // ListCommentsByTarget returns one deterministic comment row.
-func (s *stubExpandedService) ListCommentsByTarget(_ context.Context, in common.ListCommentsByTargetRequest) ([]domain.Comment, error) {
+func (s *stubExpandedService) ListCommentsByTarget(_ context.Context, in common.ListCommentsByTargetRequest) ([]common.CommentRecord, error) {
 	s.lastListCommentReq = in
 	comment, _ := s.CreateComment(context.Background(), common.CreateCommentRequest{
-		ProjectID:  in.ProjectID,
-		TargetType: in.TargetType,
-		TargetID:   in.TargetID,
+		ProjectID:    in.ProjectID,
+		TargetType:   in.TargetType,
+		TargetID:     in.TargetID,
+		Summary:      "Thread summary",
+		BodyMarkdown: "Thread summary\n\nDetails",
 	})
-	return []domain.Comment{comment}, nil
+	return []common.CommentRecord{comment}, nil
+}
+
+// findToolSchemaByName returns one tool schema map from tools/list payload rows.
+func findToolSchemaByName(t *testing.T, tools []any, toolName string) map[string]any {
+	t.Helper()
+	for _, toolRaw := range tools {
+		toolMap, ok := toolRaw.(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _ := toolMap["name"].(string)
+		if name != toolName {
+			continue
+		}
+		schema, ok := toolMap["inputSchema"].(map[string]any)
+		if !ok {
+			t.Fatalf("tool %q inputSchema missing: %#v", toolName, toolMap)
+		}
+		return schema
+	}
+	t.Fatalf("tool %q missing from tool list", toolName)
+	return nil
+}
+
+// schemaStringPropertyDescription returns one schema property description for assertions.
+func schemaStringPropertyDescription(t *testing.T, schema map[string]any, property string) string {
+	t.Helper()
+	properties, ok := schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("schema properties missing: %#v", schema)
+	}
+	propRaw, ok := properties[property].(map[string]any)
+	if !ok {
+		t.Fatalf("property %q missing from schema: %#v", property, properties)
+	}
+	description, _ := propRaw["description"].(string)
+	return description
 }
 
 // TestHandlerExpandedToolSurfaceSuccessPaths exercises success paths for the expanded MCP tool set.
@@ -463,7 +504,7 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		{name: "till.renew_capability_lease", args: map[string]any{"agent_instance_id": "inst-1", "lease_token": "tok-1", "ttl_seconds": 60}},
 		{name: "till.revoke_capability_lease", args: map[string]any{"agent_instance_id": "inst-1"}},
 		{name: "till.revoke_all_capability_leases", args: map[string]any{"project_id": "p1", "scope_type": "project"}},
-		{name: "till.create_comment", args: map[string]any{"project_id": "p1", "target_type": "task", "target_id": "t1", "body_markdown": "hello"}},
+		{name: "till.create_comment", args: map[string]any{"project_id": "p1", "target_type": "task", "target_id": "t1", "summary": "Thread summary", "body_markdown": "hello"}},
 		{name: "till.list_comments_by_target", args: map[string]any{"project_id": "p1", "target_type": "task", "target_id": "t1"}},
 	}
 	for idx, tc := range calls {
@@ -474,6 +515,50 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		if isError, _ := callResp.Result["isError"].(bool); isError {
 			t.Fatalf("tool %q returned isError=true: %#v", tc.name, callResp.Result)
 		}
+	}
+}
+
+// TestHandlerExpandedCommentToolSchema verifies summary/details markdown guidance in comment tool args.
+func TestHandlerExpandedCommentToolSchema(t *testing.T) {
+	service := &stubExpandedService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+	}
+	handler, err := NewHandler(Config{}, service, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+	_, toolsResp := postJSONRPC(t, server.Client(), server.URL, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      2,
+		"method":  "tools/list",
+	})
+	toolsRaw, ok := toolsResp.Result["tools"].([]any)
+	if !ok {
+		t.Fatalf("tools list payload missing tools: %#v", toolsResp.Result)
+	}
+	createSchema := findToolSchemaByName(t, toolsRaw, "till.create_comment")
+	requiredRaw, _ := createSchema["required"].([]any)
+	required := make([]string, 0, len(requiredRaw))
+	for _, item := range requiredRaw {
+		if value, ok := item.(string); ok {
+			required = append(required, value)
+		}
+	}
+	if !slices.Contains(required, "summary") {
+		t.Fatalf("create_comment required args missing summary: %#v", required)
+	}
+	summaryDesc := schemaStringPropertyDescription(t, createSchema, "summary")
+	if !strings.Contains(strings.ToLower(summaryDesc), "markdown-rich") {
+		t.Fatalf("summary description = %q, want markdown-rich guidance", summaryDesc)
+	}
+	bodyDesc := schemaStringPropertyDescription(t, createSchema, "body_markdown")
+	if !strings.Contains(strings.ToLower(bodyDesc), "markdown-rich") {
+		t.Fatalf("body_markdown description = %q, want markdown-rich guidance", bodyDesc)
 	}
 }
 
@@ -541,6 +626,7 @@ func TestHandlerExpandedToolForwardsActorTupleFields(t *testing.T) {
 		"project_id":    "p1",
 		"target_type":   "task",
 		"target_id":     "t1",
+		"summary":       "Thread summary",
 		"body_markdown": "hello",
 		"actor_id":      "commenter-1",
 		"actor_name":    "Commenter One",
@@ -553,6 +639,9 @@ func TestHandlerExpandedToolForwardsActorTupleFields(t *testing.T) {
 	}
 	if got := service.lastCreateCommentReq.Actor.ActorName; got != "Commenter One" {
 		t.Fatalf("create_comment actor_name = %q, want Commenter One", got)
+	}
+	if got := service.lastCreateCommentReq.Summary; got != "Thread summary" {
+		t.Fatalf("create_comment summary = %q, want Thread summary", got)
 	}
 
 	_, restoreResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(302, "till.restore_task", map[string]any{
@@ -603,6 +692,7 @@ func TestHandlerExpandedCommentToolsForwardHierarchyTargetTypes(t *testing.T) {
 		"project_id":    "p1",
 		"target_type":   "branch",
 		"target_id":     "branch-1",
+		"summary":       "Branch note",
 		"body_markdown": "hello",
 	}))
 	if isError, _ := createResp.Result["isError"].(bool); isError {

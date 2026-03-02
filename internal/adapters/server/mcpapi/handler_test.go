@@ -353,6 +353,41 @@ func TestHandlerRegistersAttentionToolsWhenAvailable(t *testing.T) {
 	}
 }
 
+// TestHandlerRaiseAttentionToolSchemaGuidance verifies markdown-rich summary/details guidance on raise_attention_item args.
+func TestHandlerRaiseAttentionToolSchemaGuidance(t *testing.T) {
+	capture := &stubCaptureStateReader{
+		captureState: common.CaptureState{
+			StateHash: "abc123",
+		},
+	}
+	attention := &stubAttentionService{}
+	handler, err := NewHandler(Config{}, capture, attention)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+	_, toolsResp := postJSONRPC(t, server.Client(), server.URL, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      2,
+		"method":  "tools/list",
+	})
+	toolsRaw, ok := toolsResp.Result["tools"].([]any)
+	if !ok {
+		t.Fatalf("tools list payload missing tools: %#v", toolsResp.Result)
+	}
+	schema := findToolSchemaByName(t, toolsRaw, "till.raise_attention_item")
+	summaryDesc := schemaStringPropertyDescription(t, schema, "summary")
+	if !strings.Contains(strings.ToLower(summaryDesc), "markdown-rich") {
+		t.Fatalf("summary description = %q, want markdown-rich guidance", summaryDesc)
+	}
+	bodyDesc := schemaStringPropertyDescription(t, schema, "body_markdown")
+	if !strings.Contains(strings.ToLower(bodyDesc), "markdown-rich") {
+		t.Fatalf("body_markdown description = %q, want markdown-rich guidance", bodyDesc)
+	}
+}
+
 // TestHandlerRegistersProjectToolsWhenAvailable verifies expanded project tools register when the capture adapter exposes project APIs.
 func TestHandlerRegistersProjectToolsWhenAvailable(t *testing.T) {
 	capture := &stubProjectService{

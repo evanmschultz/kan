@@ -108,7 +108,7 @@ func TestRepository_ProjectColumnTaskLifecycle(t *testing.T) {
 	}
 }
 
-// TestRepository_CreateAndListCommentsByTarget verifies behavior for the covered scenario.
+// TestRepository_CreateAndListCommentsByTarget verifies comment ordering and ownership persistence.
 func TestRepository_CreateAndListCommentsByTarget(t *testing.T) {
 	ctx := context.Background()
 	repo, err := OpenInMemory()
@@ -146,7 +146,7 @@ func TestRepository_CreateAndListCommentsByTarget(t *testing.T) {
 		ProjectID:    project.ID,
 		TargetType:   domain.CommentTargetTypeTask,
 		TargetID:     "t1",
-		BodyMarkdown: "first",
+		BodyMarkdown: "\n\nfirst line\nadditional details",
 		ActorID:      "user-1",
 		ActorName:    "User One",
 		ActorType:    domain.ActorTypeUser,
@@ -176,6 +176,13 @@ func TestRepository_CreateAndListCommentsByTarget(t *testing.T) {
 	}
 	if err := repo.CreateComment(ctx, projectComment); err != nil {
 		t.Fatalf("CreateComment(c3) error = %v", err)
+	}
+	var commentSummary string
+	if err := repo.db.QueryRowContext(ctx, `SELECT summary FROM comments WHERE id = 'c1'`).Scan(&commentSummary); err != nil {
+		t.Fatalf("query comment summary error = %v", err)
+	}
+	if commentSummary != "first line" {
+		t.Fatalf("expected persisted comment summary %q, got %q", "first line", commentSummary)
 	}
 
 	taskComments, err := repo.ListCommentsByTarget(ctx, domain.CommentTarget{
@@ -596,6 +603,9 @@ func TestRepository_MigratesLegacyTasksTable(t *testing.T) {
 	if _, ok := commentColumns["actor_name"]; !ok {
 		t.Fatalf("expected comments.actor_name in migrated schema, got %#v", commentColumns)
 	}
+	if _, ok := commentColumns["summary"]; !ok {
+		t.Fatalf("expected comments.summary in migrated schema, got %#v", commentColumns)
+	}
 	if _, ok := commentColumns["author_name"]; ok {
 		t.Fatalf("expected comments.author_name to be removed from canonical schema, got %#v", commentColumns)
 	}
@@ -707,6 +717,21 @@ func TestRepository_MigratesLegacyCommentAndEventOwnership(t *testing.T) {
 			t.Fatalf("seed legacy rows error = %v", err)
 		}
 	}
+	if _, err := db.ExecContext(
+		ctx,
+		`INSERT INTO comments(id, project_id, target_type, target_id, body_markdown, actor_type, author_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"c3",
+		"p1",
+		"project",
+		"p1",
+		"\n\nlegacy headline\nlegacy body",
+		"user",
+		"legacy-author-3",
+		now,
+		now,
+	); err != nil {
+		t.Fatalf("seed multiline legacy comment error = %v", err)
+	}
 
 	repo, err := Open(dbPath)
 	if err != nil {
@@ -716,18 +741,33 @@ func TestRepository_MigratesLegacyCommentAndEventOwnership(t *testing.T) {
 		_ = repo.Close()
 	})
 
-	var actorID, actorName string
-	if err := repo.db.QueryRowContext(ctx, `SELECT actor_id, actor_name FROM comments WHERE id = 'c1'`).Scan(&actorID, &actorName); err != nil {
+	var actorID, actorName, summary string
+	if err := repo.db.QueryRowContext(ctx, `SELECT actor_id, actor_name, summary FROM comments WHERE id = 'c1'`).Scan(&actorID, &actorName, &summary); err != nil {
 		t.Fatalf("query migrated c1 actor tuple error = %v", err)
 	}
 	if actorID != "legacy-author" || actorName != "legacy-author" {
 		t.Fatalf("expected migrated actor tuple legacy-author/legacy-author, got %q/%q", actorID, actorName)
 	}
-	if err := repo.db.QueryRowContext(ctx, `SELECT actor_id, actor_name FROM comments WHERE id = 'c2'`).Scan(&actorID, &actorName); err != nil {
+	if summary != "legacy comment" {
+		t.Fatalf("expected migrated summary for c1 %q, got %q", "legacy comment", summary)
+	}
+	if err := repo.db.QueryRowContext(ctx, `SELECT actor_id, actor_name, summary FROM comments WHERE id = 'c2'`).Scan(&actorID, &actorName, &summary); err != nil {
 		t.Fatalf("query migrated c2 actor tuple error = %v", err)
 	}
 	if actorID != "tillsyn-user" || actorName != "tillsyn-user" {
 		t.Fatalf("expected fallback actor tuple tillsyn-user/tillsyn-user, got %q/%q", actorID, actorName)
+	}
+	if summary != "fallback comment" {
+		t.Fatalf("expected migrated summary for c2 %q, got %q", "fallback comment", summary)
+	}
+	if err := repo.db.QueryRowContext(ctx, `SELECT actor_id, actor_name, summary FROM comments WHERE id = 'c3'`).Scan(&actorID, &actorName, &summary); err != nil {
+		t.Fatalf("query migrated c3 actor tuple error = %v", err)
+	}
+	if actorID != "legacy-author-3" || actorName != "legacy-author-3" {
+		t.Fatalf("expected migrated actor tuple legacy-author-3/legacy-author-3, got %q/%q", actorID, actorName)
+	}
+	if summary != "legacy headline" {
+		t.Fatalf("expected migrated summary for c3 %q, got %q", "legacy headline", summary)
 	}
 
 	var eventActorName string
@@ -736,6 +776,123 @@ func TestRepository_MigratesLegacyCommentAndEventOwnership(t *testing.T) {
 	}
 	if eventActorName != "legacy-actor" {
 		t.Fatalf("expected migrated change_event actor_name legacy-actor, got %q", eventActorName)
+	}
+}
+
+// TestRepository_MigratesLegacyCommentSummaryIdempotent verifies summary migration for canonical legacy comments.
+func TestRepository_MigratesLegacyCommentSummaryIdempotent(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "legacy-summary.db")
+	db, err := sql.Open(driverName, dbPath)
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = db.Close()
+	})
+
+	now := time.Date(2026, 2, 24, 8, 30, 0, 0, time.UTC).Format(time.RFC3339Nano)
+	legacySchema := []string{
+		`CREATE TABLE projects (
+			id TEXT PRIMARY KEY,
+			slug TEXT NOT NULL,
+			name TEXT NOT NULL,
+			description TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			archived_at TEXT
+		)`,
+		`CREATE TABLE comments (
+			id TEXT PRIMARY KEY,
+			project_id TEXT NOT NULL,
+			target_type TEXT NOT NULL,
+			target_id TEXT NOT NULL,
+			body_markdown TEXT NOT NULL,
+			actor_id TEXT NOT NULL DEFAULT 'tillsyn-user',
+			actor_name TEXT NOT NULL DEFAULT 'tillsyn-user',
+			actor_type TEXT NOT NULL DEFAULT 'user',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
+	}
+	for _, stmt := range legacySchema {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("create legacy schema error = %v", err)
+		}
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO projects(id, slug, name, description, created_at, updated_at, archived_at) VALUES (?, ?, ?, ?, ?, ?, NULL)`, "p1", "legacy", "Legacy", "", now, now); err != nil {
+		t.Fatalf("seed legacy project error = %v", err)
+	}
+	if _, err := db.ExecContext(
+		ctx,
+		`INSERT INTO comments(id, project_id, target_type, target_id, body_markdown, actor_id, actor_name, actor_type, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"c1",
+		"p1",
+		"project",
+		"p1",
+		"\n\nsummary headline\ndetail",
+		"legacy-user",
+		"Legacy User",
+		"user",
+		now,
+		now,
+	); err != nil {
+		t.Fatalf("seed multiline legacy comment error = %v", err)
+	}
+	if _, err := db.ExecContext(
+		ctx,
+		`INSERT INTO comments(id, project_id, target_type, target_id, body_markdown, actor_id, actor_name, actor_type, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"c2",
+		"p1",
+		"project",
+		"p1",
+		"single line summary",
+		"legacy-user-2",
+		"Legacy User Two",
+		"user",
+		now,
+		now,
+	); err != nil {
+		t.Fatalf("seed single-line legacy comment error = %v", err)
+	}
+
+	repo, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open() on legacy summary db error = %v", err)
+	}
+	var summary string
+	if err := repo.db.QueryRowContext(ctx, `SELECT summary FROM comments WHERE id = 'c1'`).Scan(&summary); err != nil {
+		_ = repo.Close()
+		t.Fatalf("query migrated summary c1 error = %v", err)
+	}
+	if summary != "summary headline" {
+		_ = repo.Close()
+		t.Fatalf("expected c1 summary %q, got %q", "summary headline", summary)
+	}
+	if err := repo.db.QueryRowContext(ctx, `SELECT summary FROM comments WHERE id = 'c2'`).Scan(&summary); err != nil {
+		_ = repo.Close()
+		t.Fatalf("query migrated summary c2 error = %v", err)
+	}
+	if summary != "single line summary" {
+		_ = repo.Close()
+		t.Fatalf("expected c2 summary %q, got %q", "single line summary", summary)
+	}
+	if err := repo.Close(); err != nil {
+		t.Fatalf("first close after migration error = %v", err)
+	}
+
+	repo, err = Open(dbPath)
+	if err != nil {
+		t.Fatalf("re-open() on migrated summary db error = %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repo.Close()
+	})
+	if err := repo.db.QueryRowContext(ctx, `SELECT summary FROM comments WHERE id = 'c1'`).Scan(&summary); err != nil {
+		t.Fatalf("query re-opened summary c1 error = %v", err)
+	}
+	if summary != "summary headline" {
+		t.Fatalf("expected stable c1 summary %q after re-open, got %q", "summary headline", summary)
 	}
 }
 

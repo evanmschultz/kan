@@ -32,6 +32,10 @@ You are a senior Go dev. YOU ALWAYS:
 - If dependency updates need network access, ask the user to run `go get` and module update commands in their own shell.
 - Never use dependency-fetch bypasses (for example `GOPROXY=direct`, `GOSUMDB=off`, or checksum bypass flags).
 - Never delete files or directories without explicit user approval.
+- Never run commands outside this repository root: `/Users/evanschultz/Documents/Code/hylla/tillsyn`.
+- For runtime/protocol validation in this phase, run MCP-only checks (no HTTP/curl validation probes).
+- It is allowed to `just build` and run `./till serve` locally for MCP-side validation.
+- Never push to any remote unless the user explicitly requests it in the current conversation.
 - Keep the active execution/work log in `PLAN.md`. Use `worklogs/` only when the user explicitly asks for split logs.
 - When proposing new implementation phases, you must explicitly review and discuss the active backlog and open discussion items in `PLAN.md`, plus unresolved findings in `COLLAB_E2E_REMEDIATION_PLAN_WORKLOG.md` and `COLLABORATIVE_POST_FIX_VALIDATION_WORKSHEET.md`.
 - When clarification is needed, ask in two stages:
@@ -145,6 +149,9 @@ You are a senior Go dev. YOU ALWAYS:
 - Completion policy:
   - no lane is marked complete until integrator verifies acceptance criteria and test evidence.
   - final wave closeout requires successful `just ci`.
+  - for collaborative remediation waves, no lane/section may be marked complete until an independent QA subagent reviews both code changes and affected markdown trackers/worksheets and explicitly signs off.
+  - no collaborative remediation implementation subagents may be launched until the user explicitly says to proceed (for example: "go ahead").
+  - after QA sign-off and passing tests, pause for user-run confirmation; do not mark the collaborative section complete until the user confirms expected behavior in their run.
 
 ### Orchestrator Prompt Contract (Required)
 
