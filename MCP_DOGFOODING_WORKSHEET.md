@@ -354,17 +354,36 @@ Expected:
 
 ---
 
+## 6) 2026-03-02 Remediation Addendum
+
+Implemented between the historical Phase 0 run and this next collaborative rerun:
+1. `till` help/runtime bootstrap:
+   - `./till --help` and `./till serve --help` now render usage without startup side effects (smoke-captured with zero stderr bytes).
+   - normal startup now seeds missing config from `config.example.toml` when template is available.
+2. restore guard behavior:
+   - restore guard actor-source updated to follow current request mutation actor context (user default), removing stale persisted-actor coupling.
+3. adapter-edge logging:
+   - MCP/HTTP mapped error branches now emit structured logs with error class/code fields.
+
+New evidence:
+- `.tmp/phase0-collab-20260227_141800/remediation_wave_20260302.md`
+
+Rerun requirement:
+- final sign-off remains blocked until collaborative live-serve checks re-validate sink parity and focused `till_restore_task` transport behavior on the active fixture.
+
+---
+
 ## Final Sign-off
 
 - Overall result (set one): `fail`
-- Blocking defects: help discoverability path failures (`./till --help`, `./till serve --help`) plus required Charm/Fang help redesign, missing first-launch config bootstrap requirement (copy `config.example.toml` when config is absent), restore-surface contract mismatch (`till_restore_task` currently fails guardrail tuple path and may require generalized restore design review with explicit node/scope arg), and unresolved manual TUI/fixture-dependent sections.
+- Blocking defects: unresolved manual TUI/fixture-dependent sections plus pending collaborative reruns for (a) live serve-session logging sink parity after 2026-03-02 adapter logging changes and (b) focused `till_restore_task` transport validation after 2026-03-02 restore guard actor-source fix.
 - Non-blocking defects: environment warning during `just build` (`go` stat-cache write permission warning) did not fail build.
-- Required user actions before next wave checkpoint: complete remaining Phase 0 manual/transport sections (1 through 5), especially full C9/C11/C12/C13 detail, archived/search/keybinding checks, and panel/search parity checks, then attach evidence paths under `.tmp/phase0-collab-20260227_141800/manual/`.
+- Required user actions before next wave checkpoint: complete remaining Phase 0 manual/transport sections (1 through 5), especially full C9/C11/C12/C13 detail, archived/search/keybinding checks, panel/search parity checks, and live serve-session reruns for logging sink parity + `till_restore_task`, then attach evidence paths under `.tmp/phase0-collab-20260227_141800/manual/`.
 - Tester(s): Codex (agent) + evanschultz (user pending manual steps)
 - Date (`YYYY-MM-DD`): 2026-02-27
 
 ### USER NOTES MF.1-N1
 
 - Pass/Fail (set one: pass|fail|blocked): fail
-- Evidence (required): `.tmp/phase0-collab-20260227_141800/phase0_preflight_summary.md`, `.tmp/phase0-collab-20260227_141800/mcp_focused_checks.md`, `.tmp/phase0-collab-20260227_141800/guardrail_failure_checks.md`, `.tmp/phase0-collab-20260227_141800/completion_guard_check.md`, `.tmp/phase0-collab-20260227_141800/phase0_manual_steps.md`
-- Notes: Agent-completable checks were executed and recorded, including a post-restart rerun on 2026-02-28 where M2.2 now failed closed. Final wave sign-off remains blocked on remaining explicit defects and pending user-driven collaborative TUI checks.
+- Evidence (required): `.tmp/phase0-collab-20260227_141800/phase0_preflight_summary.md`, `.tmp/phase0-collab-20260227_141800/mcp_focused_checks.md`, `.tmp/phase0-collab-20260227_141800/guardrail_failure_checks.md`, `.tmp/phase0-collab-20260227_141800/completion_guard_check.md`, `.tmp/phase0-collab-20260227_141800/phase0_manual_steps.md`, `.tmp/phase0-collab-20260227_141800/remediation_wave_20260302.md`
+- Notes: Historical wave result remains fail because manual collaborative sections are incomplete. Since that run, remediation changes landed on 2026-03-02 for help/startup bootstrap, restore guard actor source, and adapter-edge logging mappings; final sign-off remains blocked until collaborative reruns capture fresh PASS/FAIL outcomes for those sections.

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	charmLog "github.com/charmbracelet/log"
 	serveradapter "github.com/hylla/tillsyn/internal/adapters/server"
 	"github.com/hylla/tillsyn/internal/app"
 	"github.com/hylla/tillsyn/internal/config"
@@ -88,6 +89,14 @@ search_roots = [%q]
 	}
 }
 
+// writeConfigExample writes a local config.example.toml template for startup seeding tests.
+func writeConfigExample(t *testing.T, workspace, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(workspace, "config.example.toml"), []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile(config.example.toml) error = %v", err)
+	}
+}
+
 // TestRunVersion verifies behavior for the covered scenario.
 func TestRunVersion(t *testing.T) {
 	var out strings.Builder
@@ -115,6 +124,56 @@ func TestRunStartsProgram(t *testing.T) {
 	err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath}, io.Discard, io.Discard)
 	if err != nil {
 		t.Fatalf("run() error = %v", err)
+	}
+}
+
+// TestRunSeedsMissingConfigFromExampleOnStartup verifies first-launch startup seeds a missing config from config.example.toml.
+func TestRunSeedsMissingConfigFromExampleOnStartup(t *testing.T) {
+	origFactory := programFactory
+	t.Cleanup(func() { programFactory = origFactory })
+	programFactory = func(_ tea.Model) program { return fakeProgram{} }
+
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	if err := os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(go.mod) error = %v", err)
+	}
+	const example = "[identity]\ndisplay_name = \"\"\n\n[paths]\nsearch_roots = []\n"
+	writeConfigExample(t, workspace, example)
+
+	dbPath := filepath.Join(workspace, "tillsyn.db")
+	cfgPath := filepath.Join(workspace, "config.toml")
+	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath}, io.Discard, io.Discard); err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+
+	content, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("ReadFile(config) error = %v", err)
+	}
+	if got := string(content); got != example {
+		t.Fatalf("expected seeded config to match config.example.toml, got\n%s", got)
+	}
+}
+
+// TestRunNonStartupCommandsDoNotSeedMissingConfig verifies non-startup commands keep missing config behavior side-effect free.
+func TestRunNonStartupCommandsDoNotSeedMissingConfig(t *testing.T) {
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	if err := os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(go.mod) error = %v", err)
+	}
+	writeConfigExample(t, workspace, "[identity]\ndisplay_name = \"\"\n")
+
+	dbPath := filepath.Join(workspace, "tillsyn.db")
+	cfgPath := filepath.Join(workspace, "config.toml")
+	outPath := filepath.Join(workspace, "snapshot.json")
+	if err := run(context.Background(), []string{"--db", dbPath, "--config", cfgPath, "export", "--out", outPath}, io.Discard, io.Discard); err != nil {
+		t.Fatalf("run(export) error = %v", err)
+	}
+
+	if _, err := os.Stat(cfgPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected export path to avoid seeding config, stat err = %v", err)
 	}
 }
 
@@ -278,6 +337,45 @@ func TestRunSubcommandHelp(t *testing.T) {
 				if !strings.Contains(output, strings.ToLower(want)) {
 					t.Fatalf("expected %q in output, got %q", want, out.String())
 				}
+			}
+		})
+	}
+}
+
+// TestRunHelpPathsDoNotSeedMissingConfig verifies help flows remain side-effect free even when config is missing.
+func TestRunHelpPathsDoNotSeedMissingConfig(t *testing.T) {
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+	if err := os.WriteFile(filepath.Join(workspace, "go.mod"), []byte("module example.com/test\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(go.mod) error = %v", err)
+	}
+	writeConfigExample(t, workspace, "[identity]\ndisplay_name = \"\"\n")
+
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{
+			name: "root help",
+			args: []string{"--db", filepath.Join(workspace, "root-help.db"), "--config", filepath.Join(workspace, "root-help.toml"), "--help"},
+		},
+		{
+			name: "serve help",
+			args: []string{"--db", filepath.Join(workspace, "serve-help.db"), "--config", filepath.Join(workspace, "serve-help.toml"), "serve", "--help"},
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			var out strings.Builder
+			if err := run(context.Background(), tc.args, &out, io.Discard); err != nil {
+				t.Fatalf("run(%s) error = %v", tc.name, err)
+			}
+
+			// Help should render usage without executing runtime bootstrap side effects.
+			cfgPath := tc.args[3]
+			if _, err := os.Stat(cfgPath); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("expected help path to avoid seeding config %q, stat err = %v", cfgPath, err)
 			}
 		})
 	}
@@ -1246,5 +1344,57 @@ func TestRuntimeLoggerCanMuteConsoleSink(t *testing.T) {
 	}
 	if !strings.Contains(out, "after") {
 		t.Fatalf("expected console log to include 'after', got %q", out)
+	}
+}
+
+// TestRuntimeLoggerInstallAsDefaultRoutesPackageLogsToFile verifies package-level charm/log output reaches the runtime file sink.
+func TestRuntimeLoggerInstallAsDefaultRoutesPackageLogsToFile(t *testing.T) {
+	var console bytes.Buffer
+	cfg := config.Default("/tmp/tillsyn.db").Logging
+	cfg.DevFile.Enabled = true
+	cfg.DevFile.Dir = t.TempDir()
+
+	logger, err := newRuntimeLogger(&console, "till", true, cfg, func() time.Time {
+		return time.Date(2026, 3, 2, 12, 0, 0, 0, time.UTC)
+	})
+	if err != nil {
+		t.Fatalf("newRuntimeLogger() error = %v", err)
+	}
+	t.Cleanup(func() {
+		logger.RestoreDefault()
+		if closeErr := logger.Close(); closeErr != nil {
+			t.Errorf("Close() error = %v", closeErr)
+		}
+	})
+
+	logger.InstallAsDefault("till")
+
+	charmLog.Error("mapped parity probe", "transport", "mcp")
+	if got := console.String(); !strings.Contains(got, "mapped parity probe") {
+		t.Fatalf("expected console to include package-level log output, got %q", got)
+	}
+
+	logPath := logger.DevLogPath()
+	content, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", logPath, err)
+	}
+	if got := string(content); !strings.Contains(got, "mapped parity probe") {
+		t.Fatalf("expected dev log file to include package-level log output, got %q", got)
+	}
+
+	console.Reset()
+	logger.SetConsoleEnabled(false)
+	charmLog.Error("mapped parity file-only probe", "transport", "http")
+	if got := console.String(); strings.Contains(got, "mapped parity file-only probe") {
+		t.Fatalf("expected muted console to omit package-level log output, got %q", got)
+	}
+
+	content, err = os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) after mute error = %v", logPath, err)
+	}
+	if got := string(content); !strings.Contains(got, "mapped parity file-only probe") {
+		t.Fatalf("expected dev log file to include muted-console package log output, got %q", got)
 	}
 }

@@ -95,6 +95,7 @@ just build
 ## Startup Behavior
 - TUI launch opens the project picker before normal board mode.
 - If no projects exist yet, the picker stays open and supports `N` to create the first project.
+- Normal TUI startup seeds a missing resolved config file from `config.example.toml` when that template is available in the current workspace root.
 - On TUI startup, missing required bootstrap fields are prompted and persisted:
   - `identity.display_name`
   - one default path (stored as the single active entry in `paths.search_roots`)
@@ -123,6 +124,7 @@ Include only active records in export:
 
 ## Config
 `till` loads TOML config from platform defaults, or from `--config` / `TILL_CONFIG`.
+Help-only paths (`--help`) render usage without running runtime bootstrap side effects (including config seeding).
 
 Database path precedence:
 1. `--db`

@@ -506,6 +506,115 @@ func TestCreateTaskMoveSearchAndDeleteModes(t *testing.T) {
 	}
 }
 
+// TestRestoreTaskUsesRequestActorContext verifies restore guard actor type comes from request actor context.
+func TestRestoreTaskUsesRequestActorContext(t *testing.T) {
+	repo := newFakeRepo()
+	ids := []string{"p1", "c1", "t1"}
+	idx := 0
+	now := time.Date(2026, 2, 24, 10, 0, 0, 0, time.UTC)
+	svc := NewService(repo, func() string {
+		id := ids[idx]
+		idx++
+		return id
+	}, func() time.Time {
+		return now
+	}, ServiceConfig{DefaultDeleteMode: DeleteModeArchive})
+
+	project, err := svc.CreateProject(context.Background(), "Restore Guard", "")
+	if err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	column, err := svc.CreateColumn(context.Background(), project.ID, "To Do", 0, 0)
+	if err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+	task, err := svc.CreateTask(context.Background(), CreateTaskInput{
+		ProjectID:     project.ID,
+		ColumnID:      column.ID,
+		Title:         "archived task",
+		Priority:      domain.PriorityMedium,
+		UpdatedByType: domain.ActorTypeUser,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+	if err := svc.DeleteTask(context.Background(), task.ID, DeleteModeArchive); err != nil {
+		t.Fatalf("DeleteTask(archive) error = %v", err)
+	}
+
+	archivedTask, err := repo.GetTask(context.Background(), task.ID)
+	if err != nil {
+		t.Fatalf("GetTask(archived) error = %v", err)
+	}
+	// Simulate prior archival attribution from an agent mutation.
+	archivedTask.UpdatedByActor = "agent-1"
+	archivedTask.UpdatedByType = domain.ActorTypeAgent
+	repo.tasks[task.ID] = archivedTask
+
+	ctx := WithMutationActor(context.Background(), MutationActor{
+		ActorID:   "user-1",
+		ActorType: domain.ActorTypeUser,
+	})
+	restored, err := svc.RestoreTask(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("RestoreTask() error = %v", err)
+	}
+	if restored.ArchivedAt != nil {
+		t.Fatal("expected restore to clear archived_at")
+	}
+	if restored.UpdatedByActor != "user-1" {
+		t.Fatalf("restored updated_by_actor = %q, want user-1", restored.UpdatedByActor)
+	}
+	if restored.UpdatedByType != domain.ActorTypeUser {
+		t.Fatalf("restored updated_by_type = %q, want %q", restored.UpdatedByType, domain.ActorTypeUser)
+	}
+}
+
+// TestRestoreTaskRequiresLeaseForNonUserCaller verifies non-user restore calls fail closed without a lease tuple.
+func TestRestoreTaskRequiresLeaseForNonUserCaller(t *testing.T) {
+	repo := newFakeRepo()
+	ids := []string{"p1", "c1", "t1"}
+	idx := 0
+	now := time.Date(2026, 2, 24, 10, 0, 0, 0, time.UTC)
+	svc := NewService(repo, func() string {
+		id := ids[idx]
+		idx++
+		return id
+	}, func() time.Time {
+		return now
+	}, ServiceConfig{DefaultDeleteMode: DeleteModeArchive})
+
+	project, err := svc.CreateProject(context.Background(), "Restore Guard", "")
+	if err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	column, err := svc.CreateColumn(context.Background(), project.ID, "To Do", 0, 0)
+	if err != nil {
+		t.Fatalf("CreateColumn() error = %v", err)
+	}
+	task, err := svc.CreateTask(context.Background(), CreateTaskInput{
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Title:     "archived task",
+		Priority:  domain.PriorityMedium,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask() error = %v", err)
+	}
+	if err := svc.DeleteTask(context.Background(), task.ID, DeleteModeArchive); err != nil {
+		t.Fatalf("DeleteTask(archive) error = %v", err)
+	}
+
+	ctx := WithMutationActor(context.Background(), MutationActor{
+		ActorID:   "agent-1",
+		ActorType: domain.ActorTypeAgent,
+	})
+	_, err = svc.RestoreTask(ctx, task.ID)
+	if !errors.Is(err, domain.ErrMutationLeaseRequired) {
+		t.Fatalf("RestoreTask() error = %v, want ErrMutationLeaseRequired", err)
+	}
+}
+
 // TestDeleteTaskModeValidation verifies behavior for the covered scenario.
 func TestDeleteTaskModeValidation(t *testing.T) {
 	repo := newFakeRepo()

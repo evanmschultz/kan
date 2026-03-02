@@ -521,7 +521,12 @@ func (s *Service) RestoreTask(ctx context.Context, taskID string) (domain.Task, 
 	if err != nil {
 		return domain.Task{}, err
 	}
-	if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, task.UpdatedByType, guardScopes); err != nil {
+	// Guard enforcement must follow the caller's request actor, not historical task attribution.
+	guardActorType := domain.ActorTypeUser
+	if actor, ok := MutationActorFromContext(ctx); ok {
+		guardActorType = normalizeActorTypeInput(actor.ActorType)
+	}
+	if err := s.enforceMutationGuardAcrossScopes(ctx, task.ProjectID, guardActorType, guardScopes); err != nil {
 		return domain.Task{}, err
 	}
 	task.Restore(s.clock())

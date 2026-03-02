@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	charmLog "github.com/charmbracelet/log"
 	"github.com/hylla/tillsyn/internal/adapters/server/common"
 	"github.com/hylla/tillsyn/internal/domain"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -218,6 +219,22 @@ func callToolResultText(t *testing.T, result *mcp.CallToolResult) string {
 		t.Fatalf("content[0] has unexpected type %T", result.Content[0])
 	}
 	return text.Text
+}
+
+// captureDefaultLoggerOutput redirects package-level logging to one buffer for assertions.
+func captureDefaultLoggerOutput(t *testing.T) (*bytes.Buffer, func()) {
+	t.Helper()
+
+	var output bytes.Buffer
+	previous := charmLog.Default()
+	charmLog.SetDefault(charmLog.NewWithOptions(&output, charmLog.Options{
+		Level:           charmLog.DebugLevel,
+		Formatter:       charmLog.LogfmtFormatter,
+		ReportTimestamp: false,
+	}))
+	return &output, func() {
+		charmLog.SetDefault(previous)
+	}
 }
 
 // TestHandlerUsesStatelessTransport verifies MCP transport does not issue session ids.
@@ -577,60 +594,93 @@ func TestHandlerServeHTTPUnavailable(t *testing.T) {
 // TestToolResultFromErrorMapping verifies deterministic error-to-tool-result mapping.
 func TestToolResultFromErrorMapping(t *testing.T) {
 	cases := []struct {
-		name       string
-		err        error
-		wantPrefix string
+		name         string
+		err          error
+		wantPrefix   string
+		wantLogCode  string
+		wantLogClass string
 	}{
 		{
-			name:       "nil error",
-			err:        nil,
-			wantPrefix: "unknown error",
+			name:         "nil error",
+			err:          nil,
+			wantPrefix:   "unknown error",
+			wantLogCode:  "internal_error",
+			wantLogClass: "internal",
 		},
 		{
-			name:       "bootstrap required",
-			err:        errors.Join(common.ErrBootstrapRequired, errors.New("no projects")),
-			wantPrefix: "bootstrap_required:",
+			name:         "bootstrap required",
+			err:          errors.Join(common.ErrBootstrapRequired, errors.New("no projects")),
+			wantPrefix:   "bootstrap_required:",
+			wantLogCode:  "bootstrap_required",
+			wantLogClass: "bootstrap",
 		},
 		{
-			name:       "guardrail violation",
-			err:        errors.Join(common.ErrGuardrailViolation, errors.New("lease mismatch")),
-			wantPrefix: "guardrail_failed:",
+			name:         "guardrail violation",
+			err:          errors.Join(common.ErrGuardrailViolation, errors.New("lease mismatch")),
+			wantPrefix:   "guardrail_failed:",
+			wantLogCode:  "guardrail_failed",
+			wantLogClass: "guardrail",
 		},
 		{
-			name:       "invalid capture request",
-			err:        errors.Join(common.ErrInvalidCaptureStateRequest, errors.New("bad request")),
-			wantPrefix: "invalid_request:",
+			name:         "invalid capture request",
+			err:          errors.Join(common.ErrInvalidCaptureStateRequest, errors.New("bad request")),
+			wantPrefix:   "invalid_request:",
+			wantLogCode:  "invalid_request",
+			wantLogClass: "invalid",
 		},
 		{
-			name:       "unsupported scope",
-			err:        errors.Join(common.ErrUnsupportedScope, errors.New("scope mismatch")),
-			wantPrefix: "invalid_request:",
+			name:         "unsupported scope",
+			err:          errors.Join(common.ErrUnsupportedScope, errors.New("scope mismatch")),
+			wantPrefix:   "invalid_request:",
+			wantLogCode:  "invalid_request",
+			wantLogClass: "invalid",
 		},
 		{
-			name:       "not found",
-			err:        errors.Join(common.ErrNotFound, errors.New("missing")),
-			wantPrefix: "not_found:",
+			name:         "not found",
+			err:          errors.Join(common.ErrNotFound, errors.New("missing")),
+			wantPrefix:   "not_found:",
+			wantLogCode:  "not_found",
+			wantLogClass: "not_found",
 		},
 		{
-			name:       "attention unavailable",
-			err:        errors.Join(common.ErrAttentionUnavailable, errors.New("disabled")),
-			wantPrefix: "not_implemented:",
+			name:         "attention unavailable",
+			err:          errors.Join(common.ErrAttentionUnavailable, errors.New("disabled")),
+			wantPrefix:   "not_implemented:",
+			wantLogCode:  "not_implemented",
+			wantLogClass: "not_implemented",
 		},
 		{
-			name:       "internal",
-			err:        errors.New("boom"),
-			wantPrefix: "internal_error:",
+			name:         "internal",
+			err:          errors.New("boom"),
+			wantPrefix:   "internal_error:",
+			wantLogCode:  "internal_error",
+			wantLogClass: "internal",
 		},
 	}
 
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
+			logOutput, restoreLogger := captureDefaultLoggerOutput(t)
+			defer restoreLogger()
+
 			result := toolResultFromError(tt.err)
 			if !result.IsError {
 				t.Fatalf("IsError = false, want true")
 			}
 			if got := callToolResultText(t, result); !strings.HasPrefix(got, tt.wantPrefix) {
 				t.Fatalf("text = %q, want prefix %q", got, tt.wantPrefix)
+			}
+			if got := logOutput.String(); !strings.Contains(got, "mcp tool error mapped") {
+				t.Fatalf("log output = %q, want message marker", got)
+			}
+			if got := logOutput.String(); !strings.Contains(got, "transport=mcp") {
+				t.Fatalf("log output = %q, want transport=mcp", got)
+			}
+			if got := logOutput.String(); !strings.Contains(got, "error_code="+tt.wantLogCode) {
+				t.Fatalf("log output = %q, want error_code=%q", got, tt.wantLogCode)
+			}
+			if got := logOutput.String(); !strings.Contains(got, "error_class="+tt.wantLogClass) {
+				t.Fatalf("log output = %q, want error_class=%q", got, tt.wantLogClass)
 			}
 		})
 	}

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/charmbracelet/log"
 	"github.com/hylla/tillsyn/internal/adapters/server/common"
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
@@ -245,21 +246,73 @@ func registerAttentionTools(srv *mcpserver.MCPServer, attention common.Attention
 
 // toolResultFromError maps service errors into MCP-visible tool errors.
 func toolResultFromError(err error) *mcp.CallToolResult {
+	mapped := mapToolError(err)
+	log.Error(
+		"mcp tool error mapped",
+		"transport",
+		"mcp",
+		"error_class",
+		mapped.Class,
+		"error_code",
+		mapped.Code,
+		"err",
+		err,
+	)
+	return mcp.NewToolResultError(mapped.Text)
+}
+
+// toolErrorMapping captures one mapped MCP tool error classification and payload text.
+type toolErrorMapping struct {
+	Class string
+	Code  string
+	Text  string
+}
+
+// mapToolError converts one service error into MCP tool error metadata and response text.
+func mapToolError(err error) toolErrorMapping {
 	switch {
 	case err == nil:
-		return mcp.NewToolResultError("unknown error")
+		return toolErrorMapping{
+			Class: "internal",
+			Code:  "internal_error",
+			Text:  "unknown error",
+		}
 	case errors.Is(err, common.ErrBootstrapRequired):
-		return mcp.NewToolResultError("bootstrap_required: " + err.Error())
+		return toolErrorMapping{
+			Class: "bootstrap",
+			Code:  "bootstrap_required",
+			Text:  "bootstrap_required: " + err.Error(),
+		}
 	case errors.Is(err, common.ErrGuardrailViolation):
-		return mcp.NewToolResultError("guardrail_failed: " + err.Error())
+		return toolErrorMapping{
+			Class: "guardrail",
+			Code:  "guardrail_failed",
+			Text:  "guardrail_failed: " + err.Error(),
+		}
 	case errors.Is(err, common.ErrInvalidCaptureStateRequest), errors.Is(err, common.ErrUnsupportedScope):
-		return mcp.NewToolResultError("invalid_request: " + err.Error())
+		return toolErrorMapping{
+			Class: "invalid",
+			Code:  "invalid_request",
+			Text:  "invalid_request: " + err.Error(),
+		}
 	case errors.Is(err, common.ErrNotFound):
-		return mcp.NewToolResultError("not_found: " + err.Error())
+		return toolErrorMapping{
+			Class: "not_found",
+			Code:  "not_found",
+			Text:  "not_found: " + err.Error(),
+		}
 	case errors.Is(err, common.ErrAttentionUnavailable):
-		return mcp.NewToolResultError("not_implemented: " + err.Error())
+		return toolErrorMapping{
+			Class: "not_implemented",
+			Code:  "not_implemented",
+			Text:  "not_implemented: " + err.Error(),
+		}
 	default:
-		return mcp.NewToolResultError("internal_error: " + err.Error())
+		return toolErrorMapping{
+			Class: "internal",
+			Code:  "internal_error",
+			Text:  "internal_error: " + err.Error(),
+		}
 	}
 }
 

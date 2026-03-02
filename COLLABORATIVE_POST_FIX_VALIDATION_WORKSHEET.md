@@ -119,6 +119,7 @@ Precondition status:
 5. Help output clearly documents debug logging activation path (`--log-level` and/or env/config route).
 
 - Result: FAIL
+- Historical run note: this section records the 2026-02-25 baseline run; remediation updates landed on 2026-03-02 are tracked in Section 12.9 and require collaborative rerun evidence for reclassification.
 - Evidence: `.tmp/collab-post-fix-20260225_143243/help_till.txt`, `.tmp/collab-post-fix-20260225_143243/help_till_serve.txt`, `.tmp/collab-post-fix-20260225_143243/runtime_log_full.log`, `.tmp/collab-post-fix-20260225_143243/runtime_log_mcp_filter.txt`, `.tmp/collab-post-fix-20260225_143243/runtime_log_gatekeeping_ops_search.txt`, `.tmp/collab-post-fix-20260225_143243/user_stdout_logging_observation.txt`
 - Detailed outcomes:
   - logging help discoverability:
@@ -147,12 +148,12 @@ Precondition status:
 - Overall: FAIL
 - Remaining blockers:
   1. Manual TUI regression sweep (Sections 4 and 5) not executed yet; required user-driven validation remains.
-  2. Logging/help discoverability gaps remain (no usable CLI help path for debug activation; MCP mutation errors currently split between stdout and file sink, with missing file-sink parity for key MCP operations).
-  3. MCP `till_restore_task` fails guardrail path (`mutation lease is required`) and currently exposes no actor/lease tuple fields to satisfy guardrails.
+  2. Logging sink-parity behavior requires collaborative serve-session rerun to confirm adapter-edge logging changes now reach expected runtime file sink surfaces.
+  3. MCP `till_restore_task` requires focused rerun with collaborative fixtures to confirm fix behavior in full transport flow.
 - Follow-up actions:
   1. Run full manual TUI post-fix validation section-by-section and record PASS/FAIL per item in this worksheet with screenshots/log evidence.
-  2. Implement/fix logging discoverability + MCP operation logging visibility, then rerun Section 6 and re-check final verdict.
-  3. Fix MCP restore-task transport contract/guard context (or guardrail policy) so restore works under intended actor model; rerun Section 8 tool sweep.
+  2. Rerun Section 6 logging/notifications checks on a live serve session and capture stdout/file-sink parity evidence after 2026-03-02 handler logging changes.
+  3. Rerun Section 8 focused restore checks after 2026-03-02 restore guard actor-source fix and record updated MCP evidence.
 
 ## 8) Automated MCP Tool Sweep
 
@@ -190,10 +191,10 @@ Automated sweep completed without manual TUI input.
     - `till_renew_capability_lease`
     - `till_revoke_capability_lease`
     - `till_revoke_all_capability_leases`
-  - FAIL:
+  - FAIL (historical run 2026-02-25; fix landed 2026-03-02, rerun pending):
     - `till_restore_task`
-      - response: `guardrail_failed ... mutation lease is required`
-      - MCP surface currently does not provide actor/lease tuple fields for restore, creating a contract mismatch with guardrails.
+      - response in historical run: `guardrail_failed ... mutation lease is required`
+      - current status: restore guard actor-source fix is implemented; focused MCP rerun required to reclassify this row.
   - Expected edge validation errors (not counted as failures):
     - invalid attention kind `risk` -> `invalid_request`
     - invalid reparent empty parent id -> `invalid_request`
@@ -249,9 +250,9 @@ Legend:
 | REQ-005 | Full runtime + MCP logging with meaningful bubbling | PARTIAL |
 | REQ-006 | MCP/runtime operations produce useful logs with charm/log | PARTIAL |
 | REQ-007 | No silent failures for key operations | PARTIAL |
-| REQ-008 | Debug logging activation path ergonomic without manual config edits | MISSING |
-| REQ-009 | Help output clearly documents debug logging activation path | MISSING |
-| REQ-010 | Stdout/stderr guardrail logs mirrored to `.tillsyn/log` file sink (sink parity) | MISSING |
+| REQ-008 | Debug logging activation path ergonomic without manual config edits | PARTIAL |
+| REQ-009 | Help output clearly documents debug logging activation path | PARTIAL |
+| REQ-010 | Stdout/stderr guardrail logs mirrored to `.tillsyn/log` file sink (sink parity) | PARTIAL |
 | REQ-011 | `v` must not break typing in text inputs | IMPLEMENTED |
 | REQ-012 | Typing keys preserved in inputs; emoji support in text fields | IMPLEMENTED |
 | REQ-013 | Selection mode moved off `v` to control chord direction | IMPLEMENTED |
@@ -268,7 +269,7 @@ Legend:
 | REQ-024 | User vs agent attribution correctness | IMPLEMENTED |
 | REQ-025 | Strict scope guardrails (orchestrator/worker) | IMPLEMENTED |
 | REQ-026 | Notification-driven approval UX for agent identity/scope requests | MISSING |
-| REQ-027 | MCP restore-task guard/transport contract works under intended actor model | MISSING |
+| REQ-027 | MCP restore-task guard/transport contract works under intended actor model | PARTIAL |
 | REQ-028 | `?` help available in all modals/screens | IMPLEMENTED |
 | REQ-029 | Help includes copy/paste/select and modal-specific guidance | IMPLEMENTED |
 | REQ-030 | Icon feature behavior/purpose visibly functional and defined | IMPLEMENTED |
@@ -282,8 +283,8 @@ Legend:
 Highest-risk unresolved items (priority):
 1. REQ-001: no external mutation auto-refresh in TUI (stale board risk).
 2. REQ-002/003: requested two-part notifications workflow (global count + quick-nav + drill-in) absent.
-3. REQ-010: stdout/file sink parity gap for MCP guardrail logs.
-4. REQ-027: `till_restore_task` MCP contract mismatch (guardrail requires lease, tool path lacks required tuple).
+3. REQ-010: runtime sink-parity behavior needs collaborative serve-session revalidation after 2026-03-02 adapter logging changes.
+4. REQ-027: `till_restore_task` behavior needs focused MCP rerun after 2026-03-02 restore guard actor-source fix.
 5. REQ-019/021: archive-key and project archived UX policy mismatches still open.
 
 ## 11) TUI Carry-Forward (Migrated From Retired Worksheet)
@@ -321,8 +322,8 @@ Run artifact root:
 |---|---|---|---|
 | P0-T01 Manual TUI validation for C4/C6/C9/C10/C11/C12/C13 | IN_PROGRESS | `.tmp/phase0-collab-20260227_141800/manual/m0_section0_evidence_20260227.md`, `.tmp/phase0-collab-20260227_141800/manual/checklist.md` | User supplied initial manual findings: C4 fail (`esc` back-stack behavior), C6 fail (notifications UX/navigation goals unmet), C10 fail (emoji input not working). Remaining C9/C11/C12/C13 detail still pending completion evidence. |
 | P0-T02 Archived/search/keybinding targeted checks | BLOCKED | `.tmp/phase0-collab-20260227_141800/phase0_manual_steps.md`, `.tmp/phase0-collab-20260227_141800/manual/checklist.md` | Requires manual UX verification in running TUI session. |
-| P0-T03 Focused MCP rerun (`till_restore_task`, `capture_state`) | FAIL | `.tmp/phase0-collab-20260227_141800/mcp_focused_checks.md`, `.tmp/phase0-collab-20260227_141800/http_capture_state_project.json` | `capture_state` readiness passes; `till_restore_task` still fails guardrail path (`mutation lease is required`). |
-| P0-T04 Logging/help discoverability evidence capture | FAIL | `.tmp/phase0-collab-20260227_141800/phase0_preflight_summary.md`, `.tmp/phase0-collab-20260227_141800/help_till.txt`, `.tmp/phase0-collab-20260227_141800/help_till_serve.txt`, `.tmp/phase0-collab-20260227_141800/runtime_log_focus_filter.txt` | Help output path remains broken; operation-level log parity remains insufficient in this probe. Remediation requirements now include Charm/Fang-based help UX and first-launch config bootstrap behavior (copy default example config when missing). |
+| P0-T03 Focused MCP rerun (`till_restore_task`, `capture_state`) | IN_PROGRESS | `.tmp/phase0-collab-20260227_141800/mcp_focused_checks.md`, `.tmp/phase0-collab-20260227_141800/http_capture_state_project.json`, `.tmp/phase0-collab-20260227_141800/remediation_wave_20260302.md` | Historical fail recorded; 2026-03-02 code fix landed for restore guard actor source. Focused MCP rerun still required for final PASS/FAIL reclassification. |
+| P0-T04 Logging/help discoverability evidence capture | IN_PROGRESS | `.tmp/phase0-collab-20260227_141800/phase0_preflight_summary.md`, `.tmp/phase0-collab-20260227_141800/help_till.txt`, `.tmp/phase0-collab-20260227_141800/help_till_serve.txt`, `.tmp/phase0-collab-20260227_141800/runtime_log_focus_filter.txt`, `.tmp/phase0-collab-20260227_141800/remediation_wave_20260302.md` | 2026-03-02 fixes landed for help path, startup config seeding, and adapter-edge log mapping. Live serve-session sink parity rerun remains required for final PASS/FAIL reclassification. |
 | P0-T05 Fill blank checkpoints/sign-offs in `MCP_DOGFOODING_WORKSHEET.md` | PASS | `MCP_DOGFOODING_WORKSHEET.md` + run artifacts under `.tmp/phase0-collab-20260227_141800/` | Completed: all USER NOTES rows and final sign-off fields now have explicit `pass`/`fail`/`blocked` values with evidence paths. |
 | P0-T06 Update this worksheet with final evidence and verdict | BLOCKED | `COLLABORATIVE_POST_FIX_VALIDATION_WORKSHEET.md`, `.tmp/phase0-collab-20260227_141800/phase0_manual_steps.md` | Worksheet updated with current evidence and blockers, but final closeout verdict is blocked on pending user-driven manual collaborative checks. |
 
@@ -471,3 +472,25 @@ M2.3 completion guard with unresolved blockers:
 Evidence:
 1. `.tmp/phase0-collab-20260227_141800/manual/section2_guardrail_evidence_20260227.md`
 2. `.tmp/phase0-collab-20260227_141800/manual/section2_post_restart_20260228.md`
+
+### 12.9 Remediation Wave Update (2026-03-02)
+
+Implemented in code during this wave:
+1. restore guard actor-source fix:
+   - restore guard enforcement now uses current request mutation actor context (user default), not stale persisted `UpdatedByType`.
+2. startup bootstrap/config/help fixes:
+   - normal startup seeds missing config from `config.example.toml` when available.
+   - help paths remain side-effect free (`./till --help`, `./till serve --help` smoke-verified with zero stderr bytes).
+3. MCP/HTTP adapter logging instrumentation:
+   - mapped error branches now emit structured adapter-edge logs with `error_class` + `error_code`.
+
+Automated gate evidence captured:
+1. `just check` -> PASS.
+2. `just ci` -> PASS.
+3. remediation summary artifact:
+   - `.tmp/phase0-collab-20260227_141800/remediation_wave_20260302.md`.
+
+Rerun still required for final worksheet closure:
+1. Live serve-session validation of runtime file-sink parity for mapped MCP/HTTP failures (sandbox bind limits prevented full local transport rerun in this environment).
+2. Focused MCP rerun for `till_restore_task` on collaborative fixture.
+3. Remaining user-driven TUI manual sections (C4/C6/C9/C10/C11/C12/C13 + archived/search/keybinding checks).

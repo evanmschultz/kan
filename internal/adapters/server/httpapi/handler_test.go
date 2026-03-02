@@ -1,15 +1,18 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	charmLog "github.com/charmbracelet/log"
 	"github.com/hylla/tillsyn/internal/adapters/server/common"
 )
 
@@ -75,6 +78,22 @@ func decodeBody[T any](t *testing.T, body *strings.Reader) T {
 		t.Fatalf("Decode() error = %v", err)
 	}
 	return out
+}
+
+// captureDefaultLoggerOutput redirects package-level logging to one buffer for assertions.
+func captureDefaultLoggerOutput(t *testing.T) (*bytes.Buffer, func()) {
+	t.Helper()
+
+	var output bytes.Buffer
+	previous := charmLog.Default()
+	charmLog.SetDefault(charmLog.NewWithOptions(&output, charmLog.Options{
+		Level:           charmLog.DebugLevel,
+		Formatter:       charmLog.LogfmtFormatter,
+		ReportTimestamp: false,
+	}))
+	return &output, func() {
+		charmLog.SetDefault(previous)
+	}
 }
 
 // TestHandlerCaptureStateSuccess verifies capture_state response mapping for valid requests.
@@ -634,6 +653,7 @@ func TestWriteErrorFromMappingBranches(t *testing.T) {
 		err           error
 		wantStatus    int
 		wantCode      string
+		wantClass     string
 		wantMsgSubstr string
 	}{
 		{
@@ -641,26 +661,48 @@ func TestWriteErrorFromMappingBranches(t *testing.T) {
 			err:           nil,
 			wantStatus:    http.StatusInternalServerError,
 			wantCode:      "internal_error",
+			wantClass:     "internal",
 			wantMsgSubstr: "unknown error",
+		},
+		{
+			name:          "guardrail violation maps to conflict",
+			err:           errors.Join(common.ErrGuardrailViolation, errors.New("lease mismatch")),
+			wantStatus:    http.StatusConflict,
+			wantCode:      "guardrail_failed",
+			wantClass:     "guardrail",
+			wantMsgSubstr: "lease mismatch",
 		},
 		{
 			name:          "unsupported scope is invalid request",
 			err:           errors.Join(common.ErrUnsupportedScope, errors.New("scope mismatch")),
 			wantStatus:    http.StatusBadRequest,
 			wantCode:      "invalid_request",
+			wantClass:     "invalid",
 			wantMsgSubstr: "scope mismatch",
+		},
+		{
+			name:          "not found maps to not found",
+			err:           errors.Join(common.ErrNotFound, errors.New("missing")),
+			wantStatus:    http.StatusNotFound,
+			wantCode:      "not_found",
+			wantClass:     "not_found",
+			wantMsgSubstr: "missing",
 		},
 		{
 			name:          "attention unavailable is not implemented",
 			err:           errors.Join(common.ErrAttentionUnavailable, errors.New("feature disabled")),
 			wantStatus:    http.StatusNotImplemented,
 			wantCode:      "not_implemented",
+			wantClass:     "not_implemented",
 			wantMsgSubstr: "feature disabled",
 		},
 	}
 
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
+			logOutput, restoreLogger := captureDefaultLoggerOutput(t)
+			defer restoreLogger()
+
 			rec := httptest.NewRecorder()
 			writeErrorFrom(rec, tt.err)
 
@@ -673,6 +715,21 @@ func TestWriteErrorFromMappingBranches(t *testing.T) {
 			}
 			if !strings.Contains(envelope.Error.Message, tt.wantMsgSubstr) {
 				t.Fatalf("error.message = %q, want substring %q", envelope.Error.Message, tt.wantMsgSubstr)
+			}
+			if got := logOutput.String(); !strings.Contains(got, "http api error mapped") {
+				t.Fatalf("log output = %q, want message marker", got)
+			}
+			if got := logOutput.String(); !strings.Contains(got, "transport=http") {
+				t.Fatalf("log output = %q, want transport=http", got)
+			}
+			if got := logOutput.String(); !strings.Contains(got, "error_code="+tt.wantCode) {
+				t.Fatalf("log output = %q, want error_code=%q", got, tt.wantCode)
+			}
+			if got := logOutput.String(); !strings.Contains(got, "error_class="+tt.wantClass) {
+				t.Fatalf("log output = %q, want error_class=%q", got, tt.wantClass)
+			}
+			if got := logOutput.String(); !strings.Contains(got, "status_code="+strconv.Itoa(tt.wantStatus)) {
+				t.Fatalf("log output = %q, want status_code=%d", got, tt.wantStatus)
 			}
 		})
 	}

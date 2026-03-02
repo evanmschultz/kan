@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/charmbracelet/log"
 	"github.com/hylla/tillsyn/internal/adapters/server/common"
 )
 
@@ -217,43 +218,97 @@ func normalizePath(path string) string {
 
 // writeErrorFrom maps adapter errors into structured HTTP responses.
 func writeErrorFrom(w http.ResponseWriter, err error) {
+	mapped := mapHTTPError(err)
+	log.Error(
+		"http api error mapped",
+		"transport",
+		"http",
+		"error_class",
+		mapped.Class,
+		"error_code",
+		mapped.APIError.Code,
+		"status_code",
+		mapped.StatusCode,
+		"err",
+		err,
+	)
+	writeJSONError(w, mapped.StatusCode, mapped.APIError)
+}
+
+// httpErrorMapping captures one mapped HTTP error classification and response payload.
+type httpErrorMapping struct {
+	Class      string
+	StatusCode int
+	APIError   APIError
+}
+
+// mapHTTPError converts one adapter error into deterministic HTTP API error metadata.
+func mapHTTPError(err error) httpErrorMapping {
 	switch {
 	case err == nil:
-		writeJSONError(w, http.StatusInternalServerError, APIError{
-			Code:    "internal_error",
-			Message: "unknown error",
-		})
+		return httpErrorMapping{
+			Class:      "internal",
+			StatusCode: http.StatusInternalServerError,
+			APIError: APIError{
+				Code:    "internal_error",
+				Message: "unknown error",
+			},
+		}
 	case errors.Is(err, common.ErrBootstrapRequired):
-		writeJSONError(w, http.StatusConflict, APIError{
-			Code:    "bootstrap_required",
-			Message: err.Error(),
-			Hint:    "Create the first project before calling capture_state.",
-		})
+		return httpErrorMapping{
+			Class:      "bootstrap",
+			StatusCode: http.StatusConflict,
+			APIError: APIError{
+				Code:    "bootstrap_required",
+				Message: err.Error(),
+				Hint:    "Create the first project before calling capture_state.",
+			},
+		}
 	case errors.Is(err, common.ErrGuardrailViolation):
-		writeJSONError(w, http.StatusConflict, APIError{
-			Code:    "guardrail_failed",
-			Message: err.Error(),
-		})
+		return httpErrorMapping{
+			Class:      "guardrail",
+			StatusCode: http.StatusConflict,
+			APIError: APIError{
+				Code:    "guardrail_failed",
+				Message: err.Error(),
+			},
+		}
 	case errors.Is(err, common.ErrNotFound):
-		writeJSONError(w, http.StatusNotFound, APIError{
-			Code:    "not_found",
-			Message: err.Error(),
-		})
+		return httpErrorMapping{
+			Class:      "not_found",
+			StatusCode: http.StatusNotFound,
+			APIError: APIError{
+				Code:    "not_found",
+				Message: err.Error(),
+			},
+		}
 	case errors.Is(err, common.ErrInvalidCaptureStateRequest), errors.Is(err, common.ErrUnsupportedScope):
-		writeJSONError(w, http.StatusBadRequest, APIError{
-			Code:    "invalid_request",
-			Message: err.Error(),
-		})
+		return httpErrorMapping{
+			Class:      "invalid",
+			StatusCode: http.StatusBadRequest,
+			APIError: APIError{
+				Code:    "invalid_request",
+				Message: err.Error(),
+			},
+		}
 	case errors.Is(err, common.ErrAttentionUnavailable):
-		writeJSONError(w, http.StatusNotImplemented, APIError{
-			Code:    "not_implemented",
-			Message: err.Error(),
-		})
+		return httpErrorMapping{
+			Class:      "not_implemented",
+			StatusCode: http.StatusNotImplemented,
+			APIError: APIError{
+				Code:    "not_implemented",
+				Message: err.Error(),
+			},
+		}
 	default:
-		writeJSONError(w, http.StatusInternalServerError, APIError{
-			Code:    "internal_error",
-			Message: err.Error(),
-		})
+		return httpErrorMapping{
+			Class:      "internal",
+			StatusCode: http.StatusInternalServerError,
+			APIError: APIError{
+				Code:    "internal_error",
+				Message: err.Error(),
+			},
+		}
 	}
 }
 

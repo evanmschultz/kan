@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -377,6 +378,55 @@ func configExamplePath() (string, error) {
 	return filepath.Join(workspaceRootFrom(cwd), "config.example.toml"), nil
 }
 
+// seedStartupConfigFromExampleIfMissing seeds the runtime config from config.example.toml on first-launch TUI startup.
+func seedStartupConfigFromExampleIfMissing(command, configPath string) error {
+	if command != "" {
+		return nil
+	}
+	configPath = strings.TrimSpace(configPath)
+	if configPath == "" {
+		return nil
+	}
+
+	if _, err := os.Stat(configPath); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("stat startup config %q: %w", configPath, err)
+	}
+
+	templatePath, err := configExamplePath()
+	if err != nil {
+		return fmt.Errorf("resolve config example path: %w", err)
+	}
+	templateBytes, err := os.ReadFile(templatePath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			// Keep startup behavior compatible outside repository checkouts where the template may be unavailable.
+			return nil
+		}
+		return fmt.Errorf("read config example %q: %w", templatePath, err)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		return fmt.Errorf("create startup config directory: %w", err)
+	}
+	file, err := os.OpenFile(configPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return nil
+		}
+		return fmt.Errorf("create startup config %q: %w", configPath, err)
+	}
+	if _, err := file.Write(templateBytes); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("write startup config %q: %w", configPath, err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close startup config %q: %w", configPath, err)
+	}
+	return nil
+}
+
 // ensureLoggingSectionDebug rewrites TOML content so [logging].level is always "debug".
 func ensureLoggingSectionDebug(content string) string {
 	headerMatch := loggingSectionHeaderPattern.FindStringIndex(content)
@@ -462,6 +512,9 @@ func executeCommandFlow(
 			dbPath = paths.DBPath
 		}
 	}
+	if err := seedStartupConfigFromExampleIfMissing(command, configPath); err != nil {
+		return fmt.Errorf("seed startup config %q: %w", configPath, err)
+	}
 
 	defaultCfg := config.Default(dbPath)
 	cfg, err := config.Load(configPath, defaultCfg)
@@ -481,12 +534,14 @@ func executeCommandFlow(
 		// Keep TUI rendering clean: runtime logs stay in the dev-file sink while the board is active.
 		logger.SetConsoleEnabled(false)
 	}
+	logger.InstallAsDefault(rootOpts.appName)
 	defer func() {
 		if closeErr := logger.Close(); closeErr != nil && logger.shouldLogToSink(logger.consoleSink) {
 			// Keep TUI shutdown quiet on the terminal when console logging is intentionally muted.
 			_, _ = fmt.Fprintf(stderr, "warning: close runtime log sink: %v\n", closeErr)
 		}
 	}()
+	defer logger.RestoreDefault()
 
 	logger.Info("startup configuration resolved", "app", rootOpts.appName, "dev_mode", rootOpts.devMode, "command", command, "bootstrap_required", bootstrapRequired)
 	logger.Debug("runtime paths resolved", "config_path", configPath, "data_dir", paths.DataDir, "db_path", dbPath)
@@ -819,11 +874,16 @@ func cloneSearchRoots(in []string) []string {
 
 // runtimeLogger fans log events to a styled console sink and an optional dev-file sink.
 type runtimeLogger struct {
-	sinks          []*charmLog.Logger
-	consoleSink    *charmLog.Logger
-	consoleEnabled bool
-	closeFile      func() error
-	devLog         string
+	sinks           []*charmLog.Logger
+	consoleSink     *charmLog.Logger
+	consoleWriter   io.Writer
+	fileWriter      io.Writer
+	consoleEnabled  bool
+	closeFile       func() error
+	devLog          string
+	level           charmLog.Level
+	defaultBridge   *runtimeLogBridgeWriter
+	previousDefault *charmLog.Logger
 }
 
 // newRuntimeLogger configures runtime log sinks from CLI/config state.
@@ -851,7 +911,9 @@ func newRuntimeLogger(stderr io.Writer, appName string, devMode bool, cfg config
 	logger := &runtimeLogger{
 		sinks:          []*charmLog.Logger{consoleLogger},
 		consoleSink:    consoleLogger,
+		consoleWriter:  stderr,
 		consoleEnabled: true,
+		level:          level,
 	}
 	if !devMode || !cfg.DevFile.Enabled {
 		return logger, nil
@@ -880,7 +942,76 @@ func newRuntimeLogger(stderr io.Writer, appName string, devMode bool, cfg config
 	logger.sinks = append(logger.sinks, fileLogger)
 	logger.closeFile = logFile.Close
 	logger.devLog = devLogPath
+	logger.fileWriter = logFile
 	return logger, nil
+}
+
+// InstallAsDefault routes package-level charm/log calls through this runtime logger's sinks.
+func (l *runtimeLogger) InstallAsDefault(appName string) {
+	if l == nil {
+		return
+	}
+	bridge := l.ensureDefaultBridge()
+	if bridge == nil {
+		return
+	}
+	defaultLogger := charmLog.NewWithOptions(bridge, charmLog.Options{
+		Level:           l.level,
+		Prefix:          appName,
+		ReportTimestamp: true,
+		TimeFormat:      time.RFC3339,
+		Formatter:       charmLog.LogfmtFormatter,
+	})
+	l.previousDefault = charmLog.Default()
+	charmLog.SetDefault(defaultLogger)
+}
+
+// RestoreDefault resets the package-level default logger captured during InstallAsDefault.
+func (l *runtimeLogger) RestoreDefault() {
+	if l == nil || l.previousDefault == nil {
+		return
+	}
+	charmLog.SetDefault(l.previousDefault)
+	l.previousDefault = nil
+}
+
+// ensureDefaultBridge initializes the package-log bridge writer once.
+func (l *runtimeLogger) ensureDefaultBridge() *runtimeLogBridgeWriter {
+	if l == nil {
+		return nil
+	}
+	if l.defaultBridge == nil {
+		l.defaultBridge = &runtimeLogBridgeWriter{runtime: l}
+	}
+	return l.defaultBridge
+}
+
+// runtimeLogBridgeWriter fans package-level log output into runtime logger sinks.
+type runtimeLogBridgeWriter struct {
+	mu      sync.Mutex
+	runtime *runtimeLogger
+}
+
+// Write forwards one formatted log line to active runtime sinks.
+func (w *runtimeLogBridgeWriter) Write(p []byte) (int, error) {
+	if w == nil || w.runtime == nil {
+		return len(p), nil
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	var firstErr error
+	if w.runtime.consoleEnabled && w.runtime.consoleWriter != nil {
+		if _, err := w.runtime.consoleWriter.Write(p); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	if w.runtime.fileWriter != nil {
+		if _, err := w.runtime.fileWriter.Write(p); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return len(p), firstErr
 }
 
 // DevLogPath returns the active dev log file path.

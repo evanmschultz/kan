@@ -297,8 +297,8 @@ Tracking protocol (locked for this remediation wave):
 | T-001 | Notifications design checkpoint | REQ-004 | W-NOTIFY-DESIGN | pending |
 | T-002 | Notifications panel implementation (always visible + two-part + quick-nav + drill-in) | REQ-002, REQ-003, user always-visible requirement | W-NOTIFY-UI | pending |
 | T-003 | External MCP/HTTP auto-refresh in TUI | REQ-001 | W-REFRESH | pending |
-| T-004 | Logging/help discoverability + sink parity | REQ-005, REQ-006, REQ-007, REQ-008, REQ-009, REQ-010 | W-LOGGING | pending |
-| T-005 | Restore-task guard/transport contract | REQ-027 | W-GUARD-RESTORE | pending |
+| T-004 | Logging/help discoverability + sink parity | REQ-005, REQ-006, REQ-007, REQ-008, REQ-009, REQ-010 | W-LOGGING | implemented_pending_validation |
+| T-005 | Restore-task guard/transport contract | REQ-027 | W-GUARD-RESTORE | implemented_pending_validation |
 | T-006 | Archive/search/project-archived UX policy alignment | REQ-019, REQ-021, REQ-031 | W-ARCHIVE-UX | pending |
 | T-007 | Agent approval notification flow | REQ-026 | W-APPROVAL-UX | pending |
 | T-008 | Docs/template policy alignment | REQ-032, REQ-033, REQ-034, REQ-035, REQ-036 | W-DOCS-POLICY | pending |
@@ -407,26 +407,40 @@ Tracking protocol (locked for this remediation wave):
   - Integration stage: `just ci`
 
 #### T-004 — Logging/Help/Sink Parity
-- [ ] Subagent complete
-- [ ] Orchestrator check
+- [x] Subagent complete
+- [x] Orchestrator check
 - Lane: `W-LOGGING`
 - Deliverables:
   1. Clear debug activation path (`--help` discoverability and documented command path).
   2. Runtime + MCP guardrail warnings/errors mirrored to file sink and stdout/stderr as required.
   3. No silent failure path for critical mutation errors.
 - Evidence:
-  - code/test path(s): `pending`
+  - code/test path(s):
+    - `internal/adapters/server/mcpapi/handler.go`
+    - `internal/adapters/server/mcpapi/handler_test.go`
+    - `internal/adapters/server/httpapi/handler.go`
+    - `internal/adapters/server/httpapi/handler_test.go`
+    - `.tmp/phase0-collab-20260227_141800/remediation_wave_20260302.md`
+    - `just check` and `just ci` (2026-03-02) PASS
+  - note:
+    - marked `implemented_pending_validation` until collaborative live serve-session sink-parity rerun evidence is attached.
 
 #### T-005 — MCP Restore Guard Contract
-- [ ] Subagent complete
-- [ ] Orchestrator check
+- [x] Subagent complete
+- [x] Orchestrator check
 - Lane: `W-GUARD-RESTORE`
 - Deliverables:
   1. `till_restore_task` request path enforces/provides required actor+lease tuple.
   2. Guardrail behavior aligns with actor model (user vs agent).
   3. Automated test coverage for this contract.
 - Evidence:
-  - code/test path(s): `pending`
+  - code/test path(s):
+    - `internal/app/service.go`
+    - `internal/app/service_test.go`
+    - `.tmp/phase0-collab-20260227_141800/remediation_wave_20260302.md`
+    - `just check` and `just ci` (2026-03-02) PASS
+  - note:
+    - marked `implemented_pending_validation` until focused collaborative MCP rerun reclassifies the historical `till_restore_task` failure row.
 
 #### T-006 — Archive/Search/Project Archived UX
 - [ ] Subagent complete

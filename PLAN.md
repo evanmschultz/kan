@@ -1401,3 +1401,183 @@ Commands and outcomes:
 
 Current status:
 - persisted activity rows now render entity-aware summaries for branch/phase/subphase/task scope events instead of always `task`.
+
+### 2026-03-02: Dogfood Blocker Remediation Wave (IN PROGRESS)
+
+Objective:
+- close known dogfooding blockers surfaced in active collaborative worksheets, then refresh worksheets for one joint validation pass.
+
+Backlog/open-findings review checkpoint:
+1. Reviewed active backlog/open discussion items in this file (`PLAN.md`), including:
+   - open Phase 0 closeout status and blocker statements,
+   - open ownership-attribution regression discussion,
+   - open subagent stall/Auth 2.0 discussion items.
+2. Reviewed unresolved findings in:
+   - `COLLAB_E2E_REMEDIATION_PLAN_WORKLOG.md`,
+   - `COLLABORATIVE_POST_FIX_VALIDATION_WORKSHEET.md`.
+3. Reviewed current MCP dogfood sign-off state in:
+   - `MCP_DOGFOODING_WORKSHEET.md`.
+
+Current remediation focus (known blockers from docs + code audit):
+1. restore-task guard actor mismatch (`mutation lease is required` on user restore for agent-attributed archived tasks).
+2. MCP/HTTP guardrail error log sink parity gaps.
+3. first-launch config bootstrap seeding gap (missing config template copy on normal startup).
+4. docs/worksheet drift after recent code fixes.
+
+Parallel lane lock table (single-branch orchestration; non-overlapping scopes):
+1. `W-RESTORE-ACTOR`
+   - lock scope:
+     - `internal/app/service.go`
+     - `internal/app/service_test.go`
+     - `internal/app/mutation_guard.go` (only if required)
+   - acceptance objective:
+     - restore guard behavior follows current caller actor context with fail-closed non-user semantics preserved.
+2. `W-LOG-PARITY`
+   - lock scope:
+     - `internal/adapters/server/mcpapi/handler.go`
+     - `internal/adapters/server/mcpapi/handler_test.go`
+     - `internal/adapters/server/httpapi/handler.go`
+     - `internal/adapters/server/httpapi/handler_test.go`
+   - acceptance objective:
+     - mapped MCP/HTTP error paths emit structured runtime logs without changing response contracts.
+3. `W-BOOTSTRAP-CONFIG`
+   - lock scope:
+     - `cmd/till/main.go`
+     - `cmd/till/main_test.go`
+     - `README.md`
+   - acceptance objective:
+     - normal startup seeds config from `config.example.toml` when missing, while preserving help behavior.
+
+Commands/tests run (orchestrator evidence):
+1. `sed -n '1,220p' Justfile` -> PASS (verified recipe source-of-truth and gate commands).
+2. `git log -n 5 ...` and `git log -n 5 --name-status -- '*.md'` -> PASS (identified latest markdown workset).
+3. targeted file audits (`rg`, `sed`) across active worksheets + code paths -> PASS.
+4. `just check` -> PASS.
+5. `just ci` -> PASS.
+6. spawned worker lanes:
+   - `019cabe0-a8c7-74d3-8634-c23e206412c3` (`W-RESTORE-ACTOR`) -> IN_PROGRESS.
+   - `019cabe0-aad2-75f0-8626-e69d5765e420` (`W-LOG-PARITY`) -> IN_PROGRESS.
+   - `019cabe0-ac7c-7221-9dd1-1d874c1b83eb` (`W-BOOTSTRAP-CONFIG`) -> IN_PROGRESS.
+
+Current status:
+- worker lanes are executing with explicit Context7-before-edit and failure-triggered Context7 re-check requirements.
+- next step is orchestrator review/integration of each handoff, then `just check` + `just ci`, then worksheet/doc updates with fresh evidence.
+
+Integrator review and lane closeout:
+1. `W-RESTORE-ACTOR` (`019cabe0-a8c7-74d3-8634-c23e206412c3`) -> COMPLETED
+   - integrated changes:
+     - `internal/app/service.go`
+     - `internal/app/service_test.go`
+   - outcome:
+     - restore guard actor now follows current mutation actor context (user default), with non-user lease enforcement preserved.
+2. `W-LOG-PARITY` (`019cabe0-aad2-75f0-8626-e69d5765e420`) -> COMPLETED
+   - integrated changes:
+     - `internal/adapters/server/mcpapi/handler.go`
+     - `internal/adapters/server/mcpapi/handler_test.go`
+     - `internal/adapters/server/httpapi/handler.go`
+     - `internal/adapters/server/httpapi/handler_test.go`
+   - outcome:
+     - MCP/HTTP mapped error branches now emit structured adapter-edge logs (`error_class`, `error_code`, transport fields) and tests assert mappings.
+3. `W-BOOTSTRAP-CONFIG` (`019cabe0-ac7c-7221-9dd1-1d874c1b83eb`) -> COMPLETED
+   - integrated changes:
+     - `cmd/till/main.go`
+     - `cmd/till/main_test.go`
+     - `README.md`
+   - outcome:
+     - normal TUI startup now seeds missing config from `config.example.toml` (when template is present), with help paths remaining side-effect free.
+
+Post-integration validation commands:
+1. `just check` -> PASS.
+2. `just ci` -> PASS.
+3. `./till --help` and `./till serve --help` smoke capture -> PASS:
+   - stderr bytes: 0 for both help commands,
+   - usage text present in captured outputs.
+
+Validation limitations observed:
+1. live `serve` integration smoke for HTTP/MCP runtime logging could not be completed in this sandbox due bind failure (`listen tcp ... bind: operation not permitted`).
+2. adapter-level log mapping is test-covered; full runtime sink parity still requires collaborative/local serve-session verification outside sandbox bind limits.
+
+Next step:
+- update active collaborative worksheets and remediation worklog with this fix wave + rerun requirements for remaining manual/transport checkpoints.
+
+Docs/worksheet synchronization completed:
+1. `COLLABORATIVE_POST_FIX_VALIDATION_WORKSHEET.md`
+   - reclassified REQ-008/009/010/027 from `MISSING` -> `PARTIAL`.
+   - updated Section 7 blockers/follow-up actions to reflect 2026-03-02 code fixes and rerun requirements.
+   - marked P0-T03/P0-T04 as `IN_PROGRESS` with rerun-required notes.
+   - appended Section 12.9 remediation update with fresh gate evidence.
+2. `MCP_DOGFOODING_WORKSHEET.md`
+   - added Section 6 remediation addendum (2026-03-02).
+   - updated final sign-off blocker wording to focus on pending collaborative reruns/manual sections.
+3. `COLLAB_E2E_REMEDIATION_PLAN_WORKLOG.md`
+   - moved T-004/T-005 backlog rows to `implemented_pending_validation`.
+   - marked task cards subagent/orchestrator checks complete with code/test evidence pointers.
+4. Added evidence artifact:
+   - `.tmp/phase0-collab-20260227_141800/remediation_wave_20260302.md`.
+
+Current status:
+- known code-level blockers targeted in this wave are implemented and repo gates are green.
+- dogfooding sign-off remains open pending collaborative reruns for:
+  1. live serve-session sink parity verification,
+  2. focused `till_restore_task` transport rerun,
+  3. remaining manual TUI validation sections.
+
+Final pre-handoff gate rerun after worksheet/doc updates:
+1. `just check` -> PASS (cached).
+2. `just ci` -> PASS (cached).
+
+## Checkpoint 2026-03-02: Collab Test Sheet Refresh + Agent-Only Reruns
+
+Objective:
+- Create a new dated collaborative worksheet and execute all agent-only checks now (including guardrail E2E and gatekept subagent probes), then leave only user/joint manual checks pending.
+
+Commands/tests run and outcomes:
+1. `just check` -> PASS (evidence: `.tmp/collab-test-2026-03-02/a01_just_check.txt`).
+2. `just ci` -> PASS (evidence: `.tmp/collab-test-2026-03-02/a02_just_ci.txt`; includes non-fatal stat-cache warning).
+3. `just test-golden` -> PASS (evidence: `.tmp/collab-test-2026-03-02/a03_test_golden.txt`).
+4. `./till --help` and `./till serve --help` -> PASS, 0 stderr bytes (evidence: `a04_*` artifacts).
+5. `just test-pkg ./cmd/till` -> PASS (startup seeding coverage; evidence: `a05_startup_seed_check.txt`).
+6. Isolated live serve transport sweep (`E-01`..`E-08`) -> `E-01`..`E-07` PASS, `E-08` FAIL (sink parity gap persists); evidence under `.tmp/collab-test-2026-03-02/e*`.
+7. Subagent gate probes:
+   - initial non-escalated attempt -> BLOCKED (`bind: operation not permitted`).
+   - rerun with escalated local bind permissions -> PASS for in-scope + out-of-scope expectations (evidence: `s01_subagent_in_scope.md`, `s02_subagent_out_scope.md`).
+
+Files edited and why:
+1. `COLLAB_TEST_2026-03-02.md`
+   - created dated worksheet,
+   - carried forward unresolved test scopes from prior worksheets,
+   - updated agent-only statuses with evidence,
+   - left required collaborative/manual checks as explicit pending rows.
+
+Current status:
+- Agent-only testable items are complete for this pass.
+- Remaining blocker: logging sink parity (`E-08`) still fails in this environment.
+- Remaining work is collaborative/manual validation (`C-01`..`C-07`).
+
+## Checkpoint 2026-03-02: E-08 Sink-Parity Remediation and Verification
+
+Objective:
+- Fix `E-08` so mapped MCP/HTTP adapter errors are persisted to `.tillsyn/log` (not only stderr), then confirm with real gates and live serve-session evidence.
+
+Implementation updates:
+1. `cmd/till/main.go`
+   - added runtime default-logger installation (`InstallAsDefault` / `RestoreDefault`) so package-level `charmbracelet/log` calls flow through runtime sinks.
+   - added `runtimeLogBridgeWriter` fanout writer to mirror package-level logs to active console sink (when enabled) and dev-file sink.
+2. `cmd/till/main_test.go`
+   - added regression `TestRuntimeLoggerInstallAsDefaultRoutesPackageLogsToFile` to verify package-level logs reach dev-file sink and respect console muting.
+
+Commands/tests run and outcomes:
+1. `just test-pkg ./cmd/till` -> PASS.
+2. `just check` -> FAIL initially (`gofmt required for: cmd/till/main.go`), then:
+   - Context7 re-check executed per policy after failure,
+   - `just fmt` applied,
+   - `just check` rerun -> PASS.
+3. `just ci` -> PASS.
+4. Live `E-08` rerun (local serve runtime with HTTP + MCP invalid requests) -> PASS:
+   - evidence: `.tmp/collab-test-2026-03-02/e08_rerun_v2_summary.log`
+   - both counters incremented: `delta_mcp=1`, `delta_http=1`,
+   - matched lines present in `.tillsyn/log/tillsyn-20260302.log` and serve stderr.
+
+Current status:
+- `E-08` is remediated and reclassified PASS in `COLLAB_TEST_2026-03-02.md`.
+- No remaining agent-only FAIL items in the dated collab test worksheet.
