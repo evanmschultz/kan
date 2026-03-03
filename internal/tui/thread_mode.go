@@ -124,13 +124,17 @@ func (m Model) renderThreadDescriptionPanel(accent, muted, dim color.Color, sect
 	contentWidth := max(20, width-4)
 	contentHeight := max(4, height-2)
 	lines := []string{sectionTitleStyle.Render(truncate(title, contentWidth))}
+	bodyLines := []string{}
 	description := strings.TrimSpace(m.threadDescriptionMarkdown)
 	if description == "" {
-		lines = append(lines, hintStyle.Render("(no description)"))
+		bodyLines = append(bodyLines, hintStyle.Render("(no description)"))
 	} else {
-		lines = append(lines, splitThreadMarkdownLines(m.threadMarkdown.render(description, contentWidth))...)
+		bodyLines = append(bodyLines, splitThreadMarkdownLines(m.threadMarkdown.render(description, contentWidth))...)
 	}
-	lines = append(lines, "", hintStyle.Render("e focus details • enter edit target • i markdown editor"))
+	bodyHeight := max(1, contentHeight-2)
+	body := fitLines(strings.Join(bodyLines, "\n"), bodyHeight)
+	lines = append(lines, strings.Split(body, "\n")...)
+	lines = append(lines, hintStyle.Render("e focus details • enter edit target • i markdown editor"))
 
 	borderColor := dim
 	if m.threadDetailsActive {

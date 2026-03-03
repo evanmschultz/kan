@@ -2107,3 +2107,47 @@ Current status:
 - live inputs now scrub probe artifacts during typing/paste (not only on save).
 - project/global notifications panel stack now respects board-height budget and aligns better with column bottoms.
 - all required gates are green after golden refresh.
+
+## Checkpoint 2026-03-03: Full Markdown Description Editor for Add/Edit Flows
+
+Objective:
+- enforce full markdown description editing for task/project add/edit forms (no inline single-line description editing), and anchor thread description panel help text at the bottom.
+
+Context + research:
+- reviewed current add/edit form path and thread description rendering in `internal/tui/model.go` and `internal/tui/thread_mode.go`.
+- Context7 consult before edits: `/charmbracelet/bubbletea` (key handling/update test patterns).
+
+Implementation edits:
+- `internal/tui/model.go`
+  - added `modeDescriptionEditor` and `descriptionEditorTarget` state.
+  - added dedicated form-description markdown state (`taskFormDescription`, `projectFormDescription`).
+  - added helpers:
+    - `startTaskDescriptionEditor` / `startProjectDescriptionEditor`
+    - `applySeedKeyToDescriptionEditor`
+    - `saveDescriptionEditor` / `closeDescriptionEditor`
+    - `descriptionFormDisplayValue` + form summary sync helpers.
+  - changed task/project form behavior so description field always opens markdown editor on edit keys (enter/i/typed input), preventing inline single-line editing.
+  - added markdown editor rendering case to `renderModeOverlay` with editor + Glamour preview.
+  - updated help/mode text for new editor mode and description workflow.
+  - ensured form value extraction writes description from markdown state, not compact summary row.
+- `internal/tui/thread_mode.go`
+  - adjusted `renderThreadDescriptionPanel` so the inline help line is bottom-anchored in that panel.
+- `internal/tui/model_test.go`
+  - added:
+    - `TestModelTaskDescriptionEditorFlow`
+    - `TestModelProjectDescriptionEditorSeedAndCancel`
+
+Test/fix loop evidence:
+1. `just fmt && just test-pkg ./internal/tui` -> PASS.
+2. `just check` -> PASS.
+3. `just ci` -> FAIL first pass (`internal/tui` coverage 69.7% < 70%).
+4. Context7 rerun after failed gate (Bubble Tea test/key patterns) -> PASS.
+5. added focused tests for description editor mode/flows.
+6. `just fmt && just test-pkg ./internal/tui` -> PASS.
+7. `just check` -> PASS.
+8. `just ci` -> PASS (`internal/tui` coverage 70.3%).
+
+Current status:
+- task/project descriptions are now edited only through the full markdown editor flow.
+- thread description panel help text is pinned to panel bottom.
+- all required gates are green.

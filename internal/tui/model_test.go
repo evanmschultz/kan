@@ -2256,6 +2256,79 @@ func TestRenderOverviewPanelHeightMatchesRequestedHeight(t *testing.T) {
 	}
 }
 
+// TestModelTaskDescriptionEditorFlow verifies task-form description always routes through the markdown editor.
+func TestModelTaskDescriptionEditorFlow(t *testing.T) {
+	now := time.Date(2026, 3, 3, 9, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, nil)))
+
+	m = applyMsg(t, m, keyRune('n'))
+	if m.mode != modeAddTask {
+		t.Fatalf("expected add-task mode, got %v", m.mode)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	if m.formFocus != taskFieldDescription {
+		t.Fatalf("expected description field focus, got %d", m.formFocus)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeDescriptionEditor {
+		t.Fatalf("expected markdown description editor mode, got %v", m.mode)
+	}
+	if m.descriptionEditorTarget != descriptionEditorTargetTask {
+		t.Fatalf("expected task description editor target, got %v", m.descriptionEditorTarget)
+	}
+
+	m.descriptionEditorInput.SetValue("## Task Detail\n\n- line one\n- line two")
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
+	if m.mode != modeAddTask {
+		t.Fatalf("expected return to add-task mode after save, got %v", m.mode)
+	}
+	if got := m.taskFormDescription; !strings.Contains(got, "Task Detail") {
+		t.Fatalf("expected task markdown description persisted, got %q", got)
+	}
+	if got := m.formInputs[taskFieldDescription].Value(); !strings.Contains(got, "Task Detail") {
+		t.Fatalf("expected compact task description summary in form field, got %q", got)
+	}
+}
+
+// TestModelProjectDescriptionEditorSeedAndCancel verifies project-description editing opens full markdown editor on typed input.
+func TestModelProjectDescriptionEditorSeedAndCancel(t *testing.T) {
+	now := time.Date(2026, 3, 3, 9, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, nil)))
+
+	m = applyMsg(t, m, keyRune('N'))
+	if m.mode != modeAddProject {
+		t.Fatalf("expected add-project mode, got %v", m.mode)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	if m.projectFormFocus != projectFieldDescription {
+		t.Fatalf("expected project description field focus, got %d", m.projectFormFocus)
+	}
+
+	m = applyMsg(t, m, keyRune('a'))
+	if m.mode != modeDescriptionEditor {
+		t.Fatalf("expected markdown description editor mode, got %v", m.mode)
+	}
+	if m.descriptionEditorTarget != descriptionEditorTargetProject {
+		t.Fatalf("expected project description editor target, got %v", m.descriptionEditorTarget)
+	}
+	if got := m.descriptionEditorInput.Value(); got != "a" {
+		t.Fatalf("expected seed key to initialize editor content, got %q", got)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.mode != modeAddProject {
+		t.Fatalf("expected return to add-project mode after cancel, got %v", m.mode)
+	}
+	if got := strings.TrimSpace(m.projectFormDescription); got != "" {
+		t.Fatalf("expected cancelled editor to keep project description unchanged, got %q", got)
+	}
+}
+
 // TestModelInputModeGlobalHelpAndSelectionToggles verifies '?' and selection-toggle keys work inside modal/input screens.
 func TestModelInputModeGlobalHelpAndSelectionToggles(t *testing.T) {
 	now := time.Date(2026, 2, 23, 9, 30, 0, 0, time.UTC)
