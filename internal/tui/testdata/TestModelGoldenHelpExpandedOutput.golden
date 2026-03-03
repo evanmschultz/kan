@@ -42,7 +42,7 @@
     │ - / search; p project picker; : command palette; . quick actions                     │[K
     │ - tab/shift+tab cycle board/project/global panels; left/right move adjacent panel [3P
     │ - ctrl+y toggles text selection mode; ctrl+c/ctrl+v copy/paste in text inputs [3P
-    │ - z undo; Z redo; g activity log; q quit                                             │[K
+    │ - ctrl+z undo; ctrl+shift+z redo; g activity log; q quit                             │[K
     │                                                                                      │[K
     │ selection mode: off (ctrl+y toggles)              [3P
     │ press ? or esc to close help                                           [3P

@@ -119,6 +119,7 @@ func (s *stubAttentionService) ResolveAttentionItem(_ context.Context, req commo
 type jsonRPCResponse struct {
 	ID     float64        `json:"id"`
 	Result map[string]any `json:"result"`
+	Error  map[string]any `json:"error"`
 }
 
 // callToolRequest constructs one deterministic tools/call JSON-RPC request payload.

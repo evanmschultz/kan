@@ -99,7 +99,7 @@ func TestAppServiceAdapterRestoreTaskAllowsUserAttributionWithoutGuardTuple(t *t
 	}
 }
 
-// TestAppServiceAdapterUpdateTaskRejectsNonUserWithoutGuardTuple verifies non-user mutations still require a lease tuple.
+// TestAppServiceAdapterUpdateTaskRejectsAgentWithoutGuardTuple verifies agent mutations require a lease tuple.
 func TestAppServiceAdapterUpdateTaskRejectsNonUserWithoutGuardTuple(t *testing.T) {
 	adapter, _, _, task := newActorAttributionAdapterFixture(t)
 	_, err := adapter.UpdateTask(context.Background(), UpdateTaskRequest{

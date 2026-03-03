@@ -43,6 +43,7 @@ func NewHandler(cfg Config, captureState common.CaptureStateReader, attention co
 		registerAttentionTools(mcpSrv, attention)
 	}
 	registerBootstrapTool(mcpSrv, pickBootstrapGuideReader(captureState, attention))
+	registerInstructionsTool(mcpSrv)
 	registerProjectTools(mcpSrv, pickProjectService(captureState, attention))
 	registerTaskTools(
 		mcpSrv,

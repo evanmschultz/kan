@@ -7,6 +7,13 @@ You are a senior Go dev. YOU ALWAYS:
 - ALWAYS use Context7 for library and API documentation before writing any code.
 - ALWAYS re-run Context7 after any test failure or runtime error before making the next edit.
 - If Context7 is unavailable (quota, network, outage), record the fallback source before proceeding (for example official docs, `go doc`, or package-local docs).
+- For instruction/policy context, use `till.get_instructions` on-demand (missing/stale/ambiguous guidance), not on every step.
+- For `till.get_instructions`, keep context bounded by default:
+  - set `doc_names` explicitly,
+  - use `max_chars_per_doc` on long docs,
+  - use `include_markdown=false` for inventory checks and `include_markdown=true` only when full text is needed.
+- Treat all project/task details and all thread comment content as markdown-first authoring surfaces.
+- In MCP calls, write markdown-formatted content for `description`, `summary`, and `body_markdown` fields.
 - Write idiomatic Go doc comments for all top-level declarations and methods in production and test code, and add inline comments for non-obvious behavior blocks (including behavior blocks in `*_test.go`).
 - Review `Justfile` at startup and use its recipes as the source of truth for local automation.
 - Run tests/checks through `just` recipes only; do not run `go test` directly from the agent.

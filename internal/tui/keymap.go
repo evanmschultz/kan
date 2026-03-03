@@ -75,8 +75,8 @@ func newKeyMap() keyMap {
 		clearFocus:       key.NewBinding(key.WithKeys("F", "shift+f"), key.WithHelp("F", "full board")),
 		multiSelect:      key.NewBinding(key.WithKeys(" ", "space"), key.WithHelp("space", "toggle select")),
 		activityLog:      key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "activity log")),
-		undo:             key.NewBinding(key.WithKeys("z"), key.WithHelp("z", "undo")),
-		redo:             key.NewBinding(key.WithKeys("Z", "shift+z"), key.WithHelp("Z", "redo")),
+		undo:             key.NewBinding(key.WithKeys("ctrl+z"), key.WithHelp("ctrl+z", "undo")),
+		redo:             key.NewBinding(key.WithKeys("ctrl+shift+z"), key.WithHelp("ctrl+shift+z", "redo")),
 	}
 }
 
@@ -86,8 +86,8 @@ func (k *keyMap) applyConfig(cfg KeyConfig) {
 	configureBinding(&k.quickActions, cfg.QuickActions, ".", "quick actions")
 	configureBinding(&k.multiSelect, cfg.MultiSelect, " ", "toggle select")
 	configureBinding(&k.activityLog, cfg.ActivityLog, "g", "activity log")
-	configureBinding(&k.undo, cfg.Undo, "z", "undo")
-	configureBinding(&k.redo, cfg.Redo, "Z", "redo")
+	configureBinding(&k.undo, cfg.Undo, "ctrl+z", "undo")
+	configureBinding(&k.redo, cfg.Redo, "ctrl+shift+z", "redo")
 }
 
 // ShortHelp handles short help.

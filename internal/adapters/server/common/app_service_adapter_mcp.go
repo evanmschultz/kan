@@ -587,7 +587,6 @@ func withMutationGuardContext(ctx context.Context, actor ActorLeaseTuple) (conte
 			return nil, "", fmt.Errorf("actor_type=user cannot be used with guarded mutation tuple: %w", ErrInvalidCaptureStateRequest)
 		}
 	}
-
 	if actorType != domain.ActorTypeUser || hasGuardTuple {
 		if agentName == "" || agentInstanceID == "" || leaseToken == "" {
 			return nil, "", fmt.Errorf("agent_name, agent_instance_id, and lease_token are required for non-user or guarded mutations: %w", ErrInvalidCaptureStateRequest)
@@ -648,7 +647,7 @@ func normalizeActorType(actorType string) domain.ActorType {
 // isValidActorType reports whether actor type values are supported by app/domain rules.
 func isValidActorType(actorType domain.ActorType) bool {
 	switch actorType {
-	case domain.ActorTypeUser, domain.ActorTypeAgent, domain.ActorTypeSystem:
+	case domain.ActorTypeUser, domain.ActorTypeAgent:
 		return true
 	default:
 		return false

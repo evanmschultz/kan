@@ -89,6 +89,13 @@ func TestWithMutationGuardContext(t *testing.T) {
 			},
 			wantInvalidErr: true,
 		},
+		{
+			name: "system actor type is rejected",
+			actor: ActorLeaseTuple{
+				ActorType: string(domain.ActorTypeSystem),
+			},
+			wantInvalidErr: true,
+		},
 	}
 
 	for _, tc := range tests {

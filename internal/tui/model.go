@@ -18,6 +18,7 @@ import (
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/atotto/clipboard"
@@ -88,6 +89,15 @@ type descriptionEditorTarget int
 const (
 	descriptionEditorTargetTask descriptionEditorTarget = iota
 	descriptionEditorTargetProject
+	descriptionEditorTargetThread
+)
+
+// descriptionEditorViewMode identifies active layout within the full-screen description editor.
+type descriptionEditorViewMode int
+
+const (
+	descriptionEditorViewModeEdit descriptionEditorViewMode = iota
+	descriptionEditorViewModePreview
 )
 
 // taskFormFields stores task-form field keys in display/update order.
@@ -132,7 +142,13 @@ const (
 	activityLogViewWindow = 14
 	// taskInfoCommentPreviewLimit caps recent comment previews in task-info read mode.
 	taskInfoCommentPreviewLimit = 5
-	defaultHighlightColor       = "212"
+	// taskInfoDetailsViewportMinHeight keeps task-info markdown details usable on short terminals.
+	taskInfoDetailsViewportMinHeight = 6
+	// taskInfoDetailsViewportMaxHeight prevents details preview from crowding other task-info sections.
+	taskInfoDetailsViewportMaxHeight = 16
+	// textEditHistoryLimit caps per-textarea undo/redo stack growth.
+	textEditHistoryLimit  = 256
+	defaultHighlightColor = "212"
 	// headerMarkText defines the boxed brand wordmark shown in the board header.
 	headerMarkText = "TILLSYN"
 	// tuiOuterHorizontalPadding keeps a small symmetric outer gutter around the whole TUI.
@@ -469,35 +485,41 @@ type Model struct {
 	// taskFormResourceRefs stages resource refs while creating or editing a task.
 	taskFormResourceRefs []domain.ResourceRef
 
-	projectPickerIndex       int
-	projectFormInputs        []textinput.Model
-	projectFormFocus         int
-	projectFormDescription   string
-	descriptionEditorBack    inputMode
-	descriptionEditorTarget  descriptionEditorTarget
-	labelsConfigInputs       []textinput.Model
-	labelsConfigFocus        int
-	labelsConfigSlug         string
-	labelsConfigBranchTaskID string
-	labelsConfigPhaseTaskID  string
-	editingProjectID         string
-	editingTaskID            string
-	taskInfoTaskID           string
-	taskInfoOriginTaskID     string
-	taskInfoSubtaskIdx       int
-	taskInfoComments         []domain.Comment
-	taskInfoCommentsError    string
-	taskFormParentID         string
-	taskFormKind             domain.WorkKind
-	taskFormScope            domain.KindAppliesTo
-	pendingProjectID         string
-	pendingFocusTaskID       string
-	pendingActivityJumpTask  string
-	pendingOpenTaskInfoID    string
-	pendingOpenActivityLog   bool
-	pendingOpenThreadTarget  domain.CommentTarget
-	pendingOpenThreadTitle   string
-	pendingOpenThreadBody    string
+	projectPickerIndex             int
+	projectFormInputs              []textinput.Model
+	projectFormFocus               int
+	projectFormDescription         string
+	descriptionEditorBack          inputMode
+	descriptionEditorTarget        descriptionEditorTarget
+	descriptionEditorMode          descriptionEditorViewMode
+	descriptionEditorPath          string
+	descriptionEditorThreadDetails bool
+	descriptionEditorUndo          []string
+	descriptionEditorRedo          []string
+	labelsConfigInputs             []textinput.Model
+	labelsConfigFocus              int
+	labelsConfigSlug               string
+	labelsConfigBranchTaskID       string
+	labelsConfigPhaseTaskID        string
+	editingProjectID               string
+	editingTaskID                  string
+	taskInfoTaskID                 string
+	taskInfoOriginTaskID           string
+	taskInfoPath                   []string
+	taskInfoSubtaskIdx             int
+	taskInfoComments               []domain.Comment
+	taskInfoCommentsError          string
+	taskFormParentID               string
+	taskFormKind                   domain.WorkKind
+	taskFormScope                  domain.KindAppliesTo
+	pendingProjectID               string
+	pendingFocusTaskID             string
+	pendingActivityJumpTask        string
+	pendingOpenTaskInfoID          string
+	pendingOpenActivityLog         bool
+	pendingOpenThreadTarget        domain.CommentTarget
+	pendingOpenThreadTitle         string
+	pendingOpenThreadBody          string
 
 	lastArchivedTaskID string
 
@@ -588,7 +610,11 @@ type Model struct {
 	threadComposerActive      bool
 	threadDetailsActive       bool
 	threadDetailsEditorActive bool
+	threadComposerUndo        []string
+	threadComposerRedo        []string
 	threadMarkdown            markdownRenderer
+	taskInfoDetails           viewport.Model
+	descriptionPreview        viewport.Model
 
 	autoRefreshInterval time.Duration
 	autoRefreshArmed    bool
@@ -749,6 +775,14 @@ func NewModel(svc Service, opts ...Option) Model {
 	descriptionEditorInput.CharLimit = 20000
 	descriptionEditorInput.ShowLineNumbers = true
 	descriptionEditorInput.SetHeight(12)
+	descriptionPreview := viewport.New()
+	descriptionPreview.SoftWrap = true
+	descriptionPreview.MouseWheelEnabled = false
+	descriptionPreview.FillHeight = true
+	taskInfoDetails := viewport.New()
+	taskInfoDetails.SoftWrap = true
+	taskInfoDetails.MouseWheelEnabled = false
+	taskInfoDetails.FillHeight = true
 	resourcePickerFilter := textinput.New()
 	resourcePickerFilter.Prompt = "filter: "
 	resourcePickerFilter.Placeholder = "type to fuzzy-filter files/dirs"
@@ -785,6 +819,8 @@ func NewModel(svc Service, opts ...Option) Model {
 		threadInput:              threadInput,
 		threadDetailsInput:       threadDetailsInput,
 		descriptionEditorInput:   descriptionEditorInput,
+		taskInfoDetails:          taskInfoDetails,
+		descriptionPreview:       descriptionPreview,
 		resourcePickerFilter:     resourcePickerFilter,
 		duePickerDateInput:       duePickerDateInput,
 		duePickerTimeInput:       duePickerTimeInput,
@@ -1095,6 +1131,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.ready = true
 		m.width = msg.Width
 		m.height = msg.Height
+		if m.mode == modeDescriptionEditor {
+			if m.descriptionEditorMode == descriptionEditorViewModeEdit {
+				m.syncDescriptionPreviewOffsetToEditor()
+			} else {
+				m.syncDescriptionEditorViewportLayout()
+			}
+		}
 		m.normalizePanelFocus()
 		return m, nil
 
@@ -1348,6 +1391,9 @@ func (m Model) View() tea.View {
 		v.MouseMode = m.activeMouseMode()
 		v.AltScreen = true
 		return v
+	}
+	if m.mode == modeDescriptionEditor {
+		return m.renderDescriptionEditorModeView()
 	}
 	if m.mode == modeThread {
 		return m.renderThreadModeView()
@@ -1652,7 +1698,7 @@ func (m Model) View() tea.View {
 
 	sections := []string{header, headerRule}
 	if path, _ := m.projectionPathWithProject(projectDisplayName(project)); path != "" {
-		sections = append(sections, statusStyle.Render("path: "+truncate(path, max(24, m.width-6))), "")
+		sections = append(sections, statusStyle.Render("path: "+collapsePathForDisplay(path, max(24, m.width-6))), "")
 	}
 	sections = append(sections, mainArea)
 	if infoLine != "" {
@@ -2579,11 +2625,18 @@ func (m *Model) startTaskDescriptionEditor(seed tea.KeyPressMsg) tea.Cmd {
 	}
 	m.descriptionEditorBack = m.mode
 	m.descriptionEditorTarget = descriptionEditorTargetTask
+	m.descriptionEditorMode = descriptionEditorViewModeEdit
+	m.descriptionEditorPath = m.descriptionEditorPathForTaskForm()
+	m.descriptionEditorThreadDetails = false
 	m.mode = modeDescriptionEditor
 	m.descriptionEditorInput.SetValue(m.taskFormDescription)
 	m.descriptionEditorInput.CursorEnd()
+	m.descriptionEditorInput.ShowLineNumbers = true
 	m.applySeedKeyToDescriptionEditor(seed)
-	m.status = "editing task description"
+	m.resetDescriptionEditorHistory()
+	m.syncDescriptionPreviewOffsetToEditor()
+	m.help.ShowAll = false
+	m.status = "editing description"
 	return m.descriptionEditorInput.Focus()
 }
 
@@ -2594,12 +2647,88 @@ func (m *Model) startProjectDescriptionEditor(seed tea.KeyPressMsg) tea.Cmd {
 	}
 	m.descriptionEditorBack = m.mode
 	m.descriptionEditorTarget = descriptionEditorTargetProject
+	m.descriptionEditorMode = descriptionEditorViewModeEdit
+	m.descriptionEditorPath = m.descriptionEditorPathForProjectForm()
+	m.descriptionEditorThreadDetails = false
 	m.mode = modeDescriptionEditor
 	m.descriptionEditorInput.SetValue(m.projectFormDescription)
 	m.descriptionEditorInput.CursorEnd()
+	m.descriptionEditorInput.ShowLineNumbers = true
 	m.applySeedKeyToDescriptionEditor(seed)
-	m.status = "editing project description"
+	m.resetDescriptionEditorHistory()
+	m.syncDescriptionPreviewOffsetToEditor()
+	m.help.ShowAll = false
+	m.status = "editing description"
 	return m.descriptionEditorInput.Focus()
+}
+
+// startThreadDescriptionEditor opens the full-screen markdown description editor for thread details.
+func (m *Model) startThreadDescriptionEditor() tea.Cmd {
+	if m == nil {
+		return nil
+	}
+	m.descriptionEditorBack = modeThread
+	m.descriptionEditorTarget = descriptionEditorTargetThread
+	m.descriptionEditorMode = descriptionEditorViewModeEdit
+	m.descriptionEditorPath = m.descriptionEditorPathForThreadTarget()
+	m.descriptionEditorThreadDetails = m.threadDetailsActive
+	m.mode = modeDescriptionEditor
+	m.threadComposerActive = false
+	m.threadInput.Blur()
+	m.descriptionEditorInput.SetValue(strings.TrimSpace(m.threadDescriptionMarkdown))
+	m.descriptionEditorInput.CursorEnd()
+	m.descriptionEditorInput.ShowLineNumbers = true
+	m.resetDescriptionEditorHistory()
+	m.syncDescriptionPreviewOffsetToEditor()
+	m.help.ShowAll = false
+	m.status = "editing description"
+	return m.descriptionEditorInput.Focus()
+}
+
+// startTaskInfoDescriptionEditor opens the full-screen markdown description editor in preview mode from task-info.
+func (m *Model) startTaskInfoDescriptionEditor(task domain.Task) tea.Cmd {
+	if m == nil {
+		return nil
+	}
+	targetType, ok := commentTargetTypeForTask(task)
+	if !ok {
+		m.status = "unsupported work-item kind for details"
+		return nil
+	}
+	target, err := domain.NormalizeCommentTarget(domain.CommentTarget{
+		ProjectID:  task.ProjectID,
+		TargetType: targetType,
+		TargetID:   task.ID,
+	})
+	if err != nil {
+		m.status = "work-item details target invalid: " + err.Error()
+		return nil
+	}
+	title := strings.TrimSpace(task.Title)
+	if title == "" {
+		title = task.ID
+	}
+	m.threadTarget = target
+	m.threadTitle = fmt.Sprintf("%s: %s", task.Kind, title)
+	m.threadDescriptionMarkdown = m.threadDescriptionForTarget(target, task.Description)
+	m.descriptionEditorBack = modeTaskInfo
+	m.descriptionEditorTarget = descriptionEditorTargetThread
+	m.descriptionEditorMode = descriptionEditorViewModePreview
+	m.descriptionEditorPath = m.descriptionEditorTaskPath(task)
+	m.descriptionEditorThreadDetails = false
+	m.mode = modeDescriptionEditor
+	m.threadComposerActive = false
+	m.threadDetailsActive = false
+	m.threadInput.Blur()
+	m.descriptionEditorInput.SetValue(strings.TrimSpace(m.threadDescriptionMarkdown))
+	m.descriptionEditorInput.MoveToBegin()
+	m.descriptionEditorInput.ShowLineNumbers = true
+	m.resetDescriptionEditorHistory()
+	m.descriptionPreview.SetYOffset(0)
+	m.syncDescriptionEditorViewportLayout()
+	m.help.ShowAll = false
+	m.status = "previewing description"
+	return nil
 }
 
 // applySeedKeyToDescriptionEditor applies one keypress that triggered markdown-editor entry.
@@ -2620,6 +2749,62 @@ func (m *Model) applySeedKeyToDescriptionEditor(seed tea.KeyPressMsg) {
 	}
 }
 
+// resetDescriptionEditorHistory clears per-session undo/redo stacks for description editing.
+func (m *Model) resetDescriptionEditorHistory() {
+	if m == nil {
+		return
+	}
+	m.descriptionEditorUndo = nil
+	m.descriptionEditorRedo = nil
+}
+
+// resetThreadComposerHistory clears per-session undo/redo stacks for comment composer editing.
+func (m *Model) resetThreadComposerHistory() {
+	if m == nil {
+		return
+	}
+	m.threadComposerUndo = nil
+	m.threadComposerRedo = nil
+}
+
+// pushTextEditHistory appends one undo checkpoint and clears redo checkpoints when text changes.
+func pushTextEditHistory(undo, redo *[]string, before, after string) {
+	if undo == nil || redo == nil || before == after {
+		return
+	}
+	*undo = append(*undo, before)
+	if len(*undo) > textEditHistoryLimit {
+		*undo = append([]string(nil), (*undo)[len(*undo)-textEditHistoryLimit:]...)
+	}
+	*redo = nil
+}
+
+// applyTextEditUndo applies one text-level undo transition and reports whether state changed.
+func applyTextEditUndo(value *string, undo, redo *[]string) bool {
+	if value == nil || undo == nil || redo == nil || len(*undo) == 0 {
+		return false
+	}
+	current := *value
+	prev := (*undo)[len(*undo)-1]
+	*undo = (*undo)[:len(*undo)-1]
+	*redo = append(*redo, current)
+	*value = prev
+	return true
+}
+
+// applyTextEditRedo applies one text-level redo transition and reports whether state changed.
+func applyTextEditRedo(value *string, undo, redo *[]string) bool {
+	if value == nil || undo == nil || redo == nil || len(*redo) == 0 {
+		return false
+	}
+	current := *value
+	next := (*redo)[len(*redo)-1]
+	*redo = (*redo)[:len(*redo)-1]
+	*undo = append(*undo, current)
+	*value = next
+	return true
+}
+
 // saveDescriptionEditor persists markdown editor content back into the active add/edit form.
 func (m *Model) saveDescriptionEditor() {
 	if m == nil {
@@ -2633,21 +2818,53 @@ func (m *Model) saveDescriptionEditor() {
 	case descriptionEditorTargetProject:
 		m.projectFormDescription = text
 		m.syncProjectFormDescriptionDisplay()
+	case descriptionEditorTargetThread:
+		m.threadDescriptionMarkdown = text
 	}
 }
 
-// closeDescriptionEditor exits markdown-description editor and returns to the previous add/edit form.
+// closeDescriptionEditor exits markdown-description editor and returns to the previous mode context.
 func (m *Model) closeDescriptionEditor(saved bool) tea.Cmd {
 	if m == nil {
 		return nil
 	}
 	back := m.descriptionEditorBack
-	if back != modeAddTask && back != modeEditTask && back != modeAddProject && back != modeEditProject {
+	if back != modeAddTask && back != modeEditTask && back != modeAddProject && back != modeEditProject && back != modeThread && back != modeTaskInfo {
 		back = modeNone
 	}
 	m.mode = back
 	m.descriptionEditorInput.Blur()
 	m.descriptionEditorBack = modeNone
+	m.descriptionEditorMode = descriptionEditorViewModeEdit
+	m.descriptionEditorPath = ""
+	m.descriptionPreview.SetYOffset(0)
+	m.resetDescriptionEditorHistory()
+	threadDetailsActive := m.descriptionEditorThreadDetails
+	m.descriptionEditorThreadDetails = false
+	if back == modeThread || back == modeTaskInfo {
+		m.threadDetailsActive = threadDetailsActive
+		if saved {
+			if back == modeTaskInfo {
+				m.status = "saving task details..."
+			} else {
+				m.status = "saving thread details..."
+			}
+			return m.updateThreadDescriptionCmd(strings.TrimSpace(m.threadDescriptionMarkdown))
+		}
+		if back == modeTaskInfo {
+			m.status = "task info"
+			if task, ok := m.taskInfoTask(); ok {
+				m.syncTaskInfoDetailsViewport(task)
+			}
+			return nil
+		}
+		if m.threadDetailsActive {
+			m.status = "thread details"
+		} else {
+			m.status = "thread read mode"
+		}
+		return nil
+	}
 	if saved {
 		m.status = "description updated"
 	} else {
@@ -4527,6 +4744,11 @@ func (m Model) jumpToDependencyCandidateTask() (tea.Model, tea.Cmd) {
 	m.pendingFocusTaskID = taskID
 	m.mode = modeTaskInfo
 	m.taskInfoTaskID = taskID
+	m.trackTaskInfoPath(taskID)
+	m.taskInfoDetails.SetYOffset(0)
+	if task, ok := m.taskByID(taskID); ok {
+		m.syncTaskInfoDetailsViewport(task)
+	}
 	m.dependencyInput.Blur()
 	m.status = "jumping to dependency"
 	return m, m.loadData
@@ -5754,7 +5976,10 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.toggleMouseSelectionMode()
 		return m, nil
 	}
-	if key.Matches(msg, m.keys.toggleHelp) {
+	helpToggleDisabled := m.mode == modeDescriptionEditor &&
+		m.descriptionEditorMode == descriptionEditorViewModeEdit &&
+		key.Matches(msg, m.keys.toggleHelp)
+	if key.Matches(msg, m.keys.toggleHelp) && !helpToggleDisabled {
 		m.toggleHelpOverlay()
 		return m, nil
 	}
@@ -5800,21 +6025,90 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.mode == modeDescriptionEditor {
-		if handled, status := applyClipboardShortcutToTextArea(msg, &m.descriptionEditorInput); handled {
-			m.status = status
-			return m, nil
+		if m.descriptionEditorMode == descriptionEditorViewModeEdit {
+			if handled, status := applyClipboardShortcutToTextArea(msg, &m.descriptionEditorInput); handled {
+				m.status = status
+				m.syncDescriptionPreviewOffsetToEditor()
+				return m, nil
+			}
+			switch {
+			case key.Matches(msg, m.keys.undo):
+				current := m.descriptionEditorInput.Value()
+				if !applyTextEditUndo(&current, &m.descriptionEditorUndo, &m.descriptionEditorRedo) {
+					m.status = "nothing to undo"
+					return m, nil
+				}
+				m.descriptionEditorInput.SetValue(current)
+				m.descriptionEditorInput.CursorEnd()
+				m.syncDescriptionPreviewOffsetToEditor()
+				m.status = "description undo"
+				return m, nil
+			case key.Matches(msg, m.keys.redo):
+				current := m.descriptionEditorInput.Value()
+				if !applyTextEditRedo(&current, &m.descriptionEditorUndo, &m.descriptionEditorRedo) {
+					m.status = "nothing to redo"
+					return m, nil
+				}
+				m.descriptionEditorInput.SetValue(current)
+				m.descriptionEditorInput.CursorEnd()
+				m.syncDescriptionPreviewOffsetToEditor()
+				m.status = "description redo"
+				return m, nil
+			case msg.Code == tea.KeyEscape || msg.String() == "esc":
+				return m, m.closeDescriptionEditor(false)
+			case msg.String() == "ctrl+s":
+				m.saveDescriptionEditor()
+				return m, m.closeDescriptionEditor(true)
+			case msg.Code == tea.KeyTab || msg.String() == "tab" || msg.String() == "ctrl+i":
+				m.descriptionEditorMode = descriptionEditorViewModePreview
+				m.descriptionEditorInput.Blur()
+				m.syncDescriptionPreviewOffsetToEditor()
+				m.help.ShowAll = false
+				m.status = "previewing description"
+				return m, nil
+			default:
+				var cmd tea.Cmd
+				before := m.descriptionEditorInput.Value()
+				m.descriptionEditorInput, cmd = m.descriptionEditorInput.Update(msg)
+				_ = scrubTextAreaTerminalArtifacts(&m.descriptionEditorInput)
+				pushTextEditHistory(&m.descriptionEditorUndo, &m.descriptionEditorRedo, before, m.descriptionEditorInput.Value())
+				m.syncDescriptionPreviewOffsetToEditor()
+				return m, cmd
+			}
 		}
+		m.syncDescriptionEditorViewportLayout()
 		switch {
 		case msg.Code == tea.KeyEscape || msg.String() == "esc":
 			return m, m.closeDescriptionEditor(false)
 		case msg.String() == "ctrl+s":
 			m.saveDescriptionEditor()
 			return m, m.closeDescriptionEditor(true)
+		case msg.Code == tea.KeyTab || msg.String() == "tab" || msg.String() == "ctrl+i":
+			m.descriptionEditorMode = descriptionEditorViewModeEdit
+			m.status = "editing description"
+			m.syncDescriptionPreviewOffsetToEditor()
+			m.help.ShowAll = false
+			return m, m.descriptionEditorInput.Focus()
+		case msg.String() == "j" || msg.String() == "down":
+			m.descriptionPreview.ScrollDown(1)
+			return m, nil
+		case msg.String() == "k" || msg.String() == "up":
+			m.descriptionPreview.ScrollUp(1)
+			return m, nil
+		case msg.Code == tea.KeyPgDown || msg.String() == "pgdown":
+			m.descriptionPreview.PageDown()
+			return m, nil
+		case msg.Code == tea.KeyPgUp || msg.String() == "pgup":
+			m.descriptionPreview.PageUp()
+			return m, nil
+		case msg.String() == "home":
+			m.descriptionPreview.GotoTop()
+			return m, nil
+		case msg.String() == "end":
+			m.descriptionPreview.GotoBottom()
+			return m, nil
 		default:
-			var cmd tea.Cmd
-			m.descriptionEditorInput, cmd = m.descriptionEditorInput.Update(msg)
-			_ = scrubTextAreaTerminalArtifacts(&m.descriptionEditorInput)
-			return m, cmd
+			return m, nil
 		}
 	}
 
@@ -5825,57 +6119,25 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		}
-		if m.threadDetailsEditorActive {
-			if handled, status := applyClipboardShortcutToTextArea(msg, &m.threadDetailsInput); handled {
-				m.status = status
-				return m, nil
-			}
-		}
 		updateThreadComposerInput := func() (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
+			before := m.threadInput.Value()
 			m.threadInput, cmd = m.threadInput.Update(msg)
 			_ = scrubTextAreaTerminalArtifacts(&m.threadInput)
+			pushTextEditHistory(&m.threadComposerUndo, &m.threadComposerRedo, before, m.threadInput.Value())
 			return m, cmd
-		}
-		updateThreadDetailsInput := func() (tea.Model, tea.Cmd) {
-			var cmd tea.Cmd
-			m.threadDetailsInput, cmd = m.threadDetailsInput.Update(msg)
-			_ = scrubTextAreaTerminalArtifacts(&m.threadDetailsInput)
-			return m, cmd
-		}
-		startThreadDetailsEditor := func() (tea.Model, tea.Cmd) {
-			m.threadDetailsEditorActive = true
-			m.threadComposerActive = false
-			m.threadInput.Blur()
-			m.threadDetailsInput.SetValue(strings.TrimSpace(m.threadDescriptionMarkdown))
-			m.threadDetailsInput.CursorEnd()
-			m.status = "editing thread details"
-			return m, m.threadDetailsInput.Focus()
 		}
 		switch {
-		case m.threadDetailsEditorActive && (msg.Code == tea.KeyEscape || msg.String() == "esc"):
-			m.threadDetailsEditorActive = false
-			m.threadDetailsInput.Blur()
-			m.status = "thread details"
-			return m, nil
-		case m.threadDetailsEditorActive && msg.String() == "ctrl+s":
-			description := strings.TrimSpace(m.threadDetailsInput.Value())
-			m.threadDescriptionMarkdown = description
-			m.threadDetailsEditorActive = false
-			m.threadDetailsInput.Blur()
-			m.status = "saving thread details..."
-			return m, m.updateThreadDescriptionCmd(description)
-		case m.threadDetailsEditorActive:
-			return updateThreadDetailsInput()
 		case msg.String() == "i":
 			if m.threadComposerActive {
 				return updateThreadComposerInput()
 			}
 			if m.threadDetailsActive {
-				return startThreadDetailsEditor()
+				return m, m.startThreadDescriptionEditor()
 			}
 			m.threadDetailsActive = false
 			m.threadComposerActive = true
+			m.resetThreadComposerHistory()
 			m.status = "comment composer"
 			return m, m.threadInput.Focus()
 		case msg.String() == "e":
@@ -5896,16 +6158,18 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			if m.threadDetailsActive {
-				return startThreadDetailsEditor()
+				return m, m.startThreadDescriptionEditor()
 			}
 			m.threadDetailsActive = false
 			m.threadComposerActive = true
+			m.resetThreadComposerHistory()
 			m.status = "comment composer"
 			return m, m.threadInput.Focus()
 		case msg.Code == tea.KeyEscape || msg.String() == "esc":
 			if m.threadComposerActive {
 				m.threadComposerActive = false
 				m.threadInput.Blur()
+				m.resetThreadComposerHistory()
 				m.status = "thread read mode"
 				return m, nil
 			}
@@ -5918,7 +6182,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.threadDetailsInput.Blur()
 			m.threadPendingCommentBody = ""
 			m.threadDetailsActive = false
-			m.threadDetailsEditorActive = false
+			m.resetThreadComposerHistory()
 			if m.threadBackMode == modeTaskInfo {
 				m.mode = modeTaskInfo
 				m.loadTaskInfoComments(m.taskInfoTaskID)
@@ -5934,6 +6198,32 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			m.status = "reloading thread..."
 			return m, m.loadThreadCommentsCmd(m.threadTarget)
+		case key.Matches(msg, m.keys.undo):
+			if !m.threadComposerActive {
+				return m, nil
+			}
+			current := m.threadInput.Value()
+			if !applyTextEditUndo(&current, &m.threadComposerUndo, &m.threadComposerRedo) {
+				m.status = "nothing to undo"
+				return m, nil
+			}
+			m.threadInput.SetValue(current)
+			m.threadInput.CursorEnd()
+			m.status = "comment undo"
+			return m, nil
+		case key.Matches(msg, m.keys.redo):
+			if !m.threadComposerActive {
+				return m, nil
+			}
+			current := m.threadInput.Value()
+			if !applyTextEditRedo(&current, &m.threadComposerUndo, &m.threadComposerRedo) {
+				m.status = "nothing to redo"
+				return m, nil
+			}
+			m.threadInput.SetValue(current)
+			m.threadInput.CursorEnd()
+			m.status = "comment redo"
+			return m, nil
 		case msg.Code == tea.KeyPgUp || msg.String() == "pgup":
 			if m.threadComposerActive {
 				return updateThreadComposerInput()
@@ -5971,6 +6261,7 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.threadPendingCommentBody = body
 			m.threadInput.SetValue("")
 			m.threadInput.CursorEnd()
+			m.resetThreadComposerHistory()
 			m.status = "posting comment..."
 			return m, m.createThreadCommentCmd(body)
 		case msg.Code == tea.KeyEnter || msg.String() == "enter":
@@ -5996,77 +6287,93 @@ func (m Model) handleInputModeKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.closeTaskInfo("task info unavailable")
 			return m, nil
 		}
+		m.syncTaskInfoDetailsViewport(task)
 		subtasks := m.subtasksForParent(task.ID)
-		switch msg.String() {
-		case "esc":
-			originID := strings.TrimSpace(m.taskInfoOriginTaskID)
-			if originID != "" && originID != task.ID {
-				if _, ok := m.taskByID(originID); ok {
-					m.taskInfoTaskID = originID
-					m.taskInfoSubtaskIdx = 0
-					m.loadTaskInfoComments(originID)
-					m.status = "task info"
-					return m, nil
-				}
-			}
-			if m.stepBackTaskInfo(task) {
+		switch {
+		case msg.Code == tea.KeyEscape || msg.String() == "esc":
+			if m.stepBackTaskInfoPath() {
 				return m, nil
 			}
 			m.closeTaskInfo("ready")
 			return m, nil
-		case "i":
+		case msg.String() == "i":
 			m.closeTaskInfo("ready")
 			return m, nil
-		case "j", "down":
+		case msg.Code == tea.KeyPgDown || msg.String() == "pgdown" || msg.String() == "ctrl+d":
+			step := max(1, m.taskInfoDetails.Height()/2)
+			m.taskInfoDetails.ScrollDown(step)
+			return m, nil
+		case msg.Code == tea.KeyPgUp || msg.String() == "pgup" || msg.String() == "ctrl+u":
+			step := max(1, m.taskInfoDetails.Height()/2)
+			m.taskInfoDetails.ScrollUp(step)
+			return m, nil
+		case msg.String() == "home":
+			m.taskInfoDetails.GotoTop()
+			return m, nil
+		case msg.String() == "end":
+			m.taskInfoDetails.GotoBottom()
+			return m, nil
+		case msg.String() == "d":
+			return m, m.startTaskInfoDescriptionEditor(task)
+		case msg.String() == "j" || msg.String() == "down":
+			m.taskInfoDetails.ScrollDown(1)
 			if len(subtasks) > 0 && m.taskInfoSubtaskIdx < len(subtasks)-1 {
 				m.taskInfoSubtaskIdx++
 			}
 			return m, nil
-		case "k", "up":
+		case msg.String() == "k" || msg.String() == "up":
+			m.taskInfoDetails.ScrollUp(1)
 			if m.taskInfoSubtaskIdx > 0 {
 				m.taskInfoSubtaskIdx--
 			}
 			return m, nil
-		case "enter":
+		case msg.Code == tea.KeyEnter || msg.String() == "enter":
 			if len(subtasks) == 0 {
 				return m, nil
 			}
 			subtask := subtasks[clamp(m.taskInfoSubtaskIdx, 0, len(subtasks)-1)]
 			m.taskInfoTaskID = subtask.ID
+			m.trackTaskInfoPath(subtask.ID)
 			m.taskInfoSubtaskIdx = 0
+			m.taskInfoDetails.SetYOffset(0)
 			m.loadTaskInfoComments(subtask.ID)
+			m.syncTaskInfoDetailsViewport(subtask)
 			m.status = "subtask info"
 			return m, nil
-		case "backspace", "h", "left":
+		case msg.Code == tea.KeyBackspace || msg.String() == "backspace" || msg.String() == "h" || msg.String() == "left":
 			parentID := strings.TrimSpace(task.ParentID)
 			if parentID == "" {
 				return m, nil
 			}
-			if _, ok := m.taskByID(parentID); !ok {
+			parent, ok := m.taskByID(parentID)
+			if !ok {
 				return m, nil
 			}
 			m.taskInfoTaskID = parentID
+			m.trackTaskInfoPath(parentID)
 			m.taskInfoSubtaskIdx = 0
+			m.taskInfoDetails.SetYOffset(0)
 			m.loadTaskInfoComments(parentID)
+			m.syncTaskInfoDetailsViewport(parent)
 			m.status = "parent task info"
 			return m, nil
-		case "e":
+		case msg.String() == "e":
 			return m, m.startTaskForm(&task)
-		case "s":
+		case msg.String() == "s":
 			return m, m.startSubtaskForm(task)
-		case "b":
+		case msg.String() == "b":
 			return m, m.startDependencyInspectorFromTaskInfo(task)
-		case "c":
+		case msg.String() == "c":
 			return m.startTaskThread(task, modeTaskInfo)
-		case "r", "R":
+		case msg.String() == "r" || msg.String() == "R":
 			return m, m.startResourcePicker(task.ID, modeTaskInfo)
-		case " ", "space":
+		case msg.String() == " " || msg.String() == "space":
 			return m.toggleFocusedSubtaskCompletion(task)
-		case "[":
+		case msg.String() == "[":
 			return m.moveTaskIDs([]string{task.ID}, -1, "move task", task.Title, false)
-		case "]":
+		case msg.String() == "]":
 			return m.moveTaskIDs([]string{task.ID}, 1, "move task", task.Title, false)
-		case "f":
+		case msg.String() == "f":
 			if !m.activateSubtreeFocus(task.ID) {
 				return m, nil
 			}
@@ -8614,12 +8921,56 @@ func (m Model) handleMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 	if m.help.ShowAll {
 		return m, nil
 	}
+	if m.mode == modeDescriptionEditor {
+		scrollDelta := 3
+		if m.descriptionEditorMode == descriptionEditorViewModePreview {
+			m.syncDescriptionEditorViewportLayout()
+			switch msg.Button {
+			case tea.MouseWheelUp:
+				m.descriptionPreview.ScrollUp(scrollDelta)
+			case tea.MouseWheelDown:
+				m.descriptionPreview.ScrollDown(scrollDelta)
+			default:
+				return m, nil
+			}
+			return m, nil
+		}
+		switch msg.Button {
+		case tea.MouseWheelUp:
+			for i := 0; i < scrollDelta; i++ {
+				m.descriptionEditorInput.CursorUp()
+			}
+		case tea.MouseWheelDown:
+			for i := 0; i < scrollDelta; i++ {
+				m.descriptionEditorInput.CursorDown()
+			}
+		default:
+			return m, nil
+		}
+		m.syncDescriptionPreviewOffsetToEditor()
+		return m, nil
+	}
 	if m.mode == modeThread {
 		switch msg.Button {
 		case tea.MouseWheelUp:
 			m.threadScroll = max(0, m.threadScroll-3)
 		case tea.MouseWheelDown:
 			m.threadScroll += 3
+		}
+		return m, nil
+	}
+	if m.mode == modeTaskInfo {
+		task, ok := m.taskInfoTask()
+		if !ok {
+			m.closeTaskInfo("task info unavailable")
+			return m, nil
+		}
+		m.syncTaskInfoDetailsViewport(task)
+		switch msg.Button {
+		case tea.MouseWheelUp:
+			m.taskInfoDetails.ScrollUp(3)
+		case tea.MouseWheelDown:
+			m.taskInfoDetails.ScrollDown(3)
 		}
 		return m, nil
 	}
@@ -11002,7 +11353,7 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 			"/ search; p project picker; : command palette; . quick actions",
 			panelLine,
 			"ctrl+y toggles text selection mode; ctrl+c/ctrl+v copy/paste in text inputs",
-			"z undo; Z redo; g activity log; q quit",
+			"ctrl+z undo; ctrl+shift+z redo; g activity log; q quit",
 		}
 	case modeAddTask:
 		return "new task", []string{
@@ -11053,8 +11404,10 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 		}
 	case modeTaskInfo:
 		return "task info", []string{
-			"j/k selects subtasks; space toggles selected subtask completion",
+			"j/k and up/down scroll details and move subtask cursor",
 			"enter opens selected subtask; backspace moves to parent",
+			"pgup/pgdown, home/end, ctrl+u/ctrl+d, or mouse wheel scrolls details",
+			"d opens full-screen details preview; tab toggles edit mode there",
 			"e edit; s create subtask; c thread view",
 			"b dependency inspector; r attach resource",
 			"[ / ] move task between columns; f focus subtree; esc back/close",
@@ -11075,10 +11428,10 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 		}
 	case modeDescriptionEditor:
 		return "description editor", []string{
-			"full markdown editor with live preview",
-			"ctrl+s saves description back to the form",
-			"esc cancels editor changes",
-			"enter inserts newline",
+			"tab toggles edit and preview layouts",
+			"edit mode: full markdown editor with live preview and synced scrolling",
+			"preview mode: full-screen rendered markdown with scrolling",
+			"ctrl+s saves description; esc cancels editor changes",
 		}
 	case modeSearchResults:
 		return "search results", []string{
@@ -11112,7 +11465,7 @@ func (m Model) helpOverlayScreenTitleAndLines() (string, []string) {
 	case modeActivityLog:
 		return "activity log", []string{
 			"esc closes activity log",
-			"z undo and Z redo remain available",
+			"ctrl+z undo and ctrl+shift+z redo remain available",
 		}
 	case modeActivityEventInfo:
 		return "activity event", []string{
@@ -11343,20 +11696,24 @@ func (m *Model) loadTaskInfoComments(taskID string) {
 	m.taskInfoComments = append([]domain.Comment(nil), comments...)
 }
 
-// openTaskInfo enters task-info mode and stores the origin task for contextual esc back behavior.
+// openTaskInfo enters task-info mode and initializes traversal state for esc path retrace behavior.
 func (m *Model) openTaskInfo(taskID string, status string) bool {
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
 		return false
 	}
-	if _, ok := m.taskByID(taskID); !ok {
+	task, ok := m.taskByID(taskID)
+	if !ok {
 		return false
 	}
 	m.mode = modeTaskInfo
 	m.taskInfoTaskID = taskID
 	m.taskInfoOriginTaskID = taskID
+	m.taskInfoPath = []string{taskID}
 	m.taskInfoSubtaskIdx = 0
+	m.taskInfoDetails.SetYOffset(0)
 	m.loadTaskInfoComments(taskID)
+	m.syncTaskInfoDetailsViewport(task)
 	if strings.TrimSpace(status) == "" {
 		status = "task info"
 	}
@@ -11364,17 +11721,117 @@ func (m *Model) openTaskInfo(taskID string, status string) bool {
 	return true
 }
 
-// closeTaskInfo exits task-info mode and clears tracked origin/task ids.
+// closeTaskInfo exits task-info mode and clears tracked traversal/task state.
 func (m *Model) closeTaskInfo(status string) {
 	m.mode = modeNone
 	m.taskInfoTaskID = ""
 	m.taskInfoOriginTaskID = ""
+	m.taskInfoPath = nil
 	m.taskInfoSubtaskIdx = 0
+	m.taskInfoDetails.SetYOffset(0)
 	m.clearTaskInfoComments()
 	if strings.TrimSpace(status) == "" {
 		status = "ready"
 	}
 	m.status = status
+}
+
+// taskInfoOverlayBoxWidth resolves task-info modal width bounds from the available terminal width.
+func taskInfoOverlayBoxWidth(maxWidth int) int {
+	boxWidth := 96
+	if maxWidth > 0 {
+		boxWidth = clamp(maxWidth, 40, 112)
+	}
+	return boxWidth
+}
+
+// taskInfoDetailsHeight resolves the scrollable markdown-details viewport height in task-info mode.
+func (m Model) taskInfoDetailsHeight() int {
+	if m.height <= 0 {
+		return 10
+	}
+	return clamp(m.height/3, taskInfoDetailsViewportMinHeight, taskInfoDetailsViewportMaxHeight)
+}
+
+// taskInfoDescriptionMarkdown renders task description markdown for the task-info details viewport.
+func (m Model) taskInfoDescriptionMarkdown(task domain.Task, width int) string {
+	description := strings.TrimSpace(task.Description)
+	if description == "" {
+		return "(no description)"
+	}
+	return strings.TrimSpace(m.threadMarkdown.render(description, max(20, width)))
+}
+
+// taskInfoDescriptionViewport builds the bounded markdown-details viewport for task-info rendering.
+func (m Model) taskInfoDescriptionViewport(task domain.Task, boxWidth int) viewport.Model {
+	contentWidth := max(24, boxWidth-8)
+	vp := m.taskInfoDetails
+	vp.SetWidth(contentWidth)
+	vp.SetHeight(max(1, m.taskInfoDetailsHeight()))
+	vp.SetContent(m.taskInfoDescriptionMarkdown(task, contentWidth))
+	return vp
+}
+
+// syncTaskInfoDetailsViewport refreshes markdown-details viewport dimensions/content after task/size changes.
+func (m *Model) syncTaskInfoDetailsViewport(task domain.Task) {
+	if m == nil {
+		return
+	}
+	boxWidth := taskInfoOverlayBoxWidth(max(0, m.width-8))
+	contentWidth := max(24, boxWidth-8)
+	m.taskInfoDetails.SetWidth(contentWidth)
+	m.taskInfoDetails.SetHeight(max(1, m.taskInfoDetailsHeight()))
+	m.taskInfoDetails.SetContent(m.taskInfoDescriptionMarkdown(task, contentWidth))
+}
+
+// trackTaskInfoPath appends one task id to the modal traversal path, trimming loops when revisiting ancestors.
+func (m *Model) trackTaskInfoPath(taskID string) {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return
+	}
+	if len(m.taskInfoPath) == 0 {
+		m.taskInfoPath = []string{taskID}
+		return
+	}
+	last := strings.TrimSpace(m.taskInfoPath[len(m.taskInfoPath)-1])
+	if last == taskID {
+		return
+	}
+	for idx := len(m.taskInfoPath) - 2; idx >= 0; idx-- {
+		if strings.TrimSpace(m.taskInfoPath[idx]) == taskID {
+			m.taskInfoPath = append([]string(nil), m.taskInfoPath[:idx+1]...)
+			return
+		}
+	}
+	m.taskInfoPath = append(m.taskInfoPath, taskID)
+}
+
+// stepBackTaskInfoPath retraces task-info modal history one step when possible.
+func (m *Model) stepBackTaskInfoPath() bool {
+	if len(m.taskInfoPath) <= 1 {
+		return false
+	}
+	for len(m.taskInfoPath) > 1 {
+		m.taskInfoPath = append([]string(nil), m.taskInfoPath[:len(m.taskInfoPath)-1]...)
+		prevID := strings.TrimSpace(m.taskInfoPath[len(m.taskInfoPath)-1])
+		if prevID == "" {
+			continue
+		}
+		if _, ok := m.taskByID(prevID); !ok {
+			continue
+		}
+		m.taskInfoTaskID = prevID
+		m.taskInfoSubtaskIdx = 0
+		m.taskInfoDetails.SetYOffset(0)
+		m.loadTaskInfoComments(prevID)
+		m.status = "task info"
+		if task, ok := m.taskByID(prevID); ok {
+			m.syncTaskInfoDetailsViewport(task)
+		}
+		return true
+	}
+	return false
 }
 
 // stepBackTaskInfo moves task-info focus to the parent task when available.
@@ -11398,6 +11855,32 @@ func (m *Model) stepBackTaskInfo(task domain.Task) bool {
 	}
 	m.status = "parent task info"
 	return true
+}
+
+// taskIsAncestor reports whether ancestorID is in taskID's parent chain (or equal to taskID).
+func (m Model) taskIsAncestor(ancestorID, taskID string) bool {
+	ancestorID = strings.TrimSpace(ancestorID)
+	taskID = strings.TrimSpace(taskID)
+	if ancestorID == "" || taskID == "" {
+		return false
+	}
+	visited := map[string]struct{}{}
+	currentID := taskID
+	for currentID != "" {
+		if currentID == ancestorID {
+			return true
+		}
+		if _, seen := visited[currentID]; seen {
+			return false
+		}
+		visited[currentID] = struct{}{}
+		task, ok := m.taskByID(currentID)
+		if !ok {
+			return false
+		}
+		currentID = strings.TrimSpace(task.ParentID)
+	}
+	return false
 }
 
 // subtasksForParent returns direct subtask children for a parent task.
@@ -11753,8 +12236,11 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(accent).
 			Padding(0, 1)
+		pathMaxWidth := max(24, m.width-14)
 		if maxWidth > 0 {
-			style = style.Width(clamp(maxWidth, 54, 110))
+			boxWidth := clamp(maxWidth, 54, 110)
+			style = style.Width(boxWidth)
+			pathMaxWidth = max(24, boxWidth-12)
 		}
 		titleStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
 		hintStyle := lipgloss.NewStyle().Foreground(muted)
@@ -11765,6 +12251,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 			operation = "update"
 		}
 		nodeLabel, pathLabel := m.activityEventTargetDetails(entry)
+		pathLabel = collapsePathForDisplay(pathLabel, pathMaxWidth)
 		lines := []string{
 			titleStyle.Render("Activity Event"),
 			hintStyle.Render("owner: " + string(actorType) + " • " + owner),
@@ -11794,10 +12281,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		if !ok {
 			return ""
 		}
-		boxWidth := 96
-		if maxWidth > 0 {
-			boxWidth = clamp(maxWidth, 40, 112)
-		}
+		boxWidth := taskInfoOverlayBoxWidth(maxWidth)
 		boxStyle := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(accent).
@@ -11830,14 +12314,11 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		}
 
 		lines = append(lines, "")
-		lines = append(lines, hintStyle.Render("details"))
-		description := strings.TrimSpace(task.Description)
-		if description == "" {
-			lines = append(lines, hintStyle.Render("(no description)"))
-		} else {
-			rendered := m.threadMarkdown.render(description, contentWidth)
-			lines = append(lines, splitThreadMarkdownLines(rendered)...)
-		}
+		detailsViewport := m.taskInfoDescriptionViewport(task, boxWidth)
+		detailsScroll := int(detailsViewport.ScrollPercent() * 100)
+		lines = append(lines, hintStyle.Render(fmt.Sprintf("details (%d%%)", detailsScroll)))
+		lines = append(lines, detailsViewport.View())
+		lines = append(lines, hintStyle.Render("pgup/pgdown or mouse wheel scroll details • d full-screen details"))
 
 		subtasks := m.subtasksForParent(task.ID)
 		if len(subtasks) > 0 {
@@ -11873,7 +12354,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 				line := fmt.Sprintf("%s%s %s %s", prefix, check, title, hintStyle.Render(strings.Join(metaParts, " • ")))
 				lines = append(lines, line)
 			}
-			lines = append(lines, hintStyle.Render("j/k choose • space toggle complete • enter open subtask • backspace parent"))
+			lines = append(lines, hintStyle.Render("j/k or up/down scroll details + move subtask cursor • space toggle complete • enter open subtask • backspace parent"))
 		}
 		inherited := m.labelSourcesForTask(task)
 		lines = append(lines, "")
@@ -11966,7 +12447,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 			}
 		}
 		lines = append(lines, "")
-		lines = append(lines, hintStyle.Render("e edit task • c thread read mode • [ / ] move • b deps inspector • r attach resource • s subtask • f focus subtree • esc back/close"))
+		lines = append(lines, hintStyle.Render("d details preview • e edit task • c thread read mode • [ / ] move • b deps inspector • r attach resource • s subtask • f focus subtree • esc back/close"))
 		return boxStyle.Render(strings.Join(lines, "\n"))
 
 	case modeBootstrapSettings:
@@ -12343,7 +12824,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 				if label, ok := canonicalSearchStateLabels[strings.TrimSpace(strings.ToLower(candidate.Match.StateID))]; ok {
 					stateName = label
 				}
-				row := fmt.Sprintf("%s[%s%s] %s • %s", cursor, depMark, blockMark, truncate(candidate.Match.Task.Title, 32), truncate(candidate.Path, 52))
+				row := fmt.Sprintf("%s[%s%s] %s • %s", cursor, depMark, blockMark, truncate(candidate.Match.Task.Title, 32), collapsePathForDisplay(candidate.Path, 52))
 				if idx == m.dependencyIndex && m.dependencyFocus == 4 {
 					row = activeRowStyle.Render(row)
 				}
@@ -12373,7 +12854,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 			lines = append(lines, "")
 			lines = append(lines, hintStyle.Render("details"))
 			lines = append(lines, hintStyle.Render("id: "+details.ID))
-			lines = append(lines, hintStyle.Render("path: "+truncate(candidate.Path, 86)))
+			lines = append(lines, hintStyle.Render("path: "+collapsePathForDisplay(candidate.Path, 86)))
 			lines = append(lines, hintStyle.Render("state: "+stateText+" • kind: "+string(details.Kind)))
 			lines = append(lines, hintStyle.Render("description: "+truncate(description, 86)))
 		}
@@ -12565,54 +13046,7 @@ func (m Model) renderModeOverlay(accent, muted, dim color.Color, helpStyle lipgl
 		return style.Render(strings.Join(lines, "\n"))
 
 	case modeDescriptionEditor:
-		width := clamp(maxWidth, 72, 120)
-		if maxWidth <= 0 {
-			width = 96
-		}
-		editorWidth := max(32, (width-1)/2)
-		previewWidth := max(32, width-editorWidth-1)
-		editor := m.descriptionEditorInput
-		editor.SetWidth(max(24, editorWidth-4))
-		editor.SetHeight(14)
-		_ = editor.Focus()
-		targetLabel := "Task Description"
-		if m.descriptionEditorTarget == descriptionEditorTargetProject {
-			targetLabel = "Project Description"
-		}
-		titleStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
-		hintStyle := lipgloss.NewStyle().Foreground(muted)
-
-		editorPanel := lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(accent).
-			Padding(0, 1).
-			Width(editorWidth).
-			Render(titleStyle.Render("Editor") + "\n" + editor.View())
-
-		previewMarkdown := strings.TrimSpace(editor.Value())
-		if previewMarkdown == "" {
-			previewMarkdown = "(empty description)"
-		}
-		previewContent := m.threadMarkdown.render(previewMarkdown, max(22, previewWidth-4))
-		previewPanel := lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(dim).
-			Padding(0, 1).
-			Width(previewWidth).
-			Render(titleStyle.Render("Preview (Glamour)") + "\n" + fitLines(strings.TrimSpace(previewContent), 14))
-
-		workspace := lipgloss.JoinHorizontal(lipgloss.Top, editorPanel, lipgloss.NewStyle().MarginLeft(1).Render(previewPanel))
-		container := lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(accent).
-			Padding(0, 1).
-			Width(width)
-		return container.Render(strings.Join([]string{
-			titleStyle.Render(targetLabel + " Editor"),
-			hintStyle.Render("ctrl+s save • esc cancel • enter newline"),
-			"",
-			workspace,
-		}, "\n"))
+		return ""
 
 	case modeAddTask, modeSearch, modeRenameTask, modeEditTask, modeAddProject, modeEditProject, modeLabelsConfig, modeHighlightColor:
 		boxStyle := lipgloss.NewStyle().
@@ -13009,7 +13443,7 @@ func (m Model) modePrompt() string {
 	case modeProjectPicker:
 		return "project picker: j/k select, enter choose, N new project, A archived toggle, esc cancel"
 	case modeTaskInfo:
-		return "task info: e edit, s subtask, c thread, [ / ] move, space toggle subtask complete, b deps inspector, r attach, esc back/close"
+		return "task info: d details preview, j/k and arrows details scroll, pgup/pgdown/home/end/ctrl+u/ctrl+d scroll, e edit, s subtask, c thread, [ / ] move, space toggle subtask complete, b deps inspector, r attach, esc back/close"
 	case modeAddProject:
 		return "new project: enter save, esc cancel"
 	case modeEditProject:
@@ -13043,7 +13477,7 @@ func (m Model) modePrompt() string {
 	case modeDependencyInspector:
 		return "deps inspector: tab focus, d/b toggle, x switch active, enter jump, a apply, esc cancel"
 	case modeDescriptionEditor:
-		return "description editor: ctrl+s save, esc cancel, enter newline"
+		return "description editor: tab preview/edit, ctrl+s save, esc cancel"
 	case modeThread:
 		return "thread: read mode by default; e details; i compose (or details editor); enter edit-target from details; ctrl+s post/save in editor; tab/esc leave composer; pgup/pgdown scroll; ctrl+r reload"
 	default:

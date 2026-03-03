@@ -1,0 +1,394 @@
+package tui
+
+import (
+	"fmt"
+	"strings"
+
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+	"github.com/hylla/tillsyn/internal/domain"
+)
+
+// descriptionEditorLayoutMetrics stores rendered dimensions for description-editor panels.
+type descriptionEditorLayoutMetrics struct {
+	layoutWidth int
+
+	// Preview-mode metrics.
+	previewModePanelContentHeight int
+	previewModeBodyHeight         int
+
+	// Edit-mode metrics.
+	splitVertically           bool
+	editorWidth               int
+	previewWidth              int
+	editorPanelContentHeight  int
+	previewPanelContentHeight int
+	editorBodyHeight          int
+	previewBodyHeight         int
+}
+
+// descriptionEditorFrame stores single-line header/footer text after width clamping.
+type descriptionEditorFrame struct {
+	header string
+	path   string
+	footer string
+	status string
+}
+
+// renderDescriptionEditorModeView renders the dedicated full-screen description editor surface.
+func (m Model) renderDescriptionEditorModeView() tea.View {
+	accent := lipgloss.Color("62")
+	if project, ok := m.currentProject(); ok {
+		accent = projectAccentColor(project)
+	}
+	muted := lipgloss.Color("241")
+	dim := lipgloss.Color("239")
+
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("252"))
+	hintStyle := lipgloss.NewStyle().Foreground(muted)
+	statusStyle := lipgloss.NewStyle().Foreground(dim)
+	sectionTitleStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
+
+	layout := m.descriptionEditorLayout()
+	frame := m.descriptionEditorFrameText(layout.layoutWidth)
+	header := titleStyle.Render(frame.header)
+	pathLine := hintStyle.Render(frame.path)
+	footer := hintStyle.Render(frame.footer)
+	statusLine := ""
+	if frame.status != "" {
+		statusLine = statusStyle.Render(frame.status)
+	}
+
+	headerBlock := strings.Join([]string{header, pathLine, ""}, "\n")
+	footerParts := []string{"", footer}
+	if statusLine != "" {
+		footerParts = append(footerParts, statusLine)
+	}
+	footerBlock := strings.Join(footerParts, "\n")
+
+	workspace := ""
+	if m.descriptionEditorMode == descriptionEditorViewModePreview {
+		preview := m.descriptionEditorPreviewViewport(max(20, layout.layoutWidth-4), layout.previewModeBodyHeight, false)
+		workspace = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(accent).
+			Padding(0, 1).
+			Width(layout.layoutWidth).
+			Render(fitLines(sectionTitleStyle.Render("Preview")+"\n"+preview.View(), layout.previewModePanelContentHeight))
+	} else {
+		editor := m.descriptionEditorInput
+		editor.ShowLineNumbers = true
+		editor.SetWidth(max(20, layout.editorWidth-4))
+		editor.SetHeight(layout.editorBodyHeight)
+		_ = editor.Focus()
+		preview := m.descriptionEditorPreviewViewport(max(20, layout.previewWidth-4), layout.previewBodyHeight, true)
+
+		editorPanel := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(accent).
+			Padding(0, 1).
+			Width(layout.editorWidth).
+			Render(fitLines(sectionTitleStyle.Render("Editor")+"\n"+editor.View(), layout.editorPanelContentHeight))
+		previewPanel := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(dim).
+			Padding(0, 1).
+			Width(layout.previewWidth).
+			Render(fitLines(sectionTitleStyle.Render("Preview")+"\n"+preview.View(), layout.previewPanelContentHeight))
+
+		if layout.splitVertically {
+			workspace = lipgloss.JoinVertical(
+				lipgloss.Left,
+				editorPanel,
+				lipgloss.NewStyle().MarginTop(1).Render(previewPanel),
+			)
+		} else {
+			workspace = lipgloss.JoinHorizontal(
+				lipgloss.Top,
+				editorPanel,
+				lipgloss.NewStyle().MarginLeft(1).Render(previewPanel),
+			)
+		}
+	}
+
+	content := strings.Join([]string{headerBlock, workspace, footerBlock}, "\n")
+	if m.height > 0 {
+		content = fitLines(content, m.height)
+	}
+	if m.help.ShowAll {
+		overlay := m.renderHelpOverlay(accent, muted, dim, hintStyle, m.width-8)
+		if overlay != "" {
+			overlayHeight := lipgloss.Height(content)
+			if m.height > 0 {
+				overlayHeight = m.height
+			}
+			content = overlayOnContent(content, overlay, max(1, m.width), max(1, overlayHeight))
+		}
+	}
+
+	v := tea.NewView(content)
+	v.MouseMode = m.activeMouseMode()
+	v.AltScreen = true
+	return v
+}
+
+// descriptionEditorLayout computes render dimensions for edit/preview submodes.
+func (m Model) descriptionEditorLayout() descriptionEditorLayoutMetrics {
+	layoutWidth := 120
+	if m.width > 0 {
+		layoutWidth = max(20, m.width-2)
+	}
+	frame := m.descriptionEditorFrameText(layoutWidth)
+	headerBlockHeight := 3 // header, path, blank spacer (all single-line after clamping).
+	footerBlockHeight := 2 // blank spacer + footer (single-line after clamping).
+	if frame.status != "" {
+		footerBlockHeight++
+	}
+	workspaceHeight := 18
+	if m.height > 0 {
+		workspaceHeight = m.height - headerBlockHeight - footerBlockHeight
+	}
+	if workspaceHeight < 10 {
+		workspaceHeight = 10
+	}
+
+	previewModePanelContentHeight := max(6, workspaceHeight-2)
+	previewModeBodyHeight := max(4, previewModePanelContentHeight-1)
+	layout := descriptionEditorLayoutMetrics{
+		layoutWidth:                   layoutWidth,
+		previewModePanelContentHeight: previewModePanelContentHeight,
+		previewModeBodyHeight:         previewModeBodyHeight,
+		editorWidth:                   layoutWidth,
+		previewWidth:                  layoutWidth,
+		editorPanelContentHeight:      previewModePanelContentHeight,
+		previewPanelContentHeight:     previewModePanelContentHeight,
+		editorBodyHeight:              previewModeBodyHeight,
+		previewBodyHeight:             previewModeBodyHeight,
+	}
+	if m.descriptionEditorMode == descriptionEditorViewModePreview {
+		return layout
+	}
+
+	const minHorizontalPanelWidth = 30
+	if layoutWidth >= (minHorizontalPanelWidth*2)+1 {
+		editorWidth := (layoutWidth - 1) / 2
+		previewWidth := layoutWidth - editorWidth - 1
+		if editorWidth >= minHorizontalPanelWidth && previewWidth >= minHorizontalPanelWidth {
+			layout.editorWidth = editorWidth
+			layout.previewWidth = previewWidth
+			layout.editorPanelContentHeight = max(6, workspaceHeight-2)
+			layout.previewPanelContentHeight = layout.editorPanelContentHeight
+			layout.editorBodyHeight = max(4, layout.editorPanelContentHeight-1)
+			layout.previewBodyHeight = max(4, layout.previewPanelContentHeight-1)
+			return layout
+		}
+	}
+
+	// On narrow terminals, stack editor above preview to avoid horizontal overflow.
+	layout.splitVertically = true
+	availablePanelContent := max(4, workspaceHeight-5) // 2 borders + 2 borders + 1 spacer line.
+	layout.editorPanelContentHeight = max(4, availablePanelContent/2)
+	layout.previewPanelContentHeight = max(4, availablePanelContent-layout.editorPanelContentHeight)
+	layout.editorBodyHeight = max(3, layout.editorPanelContentHeight-1)
+	layout.previewBodyHeight = max(3, layout.previewPanelContentHeight-1)
+	return layout
+}
+
+// descriptionEditorFrameText returns single-line clamped text for the description-editor frame.
+func (m Model) descriptionEditorFrameText(lineWidth int) descriptionEditorFrame {
+	lineWidth = max(20, lineWidth)
+	pathPrefix := "path: "
+	pathWidth := max(8, lineWidth-len(pathPrefix))
+	status := strings.TrimSpace(m.status)
+	if status == "ready" {
+		status = ""
+	}
+	return descriptionEditorFrame{
+		header: truncate("Description Editor", lineWidth),
+		path:   pathPrefix + collapsePathForDisplay(m.descriptionEditorPathLabel(), pathWidth),
+		footer: truncate(m.descriptionEditorFooterHint(), lineWidth),
+		status: truncate(status, lineWidth),
+	}
+}
+
+// descriptionEditorFooterHint returns bottom-hint text for description editor submodes.
+func (m Model) descriptionEditorFooterHint() string {
+	if m.descriptionEditorMode == descriptionEditorViewModePreview {
+		return "preview mode • tab edit mode • j/k or pgup/pgdown scroll • home/end jump • ctrl+s save • esc cancel • ? help"
+	}
+	return "edit mode • tab preview mode • ctrl+z undo • ctrl+shift+z redo • ctrl+s save • esc cancel • enter newline • ? inserts '?'"
+}
+
+// descriptionEditorPathLabel returns the active path label for description editor header context.
+func (m Model) descriptionEditorPathLabel() string {
+	if path := strings.TrimSpace(m.descriptionEditorPath); path != "" {
+		return path
+	}
+	switch m.descriptionEditorTarget {
+	case descriptionEditorTargetTask:
+		return m.descriptionEditorPathForTaskForm()
+	case descriptionEditorTargetProject:
+		return m.descriptionEditorPathForProjectForm()
+	case descriptionEditorTargetThread:
+		return m.descriptionEditorPathForThreadTarget()
+	default:
+		return "(node path unavailable)"
+	}
+}
+
+// descriptionEditorPreviewViewport prepares preview viewport rendering for current dimensions.
+func (m Model) descriptionEditorPreviewViewport(width, height int, syncWithEditor bool) viewport.Model {
+	vp := m.descriptionPreview
+	vp.SetWidth(max(1, width))
+	vp.SetHeight(max(1, height))
+	vp.SetContent(m.descriptionEditorRenderedPreview(max(1, width)))
+	if syncWithEditor {
+		vp.SetYOffset(max(0, m.descriptionEditorInput.ScrollYOffset()))
+	}
+	return vp
+}
+
+// descriptionEditorRenderedPreview returns rendered markdown preview content for the provided wrap width.
+func (m Model) descriptionEditorRenderedPreview(width int) string {
+	markdown := strings.TrimSpace(m.descriptionEditorInput.Value())
+	if markdown == "" {
+		markdown = "(empty description)"
+	}
+	return strings.TrimSpace(m.threadMarkdown.render(markdown, max(20, width)))
+}
+
+// syncDescriptionEditorViewportLayout aligns textarea/preview dimensions with the current screen layout.
+func (m *Model) syncDescriptionEditorViewportLayout() {
+	if m == nil {
+		return
+	}
+	layout := m.descriptionEditorLayout()
+	if m.descriptionEditorMode == descriptionEditorViewModePreview {
+		previewWidth := max(20, layout.layoutWidth-4)
+		m.descriptionPreview.SetWidth(max(1, previewWidth))
+		m.descriptionPreview.SetHeight(max(1, layout.previewModeBodyHeight))
+		m.descriptionPreview.SetContent(m.descriptionEditorRenderedPreview(previewWidth))
+		return
+	}
+	m.descriptionEditorInput.ShowLineNumbers = true
+	m.descriptionEditorInput.SetWidth(max(20, layout.editorWidth-4))
+	m.descriptionEditorInput.SetHeight(layout.editorBodyHeight)
+	previewWidth := max(20, layout.previewWidth-4)
+	m.descriptionPreview.SetWidth(max(1, previewWidth))
+	m.descriptionPreview.SetHeight(max(1, layout.previewBodyHeight))
+	m.descriptionPreview.SetContent(m.descriptionEditorRenderedPreview(previewWidth))
+}
+
+// syncDescriptionPreviewOffsetToEditor keeps preview viewport scrolling aligned to editor scroll offset.
+func (m *Model) syncDescriptionPreviewOffsetToEditor() {
+	if m == nil {
+		return
+	}
+	m.syncDescriptionEditorViewportLayout()
+	m.descriptionPreview.SetYOffset(max(0, m.descriptionEditorInput.ScrollYOffset()))
+}
+
+// descriptionEditorPathForTaskForm returns a project-rooted path label for task-form description editing.
+func (m Model) descriptionEditorPathForTaskForm() string {
+	if taskID := strings.TrimSpace(m.editingTaskID); taskID != "" {
+		if task, ok := m.taskByID(taskID); ok {
+			return m.descriptionEditorTaskPath(task)
+		}
+	}
+	kind := strings.TrimSpace(string(m.taskFormKind))
+	if kind == "" {
+		kind = string(domain.WorkKindTask)
+	}
+	if parentID := strings.TrimSpace(m.taskFormParentID); parentID != "" {
+		if parent, ok := m.taskByID(parentID); ok {
+			return m.descriptionEditorTaskPath(parent) + " -> " + fmt.Sprintf("(new %s)", kind)
+		}
+		return m.descriptionEditorProjectLabel("") + " -> " + parentID + " -> " + fmt.Sprintf("(new %s)", kind)
+	}
+	return m.descriptionEditorProjectLabel("") + " -> " + fmt.Sprintf("(new %s)", kind)
+}
+
+// descriptionEditorPathForProjectForm returns a path label for project-form description editing.
+func (m Model) descriptionEditorPathForProjectForm() string {
+	if projectID := strings.TrimSpace(m.editingProjectID); projectID != "" {
+		return m.descriptionEditorProjectLabel(projectID)
+	}
+	return "(new project)"
+}
+
+// descriptionEditorPathForThreadTarget returns a path label for thread-target description editing.
+func (m Model) descriptionEditorPathForThreadTarget() string {
+	target := m.threadTarget
+	projectLabel := m.descriptionEditorProjectLabel(target.ProjectID)
+	targetID := strings.TrimSpace(target.TargetID)
+	if target.TargetType == domain.CommentTargetTypeProject {
+		if targetID != "" && projectLabel == "(project)" {
+			return targetID
+		}
+		return projectLabel
+	}
+	if targetID != "" {
+		if task, ok := m.taskByID(targetID); ok {
+			return m.descriptionEditorTaskPath(task)
+		}
+	}
+	typeLabel := strings.TrimSpace(string(target.TargetType))
+	if typeLabel == "" {
+		typeLabel = "node"
+	}
+	if targetID == "" {
+		targetID = "(unknown)"
+	}
+	return projectLabel + " -> " + typeLabel + ":" + targetID
+}
+
+// descriptionEditorProjectLabel resolves display-safe project text for description editor path labels.
+func (m Model) descriptionEditorProjectLabel(projectID string) string {
+	projectID = strings.TrimSpace(projectID)
+	if projectID != "" {
+		for _, project := range m.projects {
+			if strings.TrimSpace(project.ID) != projectID {
+				continue
+			}
+			if label := strings.TrimSpace(projectDisplayName(project)); label != "" {
+				return label
+			}
+			return projectID
+		}
+		return projectID
+	}
+	if project, ok := m.currentProject(); ok {
+		if label := strings.TrimSpace(projectDisplayName(project)); label != "" {
+			return label
+		}
+		if id := strings.TrimSpace(project.ID); id != "" {
+			return id
+		}
+	}
+	return "(project)"
+}
+
+// descriptionEditorTaskPath renders a project-rooted hierarchy path for one task.
+func (m Model) descriptionEditorTaskPath(task domain.Task) string {
+	chain := []string{fallbackText(strings.TrimSpace(task.Title), "(untitled)")}
+	visited := map[string]struct{}{task.ID: {}}
+	parentID := strings.TrimSpace(task.ParentID)
+	for parentID != "" {
+		if _, seen := visited[parentID]; seen {
+			break
+		}
+		parent, ok := m.taskByID(parentID)
+		if !ok {
+			break
+		}
+		visited[parentID] = struct{}{}
+		chain = append(chain, fallbackText(strings.TrimSpace(parent.Title), "(untitled)"))
+		parentID = strings.TrimSpace(parent.ParentID)
+	}
+	for left, right := 0, len(chain)-1; left < right; left, right = left+1, right-1 {
+		chain[left], chain[right] = chain[right], chain[left]
+	}
+	chain = append([]string{m.descriptionEditorProjectLabel(task.ProjectID)}, chain...)
+	return strings.Join(chain, " -> ")
+}

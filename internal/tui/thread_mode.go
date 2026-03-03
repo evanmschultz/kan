@@ -27,10 +27,6 @@ func (m Model) renderThreadModeView() tea.View {
 	statusStyle := lipgloss.NewStyle().Foreground(dim)
 	sectionTitleStyle := threadSectionStyle(accent)
 
-	if m.threadDetailsEditorActive {
-		return m.renderThreadDescriptionEditorView(accent, muted, dim, titleStyle, hintStyle, statusStyle, sectionTitleStyle)
-	}
-
 	threadTitle := strings.TrimSpace(m.threadTitle)
 	if threadTitle == "" {
 		threadTitle = "(untitled thread)"

@@ -437,6 +437,7 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 	}
 	requiredTools := []string{
 		"till.get_bootstrap_guide",
+		"till.get_instructions",
 		"till.list_projects",
 		"till.create_project",
 		"till.update_project",
@@ -481,16 +482,72 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		args map[string]any
 	}{
 		{name: "till.get_bootstrap_guide", args: map[string]any{}},
+		{name: "till.get_instructions", args: map[string]any{"include_markdown": false}},
 		{name: "till.list_projects", args: map[string]any{"include_archived": true}},
-		{name: "till.create_project", args: map[string]any{"name": "Project One"}},
-		{name: "till.update_project", args: map[string]any{"project_id": "p1", "name": "Project One Updated"}},
+		{name: "till.create_project", args: map[string]any{
+			"name":              "Project One",
+			"actor_type":        "agent_orchestrator",
+			"agent_name":        "agent-1",
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		}},
+		{name: "till.update_project", args: map[string]any{
+			"project_id":        "p1",
+			"name":              "Project One Updated",
+			"actor_type":        "agent_orchestrator",
+			"agent_name":        "agent-1",
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		}},
 		{name: "till.list_tasks", args: map[string]any{"project_id": "p1"}},
-		{name: "till.create_task", args: map[string]any{"project_id": "p1", "column_id": "c1", "title": "Task One"}},
-		{name: "till.update_task", args: map[string]any{"task_id": "t1", "title": "Task One Updated"}},
-		{name: "till.move_task", args: map[string]any{"task_id": "t1", "to_column_id": "c2", "position": 1}},
-		{name: "till.delete_task", args: map[string]any{"task_id": "t1"}},
-		{name: "till.restore_task", args: map[string]any{"task_id": "t1"}},
-		{name: "till.reparent_task", args: map[string]any{"task_id": "t1", "parent_id": "parent-1"}},
+		{name: "till.create_task", args: map[string]any{
+			"project_id":        "p1",
+			"column_id":         "c1",
+			"title":             "Task One",
+			"actor_type":        "agent_orchestrator",
+			"agent_name":        "agent-1",
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		}},
+		{name: "till.update_task", args: map[string]any{
+			"task_id":           "t1",
+			"title":             "Task One Updated",
+			"actor_type":        "agent_subagent",
+			"agent_name":        "agent-1",
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		}},
+		{name: "till.move_task", args: map[string]any{
+			"task_id":           "t1",
+			"to_column_id":      "c2",
+			"position":          1,
+			"actor_type":        "agent_orchestrator",
+			"agent_name":        "agent-1",
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		}},
+		{name: "till.delete_task", args: map[string]any{
+			"task_id":           "t1",
+			"actor_type":        "agent_orchestrator",
+			"agent_name":        "agent-1",
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		}},
+		{name: "till.restore_task", args: map[string]any{
+			"task_id":           "t1",
+			"actor_type":        "agent_subagent",
+			"agent_name":        "agent-1",
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		}},
+		{name: "till.reparent_task", args: map[string]any{
+			"task_id":           "t1",
+			"parent_id":         "parent-1",
+			"actor_type":        "agent_orchestrator",
+			"agent_name":        "agent-1",
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		}},
 		{name: "till.list_child_tasks", args: map[string]any{"project_id": "p1", "parent_id": "parent-1"}},
 		{name: "till.search_task_matches", args: map[string]any{"project_id": "p1", "query": "task"}},
 		{name: "till.list_project_change_events", args: map[string]any{"project_id": "p1", "limit": 25}},
@@ -504,7 +561,17 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		{name: "till.renew_capability_lease", args: map[string]any{"agent_instance_id": "inst-1", "lease_token": "tok-1", "ttl_seconds": 60}},
 		{name: "till.revoke_capability_lease", args: map[string]any{"agent_instance_id": "inst-1"}},
 		{name: "till.revoke_all_capability_leases", args: map[string]any{"project_id": "p1", "scope_type": "project"}},
-		{name: "till.create_comment", args: map[string]any{"project_id": "p1", "target_type": "task", "target_id": "t1", "summary": "Thread summary", "body_markdown": "hello"}},
+		{name: "till.create_comment", args: map[string]any{
+			"project_id":        "p1",
+			"target_type":       "task",
+			"target_id":         "t1",
+			"summary":           "Thread summary",
+			"body_markdown":     "hello",
+			"actor_type":        "agent_orchestrator",
+			"agent_name":        "agent-1",
+			"agent_instance_id": "inst-1",
+			"lease_token":       "tok-1",
+		}},
 		{name: "till.list_comments_by_target", args: map[string]any{"project_id": "p1", "target_type": "task", "target_id": "t1"}},
 	}
 	for idx, tc := range calls {
@@ -515,6 +582,66 @@ func TestHandlerExpandedToolSurfaceSuccessPaths(t *testing.T) {
 		if isError, _ := callResp.Result["isError"].(bool); isError {
 			t.Fatalf("tool %q returned isError=true: %#v", tc.name, callResp.Result)
 		}
+	}
+}
+
+// TestHandlerInstructionsToolReturnsEmbeddedDocs verifies till.get_instructions returns embedded markdown inventory and guidance.
+func TestHandlerInstructionsToolReturnsEmbeddedDocs(t *testing.T) {
+	t.Parallel()
+
+	service := &stubExpandedService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+	}
+	handler, err := NewHandler(Config{}, service, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	resp, callResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(
+		500,
+		"till.get_instructions",
+		map[string]any{
+			"doc_names":               []any{"README.md", "AGENTS.md"},
+			"include_markdown":        false,
+			"include_recommendations": true,
+		},
+	))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if isError, _ := callResp.Result["isError"].(bool); isError {
+		t.Fatalf("tool returned isError=true: %#v", callResp.Result)
+	}
+	structured := toolResultStructured(t, callResp.Result)
+	availableAny, ok := structured["available_docs"].([]any)
+	if !ok || len(availableAny) == 0 {
+		t.Fatalf("available_docs missing/empty: %#v", structured)
+	}
+	available := make([]string, 0, len(availableAny))
+	for _, raw := range availableAny {
+		value, _ := raw.(string)
+		if strings.TrimSpace(value) == "" {
+			continue
+		}
+		available = append(available, value)
+	}
+	if !slices.Contains(available, "README.md") {
+		t.Fatalf("available docs missing README.md: %#v", available)
+	}
+	if !slices.Contains(available, "AGENTS.md") {
+		t.Fatalf("available docs missing AGENTS.md: %#v", available)
+	}
+	mdGuidance, ok := structured["md_file_guidance"].(map[string]any)
+	if !ok {
+		t.Fatalf("md_file_guidance missing: %#v", structured)
+	}
+	if _, ok := mdGuidance["AGENTS.md"]; !ok {
+		t.Fatalf("md_file_guidance missing AGENTS.md guidance: %#v", mdGuidance)
 	}
 }
 
@@ -579,17 +706,21 @@ func TestHandlerExpandedToolForwardsActorTupleFields(t *testing.T) {
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
 	_, createResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(300, "till.create_task", map[string]any{
-		"project_id":  "p1",
-		"column_id":   "c1",
-		"title":       "Task One",
-		"actor_type":  "user",
-		"actor_id":    "actor-1",
-		"actor_name":  "Actor One",
-		"agent_name":  "agent-name",
-		"lease_token": "",
+		"project_id":        "p1",
+		"column_id":         "c1",
+		"title":             "Task One",
+		"actor_type":        "agent_orchestrator",
+		"actor_id":          "actor-1",
+		"actor_name":        "Actor One",
+		"agent_name":        "agent-name",
+		"agent_instance_id": "inst-1",
+		"lease_token":       "lease-1",
 	}))
 	if isError, _ := createResp.Result["isError"].(bool); isError {
 		t.Fatalf("create_task returned isError=true: %#v", createResp.Result)
+	}
+	if got := service.lastCreateTaskReq.Actor.ActorType; got != "agent" {
+		t.Fatalf("create_task actor_type = %q, want agent", got)
 	}
 	if got := service.lastCreateTaskReq.Actor.ActorID; got != "actor-1" {
 		t.Fatalf("create_task actor_id = %q, want actor-1", got)
@@ -599,18 +730,20 @@ func TestHandlerExpandedToolForwardsActorTupleFields(t *testing.T) {
 	}
 
 	_, updateResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(301, "till.update_task", map[string]any{
-		"task_id":    "t1",
-		"title":      "Task One Updated",
-		"actor_type": "user",
-		"actor_id":   "upd-1",
-		"actor_name": "Updater One",
-		"agent_name": "EVAN",
+		"task_id":           "t1",
+		"title":             "Task One Updated",
+		"actor_type":        "agent_subagent",
+		"actor_id":          "upd-1",
+		"actor_name":        "Updater One",
+		"agent_name":        "EVAN",
+		"agent_instance_id": "inst-1",
+		"lease_token":       "lease-1",
 	}))
 	if isError, _ := updateResp.Result["isError"].(bool); isError {
 		t.Fatalf("update_task returned isError=true: %#v", updateResp.Result)
 	}
-	if got := service.lastUpdateTaskReq.Actor.ActorType; got != "user" {
-		t.Fatalf("update_task actor_type = %q, want user", got)
+	if got := service.lastUpdateTaskReq.Actor.ActorType; got != "agent" {
+		t.Fatalf("update_task actor_type = %q, want agent", got)
 	}
 	if got := service.lastUpdateTaskReq.Actor.AgentName; got != "EVAN" {
 		t.Fatalf("update_task agent_name = %q, want EVAN", got)
@@ -623,16 +756,23 @@ func TestHandlerExpandedToolForwardsActorTupleFields(t *testing.T) {
 	}
 
 	_, commentResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(3011, "till.create_comment", map[string]any{
-		"project_id":    "p1",
-		"target_type":   "task",
-		"target_id":     "t1",
-		"summary":       "Thread summary",
-		"body_markdown": "hello",
-		"actor_id":      "commenter-1",
-		"actor_name":    "Commenter One",
+		"project_id":        "p1",
+		"target_type":       "task",
+		"target_id":         "t1",
+		"summary":           "Thread summary",
+		"body_markdown":     "hello",
+		"actor_id":          "commenter-1",
+		"actor_name":        "Commenter One",
+		"actor_type":        "agent_orchestrator",
+		"agent_name":        "agent-comment",
+		"agent_instance_id": "inst-comment",
+		"lease_token":       "lease-comment",
 	}))
 	if isError, _ := commentResp.Result["isError"].(bool); isError {
 		t.Fatalf("create_comment returned isError=true: %#v", commentResp.Result)
+	}
+	if got := service.lastCreateCommentReq.Actor.ActorType; got != "agent" {
+		t.Fatalf("create_comment actor_type = %q, want agent", got)
 	}
 	if got := service.lastCreateCommentReq.Actor.ActorID; got != "commenter-1" {
 		t.Fatalf("create_comment actor_id = %q, want commenter-1", got)
@@ -646,7 +786,7 @@ func TestHandlerExpandedToolForwardsActorTupleFields(t *testing.T) {
 
 	_, restoreResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(302, "till.restore_task", map[string]any{
 		"task_id":           "t1",
-		"actor_type":        "agent",
+		"actor_type":        "agent_subagent",
 		"agent_name":        "agent-1",
 		"agent_instance_id": "agent-1",
 		"lease_token":       "lease-1",
@@ -672,6 +812,91 @@ func TestHandlerExpandedToolForwardsActorTupleFields(t *testing.T) {
 	}
 }
 
+// TestHandlerExpandedToolRejectsMCPUserSystemActorsAndMissingLease verifies MCP mutation actor policy enforcement.
+func TestHandlerExpandedToolRejectsMCPUserSystemActorsAndMissingLease(t *testing.T) {
+	service := &stubExpandedService{
+		stubCaptureStateReader: stubCaptureStateReader{
+			captureState: common.CaptureState{StateHash: "abc123"},
+		},
+	}
+	handler, err := NewHandler(Config{}, service, nil)
+	if err != nil {
+		t.Fatalf("NewHandler() error = %v", err)
+	}
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
+
+	userHTTPResp, userResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(4010, "till.create_task", map[string]any{
+		"project_id":        "p1",
+		"column_id":         "c1",
+		"title":             "user mutation",
+		"actor_type":        "user",
+		"agent_name":        "agent-1",
+		"agent_instance_id": "inst-1",
+		"lease_token":       "lease-1",
+	}))
+	if userHTTPResp.StatusCode == http.StatusOK {
+		if isError, _ := userResp.Result["isError"].(bool); !isError && len(userResp.Error) == 0 {
+			t.Fatalf("user actor_type call isError = %v, want true", userResp.Result["isError"])
+		}
+	}
+	if isError, _ := userResp.Result["isError"].(bool); isError {
+		if got := toolResultText(t, userResp.Result); !strings.Contains(got, "actor_type must be") {
+			t.Fatalf("user actor_type error = %q, want actor_type guidance", got)
+		}
+	}
+	if userHTTPResp.StatusCode != http.StatusOK && userHTTPResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("user actor_type call isError = %v, want true", userResp.Result["isError"])
+	}
+
+	systemHTTPResp, systemResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(4011, "till.create_task", map[string]any{
+		"project_id":        "p1",
+		"column_id":         "c1",
+		"title":             "system mutation",
+		"actor_type":        "system",
+		"agent_name":        "agent-1",
+		"agent_instance_id": "inst-1",
+		"lease_token":       "lease-1",
+	}))
+	if systemHTTPResp.StatusCode == http.StatusOK {
+		if isError, _ := systemResp.Result["isError"].(bool); !isError && len(systemResp.Error) == 0 {
+			t.Fatalf("system actor_type call isError = %v, want true", systemResp.Result["isError"])
+		}
+	}
+	if isError, _ := systemResp.Result["isError"].(bool); isError {
+		if got := toolResultText(t, systemResp.Result); !strings.Contains(got, "actor_type must be") {
+			t.Fatalf("system actor_type error = %q, want actor_type guidance", got)
+		}
+	}
+	if systemHTTPResp.StatusCode != http.StatusOK && systemHTTPResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("system actor_type call isError = %v, want true", systemResp.Result["isError"])
+	}
+
+	missingLeaseHTTPResp, missingLeaseResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(4012, "till.create_task", map[string]any{
+		"project_id":  "p1",
+		"column_id":   "c1",
+		"title":       "missing lease mutation",
+		"actor_type":  "agent_orchestrator",
+		"agent_name":  "agent-1",
+		"lease_token": "lease-1",
+	}))
+	if missingLeaseHTTPResp.StatusCode == http.StatusOK {
+		if isError, _ := missingLeaseResp.Result["isError"].(bool); !isError && len(missingLeaseResp.Error) == 0 {
+			t.Fatalf("missing lease tuple call isError = %v, want true", missingLeaseResp.Result["isError"])
+		}
+	}
+	if isError, _ := missingLeaseResp.Result["isError"].(bool); isError {
+		if got := toolResultText(t, missingLeaseResp.Result); !strings.Contains(got, "agent_name, agent_instance_id, and lease_token are required") {
+			t.Fatalf("missing lease tuple error = %q, want lease tuple requirement", got)
+		}
+	}
+	if missingLeaseHTTPResp.StatusCode != http.StatusOK && missingLeaseHTTPResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("missing lease tuple call isError = %v, want true", missingLeaseResp.Result["isError"])
+	}
+}
+
 // TestHandlerExpandedCommentToolsForwardHierarchyTargetTypes verifies hierarchy node target types pass through comment tools.
 func TestHandlerExpandedCommentToolsForwardHierarchyTargetTypes(t *testing.T) {
 	service := &stubExpandedService{
@@ -689,11 +914,15 @@ func TestHandlerExpandedCommentToolsForwardHierarchyTargetTypes(t *testing.T) {
 	_, _ = postJSONRPC(t, server.Client(), server.URL, initializeRequest())
 
 	_, createResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(401, "till.create_comment", map[string]any{
-		"project_id":    "p1",
-		"target_type":   "branch",
-		"target_id":     "branch-1",
-		"summary":       "Branch note",
-		"body_markdown": "hello",
+		"project_id":        "p1",
+		"target_type":       "branch",
+		"target_id":         "branch-1",
+		"summary":           "Branch note",
+		"body_markdown":     "hello",
+		"actor_type":        "agent_orchestrator",
+		"agent_name":        "agent-1",
+		"agent_instance_id": "inst-1",
+		"lease_token":       "lease-1",
 	}))
 	if isError, _ := createResp.Result["isError"].(bool); isError {
 		t.Fatalf("create_comment returned isError=true: %#v", createResp.Result)

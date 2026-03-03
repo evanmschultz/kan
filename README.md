@@ -25,6 +25,7 @@ Contributor workflow and CI policy: `CONTRIBUTING.md`
 - Archive-first delete flow with configurable defaults.
 - Project and work-item thread mode with ownership-attributed markdown comments.
 - Descriptions/comments are stored as markdown source fields and rendered in TUI views.
+- MCP instruction tool for embedded docs + agent recommendations (`till.get_instructions`).
 - Project roots are real filesystem directory mappings; resource attachment is blocked outside the allowed root.
 - Runtime kind-catalog + project allowlist validation for project/task mutations.
 - Runtime JSON-schema validation for kind metadata payloads (with compiled-validator caching).
@@ -57,6 +58,7 @@ Wave-locked MCP/HTTP direction (implemented and in active dogfooding closeout):
 - Attention/blocker signaling direction is node-scoped with user-action visibility and paginated scope queries for user/agent coordination.
 - Transport-level lease/scope request contracts enforce non-user mutation guardrails.
 - MCP tool surface now includes:
+  - instructions: `till.get_instructions`
   - bootstrap guidance: `till.get_bootstrap_guide`
   - projects: `till.list_projects`, `till.create_project`, `till.update_project`
   - tasks/work graph: `till.list_tasks`, `till.create_task`, `till.update_task`, `till.move_task`, `till.delete_task`, `till.restore_task`, `till.reparent_task`, `till.list_child_tasks`, `till.search_task_matches`
@@ -71,6 +73,12 @@ Wave-locked MCP/HTTP direction (implemented and in active dogfooding closeout):
     - `till.revoke_all_capability_leases` fails closed on invalid/unknown scope tuples;
     - `till.create_comment` fails closed when the target does not exist in the referenced project;
     - `till.update_task` title-only updates preserve existing priority when `priority` is omitted.
+
+Instruction-tool usage guidance:
+- `till.get_instructions` is intended for missing/stale/ambiguous policy context, not mandatory on every step.
+- Keep context bounded with `doc_names` and `max_chars_per_doc`.
+- Use `include_markdown=false` for inventory checks and `include_markdown=true` when full markdown text is required.
+- Descriptions/details and comment summary/body fields are markdown-first authoring surfaces.
 
 Roadmap-only in the active wave (explicitly deferred):
 - advanced import/export transport closure concerns (branch/commit-aware divergence reconciliation and conflict tooling),

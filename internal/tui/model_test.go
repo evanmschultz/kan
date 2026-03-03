@@ -1258,7 +1258,7 @@ func TestModelThreadProjectReadModeEditShortcutStartsProjectEditForm(t *testing.
 	}
 }
 
-// TestModelThreadDetailsEditorSavesDescriptionWithCtrlS verifies the inline thread details editor persists markdown details.
+// TestModelThreadDetailsEditorSavesDescriptionWithCtrlS verifies the full-screen description editor persists thread markdown details.
 func TestModelThreadDetailsEditorSavesDescriptionWithCtrlS(t *testing.T) {
 	now := time.Date(2026, 3, 3, 9, 0, 0, 0, time.UTC)
 	project, _ := domain.NewProject("p1", "Inbox", "", now)
@@ -1286,10 +1286,13 @@ func TestModelThreadDetailsEditorSavesDescriptionWithCtrlS(t *testing.T) {
 		t.Fatal("expected details modal active")
 	}
 	m = applyMsg(t, m, keyRune('i'))
-	if !m.threadDetailsEditorActive {
-		t.Fatal("expected details editor active")
+	if m.mode != modeDescriptionEditor {
+		t.Fatalf("expected full-screen description editor mode, got %v", m.mode)
 	}
-	m.threadDetailsInput.SetValue("## Updated details\n\n- multiline markdown")
+	if m.descriptionEditorTarget != descriptionEditorTargetThread {
+		t.Fatalf("expected thread description target, got %v", m.descriptionEditorTarget)
+	}
+	m.descriptionEditorInput.SetValue("## Updated details\n\n- multiline markdown")
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
 
 	updatedTask, ok := m.taskByID(task.ID)
@@ -1416,6 +1419,81 @@ func TestModelTaskInfoShowsMarkdownDetailsWhenCardDescriptionsHidden(t *testing.
 	overlay := stripANSI(m.renderModeOverlay(lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), lipgloss.NewStyle(), 108))
 	if !strings.Contains(overlay, "Hidden Card Description") {
 		t.Fatalf("expected markdown details visible in task info despite card-description toggle, got %q", overlay)
+	}
+}
+
+// TestModelTaskInfoDetailsViewportScrolls verifies task-info markdown details are bounded and scrollable.
+func TestModelTaskInfoDetailsViewportScrolls(t *testing.T) {
+	now := time.Date(2026, 3, 3, 12, 45, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	lines := make([]string, 0, 240)
+	for i := 0; i < 240; i++ {
+		lines = append(lines, fmt.Sprintf("line %03d full page md details", i))
+	}
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:          "t1",
+		ProjectID:   project.ID,
+		ColumnID:    column.ID,
+		Position:    0,
+		Kind:        domain.WorkKindTask,
+		Title:       "full page md",
+		Description: strings.Join(lines, "\n"),
+		Priority:    domain.PriorityMedium,
+	}, now)
+
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})))
+	m = applyMsg(t, m, tea.WindowSizeMsg{Width: 100, Height: 28})
+	m = applyMsg(t, m, keyRune('i'))
+	if m.mode != modeTaskInfo {
+		t.Fatalf("expected task info mode, got %v", m.mode)
+	}
+
+	before := m.taskInfoDetails.YOffset()
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyPgDown})
+	after := m.taskInfoDetails.YOffset()
+	if after <= before {
+		t.Fatalf("expected details viewport to scroll on pgdown, before=%d after=%d", before, after)
+	}
+
+	beforeJ := m.taskInfoDetails.YOffset()
+	m = applyMsg(t, m, keyRune('j'))
+	afterJ := m.taskInfoDetails.YOffset()
+	if afterJ <= beforeJ {
+		t.Fatalf("expected details viewport to scroll on j, before=%d after=%d", beforeJ, afterJ)
+	}
+
+	beforeDown := m.taskInfoDetails.YOffset()
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
+	afterDown := m.taskInfoDetails.YOffset()
+	if afterDown <= beforeDown {
+		t.Fatalf("expected details viewport to scroll on down arrow, before=%d after=%d", beforeDown, afterDown)
+	}
+
+	beforeK := m.taskInfoDetails.YOffset()
+	m = applyMsg(t, m, keyRune('k'))
+	afterK := m.taskInfoDetails.YOffset()
+	if afterK >= beforeK {
+		t.Fatalf("expected details viewport to scroll up on k, before=%d after=%d", beforeK, afterK)
+	}
+
+	beforeUp := m.taskInfoDetails.YOffset()
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyUp})
+	afterUp := m.taskInfoDetails.YOffset()
+	if afterUp >= beforeUp {
+		t.Fatalf("expected details viewport to scroll up on up arrow, before=%d after=%d", beforeUp, afterUp)
+	}
+
+	beforeMouse := m.taskInfoDetails.YOffset()
+	m = applyMsg(t, m, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	afterMouse := m.taskInfoDetails.YOffset()
+	if afterMouse <= beforeMouse {
+		t.Fatalf("expected details viewport to scroll on mouse wheel, before=%d after=%d", beforeMouse, afterMouse)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyHome})
+	if got := m.taskInfoDetails.YOffset(); got != 0 {
+		t.Fatalf("expected home to reset details viewport to top, got y offset=%d", got)
 	}
 }
 
@@ -2329,6 +2407,265 @@ func TestModelProjectDescriptionEditorSeedAndCancel(t *testing.T) {
 	}
 }
 
+// TestModelDescriptionEditorEditModeQuestionMarkInsertsText verifies edit mode captures '?' as text instead of toggling help.
+func TestModelDescriptionEditorEditModeQuestionMarkInsertsText(t *testing.T) {
+	now := time.Date(2026, 3, 3, 9, 5, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, nil)))
+
+	m = applyMsg(t, m, keyRune('n'))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeDescriptionEditor {
+		t.Fatalf("expected description editor mode, got %v", m.mode)
+	}
+	if m.descriptionEditorMode != descriptionEditorViewModeEdit {
+		t.Fatalf("expected edit submode, got %v", m.descriptionEditorMode)
+	}
+
+	m = applyMsg(t, m, keyRune('?'))
+	if m.help.ShowAll {
+		t.Fatal("expected help overlay to stay closed in description editor edit mode")
+	}
+	if got := m.descriptionEditorInput.Value(); got != "?" {
+		t.Fatalf("expected '?' inserted into editor input, got %q", got)
+	}
+}
+
+// TestModelDescriptionEditorCtrlUndoRedo verifies ctrl+z / ctrl+shift+z text undo/redo in description editor edit mode.
+func TestModelDescriptionEditorCtrlUndoRedo(t *testing.T) {
+	now := time.Date(2026, 3, 3, 9, 5, 30, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, nil)))
+
+	m = applyMsg(t, m, keyRune('n'))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeDescriptionEditor {
+		t.Fatalf("expected description editor mode, got %v", m.mode)
+	}
+	if m.descriptionEditorMode != descriptionEditorViewModeEdit {
+		t.Fatalf("expected description editor edit mode, got %v", m.descriptionEditorMode)
+	}
+
+	m = applyMsg(t, m, keyRune('a'))
+	m = applyMsg(t, m, keyRune('b'))
+	m = applyMsg(t, m, keyRune('c'))
+	if got := m.descriptionEditorInput.Value(); got != "abc" {
+		t.Fatalf("expected editor value %q, got %q", "abc", got)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: 'z', Mod: tea.ModCtrl})
+	if got := m.descriptionEditorInput.Value(); got != "ab" {
+		t.Fatalf("expected ctrl+z to undo editor text to %q, got %q", "ab", got)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: 'z', Mod: tea.ModCtrl | tea.ModShift})
+	if got := m.descriptionEditorInput.Value(); got != "abc" {
+		t.Fatalf("expected ctrl+shift+z to redo editor text to %q, got %q", "abc", got)
+	}
+}
+
+// TestModelDescriptionEditorPreviewModeToggleAndScrollSync verifies preview mode toggle, heading text, and synced scroll offsets.
+func TestModelDescriptionEditorPreviewModeToggleAndScrollSync(t *testing.T) {
+	now := time.Date(2026, 3, 3, 9, 6, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, nil)))
+
+	m = applyMsg(t, m, keyRune('n'))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeDescriptionEditor {
+		t.Fatalf("expected description editor mode, got %v", m.mode)
+	}
+
+	lines := make([]string, 0, 80)
+	for idx := 0; idx < 80; idx++ {
+		lines = append(lines, fmt.Sprintf("line %02d", idx+1))
+	}
+	m.descriptionEditorInput.SetValue(strings.Join(lines, "\n"))
+	m.descriptionEditorInput.SetWidth(24)
+	m.descriptionEditorInput.SetHeight(4)
+	m.descriptionEditorInput.MoveToBegin()
+	m.syncDescriptionPreviewOffsetToEditor()
+
+	for idx := 0; idx < 60; idx++ {
+		m.descriptionEditorInput.CursorDown()
+	}
+	m.syncDescriptionPreviewOffsetToEditor()
+	if got, want := m.descriptionPreview.YOffset(), m.descriptionEditorInput.ScrollYOffset(); got != want {
+		t.Fatalf("expected preview y offset %d to match editor offset %d", got, want)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	if m.descriptionEditorMode != descriptionEditorViewModePreview {
+		t.Fatalf("expected preview submode after tab, got %v", m.descriptionEditorMode)
+	}
+	rendered := stripANSI(fmt.Sprint(m.View().Content))
+	if !strings.Contains(rendered, "Description Editor") {
+		t.Fatalf("expected full-screen description editor header, got %q", rendered)
+	}
+	if !strings.Contains(rendered, "path:") {
+		t.Fatalf("expected path line in description editor header block, got %q", rendered)
+	}
+	if strings.Contains(rendered, "Preview (Glamour)") {
+		t.Fatalf("expected preview heading without glamour suffix, got %q", rendered)
+	}
+
+	before := m.descriptionEditorInput.ScrollYOffset()
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyPgDown})
+	after := m.descriptionEditorInput.ScrollYOffset()
+	if after != before {
+		t.Fatalf(
+			"expected preview-mode scrolling to leave editor offset unchanged, before=%d after=%d",
+			before,
+			after,
+		)
+	}
+
+	m = applyMsg(t, m, keyRune('?'))
+	if !m.help.ShowAll {
+		t.Fatal("expected help overlay toggle to remain available in preview submode")
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.help.ShowAll {
+		t.Fatal("expected esc to close preview-mode help overlay")
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	if m.descriptionEditorMode != descriptionEditorViewModeEdit {
+		t.Fatalf("expected return to edit submode after tab, got %v", m.descriptionEditorMode)
+	}
+}
+
+// TestModelDescriptionEditorPreviewModeScrollsWrappedContent verifies preview mode scroll input works for wrapped markdown.
+func TestModelDescriptionEditorPreviewModeScrollsWrappedContent(t *testing.T) {
+	now := time.Date(2026, 3, 3, 9, 7, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, nil)))
+
+	m = applyMsg(t, m, keyRune('n'))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeDescriptionEditor {
+		t.Fatalf("expected description editor mode, got %v", m.mode)
+	}
+
+	m.descriptionEditorInput.SetValue(strings.Repeat("wrapped preview paragraph ", 600))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	if m.descriptionEditorMode != descriptionEditorViewModePreview {
+		t.Fatalf("expected preview submode after tab, got %v", m.descriptionEditorMode)
+	}
+
+	beforeKey := m.descriptionPreview.YOffset()
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyPgDown})
+	afterKey := m.descriptionPreview.YOffset()
+	if afterKey <= beforeKey {
+		t.Fatalf("expected preview y offset to increase after pgdown, before=%d after=%d", beforeKey, afterKey)
+	}
+
+	beforeMouse := m.descriptionPreview.YOffset()
+	m = applyMsg(t, m, tea.MouseWheelMsg{Button: tea.MouseWheelDown})
+	afterMouse := m.descriptionPreview.YOffset()
+	if afterMouse <= beforeMouse {
+		t.Fatalf("expected preview y offset to increase after mouse wheel, before=%d after=%d", beforeMouse, afterMouse)
+	}
+}
+
+// TestModelTaskInfoDescriptionEditorOpensInPreviewMode verifies task-info opens full-screen details in preview submode.
+func TestModelTaskInfoDescriptionEditorOpensInPreviewMode(t *testing.T) {
+	now := time.Date(2026, 3, 3, 12, 55, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:          "t1",
+		ProjectID:   project.ID,
+		ColumnID:    column.ID,
+		Position:    0,
+		Kind:        domain.WorkKindTask,
+		Title:       "Task with details",
+		Description: "## full page md\n\n- line one\n- line two",
+		Priority:    domain.PriorityMedium,
+	}, now)
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{task})))
+
+	m = applyMsg(t, m, keyRune('i'))
+	if m.mode != modeTaskInfo {
+		t.Fatalf("expected task info mode, got %v", m.mode)
+	}
+	m.descriptionPreview.SetYOffset(88)
+	m = applyMsg(t, m, keyRune('d'))
+	if m.mode != modeDescriptionEditor {
+		t.Fatalf("expected description editor mode from task info, got %v", m.mode)
+	}
+	if m.descriptionEditorMode != descriptionEditorViewModePreview {
+		t.Fatalf("expected task-info details to open in preview submode, got %v", m.descriptionEditorMode)
+	}
+	if got := m.descriptionPreview.YOffset(); got != 0 {
+		t.Fatalf("expected task-info details preview to open at top, got y offset=%d", got)
+	}
+	if m.descriptionEditorBack != modeTaskInfo {
+		t.Fatalf("expected task-info return mode, got %v", m.descriptionEditorBack)
+	}
+	if m.descriptionEditorTarget != descriptionEditorTargetThread {
+		t.Fatalf("expected thread target for task-info details, got %v", m.descriptionEditorTarget)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	if m.descriptionEditorMode != descriptionEditorViewModeEdit {
+		t.Fatalf("expected tab to open edit submode, got %v", m.descriptionEditorMode)
+	}
+	if got := m.descriptionEditorInput.ScrollYOffset(); got != 0 {
+		t.Fatalf("expected task-info details edit mode to open at top, got y offset=%d", got)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.mode != modeTaskInfo {
+		t.Fatalf("expected esc from details edit mode to return to task info, got %v", m.mode)
+	}
+}
+
+// TestModelDescriptionEditorLayoutRespectsNarrowViewport verifies editor layout stays within terminal bounds.
+func TestModelDescriptionEditorLayoutRespectsNarrowViewport(t *testing.T) {
+	now := time.Date(2026, 3, 3, 9, 8, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, nil)))
+
+	m = applyMsg(t, m, keyRune('n'))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.mode != modeDescriptionEditor {
+		t.Fatalf("expected description editor mode, got %v", m.mode)
+	}
+	m = applyMsg(t, m, tea.WindowSizeMsg{Width: 50, Height: 20})
+
+	layout := m.descriptionEditorLayout()
+	if wantMax := m.width - 2; layout.layoutWidth > wantMax {
+		t.Fatalf("expected layout width <= %d in narrow viewport, got %d", wantMax, layout.layoutWidth)
+	}
+	if !layout.splitVertically {
+		t.Fatalf("expected narrow viewport to stack editor/preview vertically, got splitVertically=%v", layout.splitVertically)
+	}
+
+	m.descriptionEditorInput.SetValue(strings.Repeat("full page md ", 1200))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyTab})
+	if m.descriptionEditorMode != descriptionEditorViewModePreview {
+		t.Fatalf("expected preview mode after tab, got %v", m.descriptionEditorMode)
+	}
+
+	before := m.descriptionPreview.YOffset()
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyPgDown})
+	after := m.descriptionPreview.YOffset()
+	if after <= before {
+		t.Fatalf("expected preview scroll movement in narrow viewport, before=%d after=%d", before, after)
+	}
+}
+
 // TestModelInputModeGlobalHelpAndSelectionToggles verifies '?' and selection-toggle keys work inside modal/input screens.
 func TestModelInputModeGlobalHelpAndSelectionToggles(t *testing.T) {
 	now := time.Date(2026, 2, 23, 9, 30, 0, 0, time.UTC)
@@ -3063,6 +3400,67 @@ func TestModelTaskInfoEscStepsBack(t *testing.T) {
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
 	if m.mode != modeNone {
 		t.Fatalf("expected esc to close task-info at root, got %v", m.mode)
+	}
+}
+
+// TestModelTaskInfoEscStopsAtEntryPathRoot verifies esc retraces visited nodes and closes at the entry node.
+func TestModelTaskInfoEscStopsAtEntryPathRoot(t *testing.T) {
+	now := time.Date(2026, 3, 3, 12, 50, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	grand, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-grand",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Kind:      domain.WorkKindTask,
+		Title:     "Grandparent",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	parent, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-parent",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  1,
+		Kind:      domain.WorkKindTask,
+		ParentID:  grand.ID,
+		Title:     "Parent",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	child, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-child",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  2,
+		Kind:      domain.WorkKindSubtask,
+		ParentID:  parent.ID,
+		Title:     "Child",
+		Priority:  domain.PriorityLow,
+	}, now)
+
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{grand, parent, child})))
+	if !m.openTaskInfo(parent.ID, "task info") {
+		t.Fatal("expected openTaskInfo(parent) to succeed")
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+	if got := strings.TrimSpace(m.taskInfoTaskID); got != child.ID {
+		t.Fatalf("expected drill into child %q, got %q", child.ID, got)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.mode != modeTaskInfo {
+		t.Fatalf("expected esc to step back within task info, got %v", m.mode)
+	}
+	if got := strings.TrimSpace(m.taskInfoTaskID); got != parent.ID {
+		t.Fatalf("expected esc to return to parent %q, got %q", parent.ID, got)
+	}
+
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.mode != modeNone {
+		t.Fatalf("expected second esc to close at entry root (not jump to grandparent), got %v", m.mode)
+	}
+	if got := strings.TrimSpace(m.taskInfoTaskID); got != "" {
+		t.Fatalf("expected closed task info to clear active task id, got %q", got)
 	}
 }
 
@@ -4275,6 +4673,44 @@ func TestTaskInfoModeAndPriorityPicker(t *testing.T) {
 	}
 }
 
+// TestTaskInfoEscFromDirectChildClosesWithoutAncestorJump verifies esc closes direct child task-info without jumping to ancestors.
+func TestTaskInfoEscFromDirectChildClosesWithoutAncestorJump(t *testing.T) {
+	now := time.Date(2026, 3, 3, 11, 30, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Inbox", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	parent, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-parent",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Kind:      domain.WorkKindTask,
+		Title:     "Parent Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	child, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-child",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  1,
+		ParentID:  parent.ID,
+		Kind:      domain.WorkKindSubtask,
+		Title:     "Child Subtask",
+		Priority:  domain.PriorityLow,
+	}, now)
+	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{project}, []domain.Column{column}, []domain.Task{parent, child})))
+
+	if !m.openTaskInfo(child.ID, "task info") {
+		t.Fatal("expected openTaskInfo(child) to succeed")
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+	if m.mode != modeNone {
+		t.Fatalf("expected esc to close direct child task info, got %v", m.mode)
+	}
+	if got := strings.TrimSpace(m.taskInfoTaskID); got != "" {
+		t.Fatalf("expected closed task info to clear active task id, got %q", got)
+	}
+}
+
 // TestTaskFormDuePickerFlow verifies behavior for the covered scenario.
 func TestTaskFormDuePickerFlow(t *testing.T) {
 	now := time.Date(2026, 2, 21, 12, 0, 0, 0, time.UTC)
@@ -4644,7 +5080,7 @@ func TestModelMultiSelectBulkMoveUndoRedo(t *testing.T) {
 		t.Fatalf("expected t2 moved to %s, got %#v ok=%t", c2.ID, task, ok)
 	}
 
-	m = applyMsg(t, m, keyRune('z'))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: 'z', Mod: tea.ModCtrl})
 	if task, ok := svc.taskByID("t1"); !ok || task.ColumnID != c1.ID {
 		t.Fatalf("expected t1 moved back to %s after undo, got %#v ok=%t", c1.ID, task, ok)
 	}
@@ -4655,7 +5091,7 @@ func TestModelMultiSelectBulkMoveUndoRedo(t *testing.T) {
 		t.Fatalf("expected undo status message, got %q", m.status)
 	}
 
-	m = applyMsg(t, m, keyRune('Z'))
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: 'z', Mod: tea.ModCtrl | tea.ModShift})
 	if task, ok := svc.taskByID("t1"); !ok || task.ColumnID != c2.ID {
 		t.Fatalf("expected t1 moved again to %s after redo, got %#v ok=%t", c2.ID, task, ok)
 	}
@@ -5937,6 +6373,63 @@ func TestModelActivityEventTargetDetailsFallbackLabels(t *testing.T) {
 	}
 }
 
+// TestModelActivityEventInfoPathCollapsesMiddleSegments verifies activity-event path rendering preserves root + focused node in narrow overlays.
+func TestModelActivityEventInfoPathCollapsesMiddleSegments(t *testing.T) {
+	now := time.Date(2026, 3, 1, 17, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Project Atlas", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	branch, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-branch",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Branch Foundation",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	phase, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-phase",
+		ProjectID: project.ID,
+		ParentID:  branch.ID,
+		ColumnID:  column.ID,
+		Position:  1,
+		Title:     "Phase Delivery",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	leaf, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-leaf",
+		ProjectID: project.ID,
+		ParentID:  phase.ID,
+		ColumnID:  column.ID,
+		Position:  2,
+		Title:     "Focused Leaf",
+		Priority:  domain.PriorityMedium,
+	}, now)
+
+	m := Model{
+		mode:            modeActivityEventInfo,
+		projects:        []domain.Project{project},
+		selectedProject: 0,
+		tasks:           []domain.Task{branch, phase, leaf},
+		activityInfoItem: activityEntry{
+			WorkItemID: leaf.ID,
+			Summary:    "updated node metadata",
+			Operation:  domain.ChangeOperationUpdate,
+			At:         now,
+		},
+	}
+
+	rendered := stripANSI(m.renderModeOverlay(
+		lipgloss.Color("62"),
+		lipgloss.Color("241"),
+		lipgloss.Color("239"),
+		lipgloss.NewStyle(),
+		54,
+	))
+	if !strings.Contains(rendered, "path: Project Atlas -> ... -> Focused Leaf") {
+		t.Fatalf("expected collapsed activity path in narrow overlay, got\n%s", rendered)
+	}
+}
+
 // TestModelFormatActivityMetadataFriendlyFallbacks verifies metadata rendering keeps useful labels while hiding raw id noise.
 func TestModelFormatActivityMetadataFriendlyFallbacks(t *testing.T) {
 	m := Model{
@@ -6882,6 +7375,52 @@ func TestModelProjectionFocusBreadcrumbMode(t *testing.T) {
 	fullBoardView := stripANSI(fmt.Sprint(m.View().Content))
 	if !strings.Contains(fullBoardView, "path: Inbox") {
 		t.Fatalf("expected project path while not focused, got\n%s", fullBoardView)
+	}
+}
+
+// TestModelBoardPathLineCollapsesMiddleSegments verifies board header path uses middle ellipsis under constrained width.
+func TestModelBoardPathLineCollapsesMiddleSegments(t *testing.T) {
+	now := time.Date(2026, 2, 21, 13, 0, 0, 0, time.UTC)
+	project, _ := domain.NewProject("p1", "Roadmap Hub", "", now)
+	column, _ := domain.NewColumn("c1", project.ID, "To Do", 0, 0, now)
+	branch, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-branch",
+		ProjectID: project.ID,
+		ColumnID:  column.ID,
+		Position:  0,
+		Title:     "Branch Architecture",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	phase, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-phase",
+		ProjectID: project.ID,
+		ParentID:  branch.ID,
+		ColumnID:  column.ID,
+		Position:  1,
+		Title:     "Phase Discovery",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	leaf, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t-leaf",
+		ProjectID: project.ID,
+		ParentID:  phase.ID,
+		ColumnID:  column.ID,
+		Position:  2,
+		Title:     "Focused Item",
+		Priority:  domain.PriorityLow,
+	}, now)
+
+	m := loadReadyModel(t, NewModel(newFakeService(
+		[]domain.Project{project},
+		[]domain.Column{column},
+		[]domain.Task{branch, phase, leaf},
+	)))
+	m.projectionRootTaskID = leaf.ID
+	m = applyMsg(t, m, tea.WindowSizeMsg{Width: 44, Height: 24})
+
+	rendered := stripANSI(fmt.Sprint(m.View().Content))
+	if !strings.Contains(rendered, "path: Roadmap Hub -> ... -> Focused Item") {
+		t.Fatalf("expected collapsed board path in narrow layout, got\n%s", rendered)
 	}
 }
 

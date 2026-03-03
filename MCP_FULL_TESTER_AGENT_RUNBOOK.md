@@ -11,35 +11,36 @@ Hard requirement: cover **every currently registered MCP tool**, protocol/statel
 
 Current MCP tool surface to validate:
 1. `till.capture_state`
-2. `till.get_bootstrap_guide`
-3. `till.list_projects`
-4. `till.create_project`
-5. `till.update_project`
-6. `till.list_tasks`
-7. `till.create_task`
-8. `till.update_task`
-9. `till.move_task`
-10. `till.delete_task`
-11. `till.restore_task`
-12. `till.reparent_task`
-13. `till.list_child_tasks`
-14. `till.search_task_matches`
-15. `till.list_project_change_events`
-16. `till.get_project_dependency_rollup`
-17. `till.list_kind_definitions`
-18. `till.upsert_kind_definition`
-19. `till.set_project_allowed_kinds`
-20. `till.list_project_allowed_kinds`
-21. `till.issue_capability_lease`
-22. `till.heartbeat_capability_lease`
-23. `till.renew_capability_lease`
-24. `till.revoke_capability_lease`
-25. `till.revoke_all_capability_leases`
-26. `till.create_comment`
-27. `till.list_comments_by_target`
-28. `till.list_attention_items`
-29. `till.raise_attention_item`
-30. `till.resolve_attention_item`
+2. `till.get_instructions`
+3. `till.get_bootstrap_guide`
+4. `till.list_projects`
+5. `till.create_project`
+6. `till.update_project`
+7. `till.list_tasks`
+8. `till.create_task`
+9. `till.update_task`
+10. `till.move_task`
+11. `till.delete_task`
+12. `till.restore_task`
+13. `till.reparent_task`
+14. `till.list_child_tasks`
+15. `till.search_task_matches`
+16. `till.list_project_change_events`
+17. `till.get_project_dependency_rollup`
+18. `till.list_kind_definitions`
+19. `till.upsert_kind_definition`
+20. `till.set_project_allowed_kinds`
+21. `till.list_project_allowed_kinds`
+22. `till.issue_capability_lease`
+23. `till.heartbeat_capability_lease`
+24. `till.renew_capability_lease`
+25. `till.revoke_capability_lease`
+26. `till.revoke_all_capability_leases`
+27. `till.create_comment`
+28. `till.list_comments_by_target`
+29. `till.list_attention_items`
+30. `till.raise_attention_item`
+31. `till.resolve_attention_item`
 
 ## 2) Mandatory Safety + Approval Policy
 1. If a command needs sandbox escalation, stop and ask the user with a human-readable reason.
@@ -85,9 +86,9 @@ Lane A (transport/protocol/stateless)
 - Lock scope: `.tmp/mcp_lane_a_transport.md`, `.tmp/mcp-e2e-*/transport-*`
 - Acceptance: protocol/version/init/tools-list/session-header/stateless checks complete.
 
-Lane B (capture + attention + bootstrap)
+Lane B (capture + attention + bootstrap + instructions)
 - Lock scope: `.tmp/mcp_lane_b_capture_attention.md`, `.tmp/mcp-e2e-*/capture-attn-*`
-- Acceptance: all `capture_state`, bootstrap, and attention tool options + errors complete.
+- Acceptance: all `capture_state`, instructions, bootstrap, and attention tool options + errors complete.
 
 Lane C (projects/tasks/search/change/dependency)
 - Lock scope: `.tmp/mcp_lane_c_projects_tasks_search.md`, `.tmp/mcp-e2e-*/work-*`
@@ -152,7 +153,7 @@ Required checks:
 2. `initialize` with `2024-11-05` legacy protocol.
 3. `initialize` with unsupported future protocol (verify deterministic fallback/error behavior).
 4. `initialize` missing `protocolVersion` (record exact behavior).
-5. `tools/list` includes all 30 tool names above.
+5. `tools/list` includes all 31 tool names above.
 6. no `Mcp-Session-Id` header in stateless mode.
 7. calls still work when bogus `Mcp-Session-Id` header is sent.
 8. unknown method handling is deterministic.
@@ -178,6 +179,7 @@ Failure matrix:
 - non-project missing `scope_id`
 
 ### 8.2 Bootstrap tool
+- `till.get_instructions`: markdown inventory, scoped `doc_names`, `include_markdown` true/false behavior, and `max_chars_per_doc` truncation/error handling.
 - `till.get_bootstrap_guide` response shape + actionable fields.
 
 ### 8.3 Attention tools
