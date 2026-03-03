@@ -2570,3 +2570,89 @@ Status:
 - MCP mutation auth policy now enforces agent-role + lease tuple requirements.
 - HTTP user actor operations remain supported.
 - external/system actor rejection is enforced at adapter validation.
+
+## Checkpoint 2026-03-03: Live MCP Runtime Auth Verification (Post-Commit)
+
+Objective:
+- validate live MCP server behavior for the just-landed auth policy changes (actor-role restriction + lease tuple enforcement + guardrail failures).
+
+Live runtime probes executed (MCP tools):
+1. `till.list_projects` -> PASS (runtime reachable).
+2. `till.list_tasks(project_id=5996fbd8-6a35-42cb-bd01-5aa0a4495cec)` -> PASS (fixture context confirmed).
+3. Negative actor-type probe:
+   - `till.create_project(... actor_type=user, agent_name, agent_instance_id, lease_token)` -> FAIL CLOSED
+   - response: `invalid_request: actor_type must be "agent_orchestrator" or "agent_subagent"`.
+4. Negative actor-type probe:
+   - `till.create_project(... actor_type=system, agent_name, agent_instance_id, lease_token)` -> FAIL CLOSED
+   - response: `invalid_request: actor_type must be "agent_orchestrator" or "agent_subagent"`.
+5. Missing tuple probe:
+   - `till.create_project(... actor_type=agent_orchestrator)` with missing `agent_name/agent_instance_id/lease_token` -> FAIL CLOSED
+   - response: `invalid_request: agent_name, agent_instance_id, and lease_token are required for authenticated MCP mutations`.
+6. Positive MCP mutation shape probe:
+   - `till.create_project(name=mcp-auth-check-positive-2026-03-03, actor_type=agent_orchestrator, tuple supplied)` -> PASS
+   - project id: `63e404ba-5631-4367-9cf5-1177d316bcd7`.
+7. Lease issuance:
+   - `till.issue_capability_lease(project scope, role=orchestrator, agent_name=probe-agent, agent_instance_id=probe-agent-instance)` -> PASS
+   - lease token: `4301f838-6052-4322-bae6-c827366930d9`.
+8. Positive lease-validated mutation:
+   - `till.update_project(... actor_type=agent_orchestrator, tuple + issued lease)` -> PASS.
+9. Invalid lease token probe:
+   - `till.update_project(... lease_token=not-a-valid-issued-lease)` -> FAIL CLOSED
+   - response: `guardrail_failed ... mutation lease is invalid`.
+10. Cross-project lease misuse probe:
+   - created second target project `c3427235-6408-4d91-9f87-47a66f3910cf`.
+   - attempted update with lease from first project -> FAIL CLOSED
+   - response: `guardrail_failed ... mutation lease is invalid`.
+11. `agent_subagent` acceptance probe:
+   - overlap check: second orchestrator lease while first active -> FAIL CLOSED (`overlapping orchestrator lease blocked`).
+   - revoked first lease (`till.revoke_capability_lease`) -> PASS.
+   - issued lease for `probe-agent-sub-instance` -> PASS.
+   - `till.update_project(... actor_type=agent_subagent, valid tuple/lease)` -> PASS.
+12. Cleanup:
+   - `till.revoke_capability_lease(agent_instance_id=probe-agent-sub-instance)` -> PASS.
+
+Outcome summary:
+- live MCP runtime now rejects `actor_type=user|system` for mutation calls.
+- live MCP runtime requires authenticated tuple fields for mutation calls.
+- guardrails fail closed for invalid/mismatched leases.
+- both allowed MCP mutation role values (`agent_orchestrator`, `agent_subagent`) execute successfully with valid lease tuples.
+
+Supplemental local test evidence:
+1. `just test-pkg ./internal/adapters/server/mcpapi` -> PASS.
+2. `just test-pkg ./internal/adapters/server/common` -> `[no test files]` under default build tags.
+   - note: adapter common tests in this repo use `//go:build commonhash` and are excluded unless that tag is enabled.
+
+## Checkpoint 2026-03-03: Notifications Reliability Regression (Global + Project)
+
+Objective:
+- track and resolve newly reported runtime regression where global notifications and possibly project notifications are not functioning reliably.
+
+User-reported issue:
+1. Global notifications appear non-functional.
+2. Project notifications may also be impacted.
+3. Current behavior needs fresh collaborative verification before implementation assumptions.
+
+Required execution flow (collaborative):
+1. Reproduce and baseline current behavior in a live collaborative run.
+   - run targeted collaborative notification checks from active worksheet flow.
+   - capture exact observed behavior for:
+     - global notification count updates,
+     - project notification list updates,
+     - keyboard navigation/drill-in behavior,
+     - refresh timing after MCP and local mutations.
+2. Convert findings into an explicit fix plan before code changes.
+   - identify whether failure is state ingestion, render/update loop, filtering/scope logic, or interaction handling.
+   - map each finding to one scoped fix item with acceptance criteria.
+3. Execute fix/test iteration loop until behavior is stable.
+   - implement one scoped fix at a time,
+   - run relevant package tests (`just test-pkg ./internal/tui` and any touched server/app packages),
+   - re-run collaborative notification checks for the same scope,
+   - log pass/fail evidence after each iteration.
+4. Close with full validation gates.
+   - run `just check` and `just ci`,
+   - update collaborative worksheet verdicts and evidence references,
+   - keep section open until user confirms expected live behavior.
+
+Status:
+- open blocker for collaborative dogfooding readiness.
+- next action: run focused collaborative notification test pass and capture current-state evidence before coding.
