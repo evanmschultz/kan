@@ -22,56 +22,20 @@ func (m Model) renderThreadModeView() tea.View {
 	muted := lipgloss.Color("241")
 	dim := lipgloss.Color("239")
 
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("252"))
 	hintStyle := lipgloss.NewStyle().Foreground(muted)
-	statusStyle := lipgloss.NewStyle().Foreground(dim)
 	sectionTitleStyle := threadSectionStyle(accent)
+	title, subtitle := m.threadSurfaceHeader()
+	boxWidth := taskInfoOverlayBoxWidth(max(0, m.fullPageNodeContentWidth()))
+	metrics := m.fullPageSurfaceMetrics(accent, muted, dim, boxWidth, title, subtitle, "")
 
-	threadTitle := strings.TrimSpace(m.threadTitle)
-	if threadTitle == "" {
-		threadTitle = "(untitled thread)"
+	sidebarWidth := clamp(max(28, metrics.contentWidth/3), 28, 44)
+	if metrics.contentWidth-sidebarWidth < 52 {
+		sidebarWidth = max(24, metrics.contentWidth-52)
 	}
-	header := titleStyle.Render("tillsyn thread") + "  " + threadTitle + statusStyle.Render("  ["+m.modeLabel()+"]")
-	targetLine := hintStyle.Render(fmt.Sprintf("target: %s/%s  comments: %d", m.threadTarget.TargetType, m.threadTarget.TargetID, len(m.threadComments)))
-
-	footerHint := "read mode • e details focus • i compose comment • pgup/pgdown and mouse wheel scroll comments • ctrl+r reload • ? help • esc back"
-	if m.threadComposerActive {
-		footerHint = "composer active • ctrl+s post • enter newline • tab/esc read mode • ? help"
-	}
-	if m.threadDetailsActive {
-		footerHint = "details focused • enter edit target • i open description editor • esc read mode • ? help"
-	}
-
-	layoutWidth := max(72, m.width-2)
-	if m.width <= 0 {
-		layoutWidth = 120
-	}
-	sidebarWidth := clamp(max(28, layoutWidth/3), 28, 44)
-	if layoutWidth-sidebarWidth < 52 {
-		sidebarWidth = max(24, layoutWidth-52)
-	}
-	leftWidth := max(48, layoutWidth-sidebarWidth-1)
-
-	statusLine := ""
-	if statusText := strings.TrimSpace(m.status); statusText != "" && statusText != "ready" {
-		statusLine = statusStyle.Render(statusText)
-	}
-	headerBlock := strings.Join([]string{header, targetLine, ""}, "\n")
-	footerBlock := strings.Join([]string{"", hintStyle.Render(footerHint)}, "\n")
-	if statusLine != "" {
-		footerBlock += "\n" + statusLine
-	}
-	workspaceHeight := 18
-	if m.height > 0 {
-		workspaceHeight = m.height - lipgloss.Height(headerBlock) - lipgloss.Height(footerBlock)
-	}
-	if workspaceHeight < 12 {
-		workspaceHeight = 12
-	}
-
-	commentsHeight := max(8, workspaceHeight/4)
-	descriptionHeight := max(8, workspaceHeight-commentsHeight-1)
-	workspaceHeight = descriptionHeight + commentsHeight + 1
+	leftWidth := max(48, metrics.contentWidth-sidebarWidth-1)
+	commentsHeight := max(8, metrics.bodyHeight/4)
+	descriptionHeight := max(8, metrics.bodyHeight-commentsHeight-1)
+	workspaceHeight := descriptionHeight + commentsHeight + 1
 
 	descriptionPanel := m.renderThreadDescriptionPanel(accent, muted, dim, sectionTitleStyle, hintStyle, leftWidth, descriptionHeight)
 	commentsPanel := m.renderThreadCommentsPanel(accent, muted, dim, sectionTitleStyle, hintStyle, leftWidth, commentsHeight)
@@ -86,36 +50,15 @@ func (m Model) renderThreadModeView() tea.View {
 		leftColumn,
 		lipgloss.NewStyle().MarginLeft(1).Render(rightPanel),
 	)
-
-	content := strings.Join([]string{headerBlock, workspace, footerBlock}, "\n")
-	if m.height > 0 {
-		content = fitLines(content, m.height)
-	}
-	if m.help.ShowAll {
-		overlay := m.renderHelpOverlay(accent, muted, dim, hintStyle, m.width-8)
-		if overlay != "" {
-			overlayHeight := lipgloss.Height(content)
-			if m.height > 0 {
-				overlayHeight = m.height
-			}
-			content = overlayOnContent(content, overlay, max(1, m.width), max(1, overlayHeight))
-		}
-	}
-
-	v := tea.NewView(content)
-	v.MouseMode = m.activeMouseMode()
-	v.AltScreen = true
-	return v
+	surface := renderFullPageSurfaceBody(accent, muted, metrics.boxWidth, title, subtitle, "", workspace)
+	return m.renderFullPageSurfaceView(accent, muted, dim, metrics, surface)
 }
 
 // renderThreadDescriptionPanel renders the top description/details pane for thread mode.
 func (m Model) renderThreadDescriptionPanel(accent, muted, dim color.Color, sectionTitleStyle, hintStyle lipgloss.Style, width, height int) string {
-	title := "Task Description"
+	title := "Task Details"
 	if m.threadTarget.TargetType == domain.CommentTargetTypeProject {
-		title = "Project Description"
-	}
-	if m.threadDetailsActive {
-		title = strings.Replace(title, "Description", "Details", 1)
+		title = "Project Details"
 	}
 	contentWidth := max(20, width-4)
 	contentHeight := max(4, height-2)
@@ -130,10 +73,9 @@ func (m Model) renderThreadDescriptionPanel(accent, muted, dim color.Color, sect
 	bodyHeight := max(1, contentHeight-2)
 	body := fitLines(strings.Join(bodyLines, "\n"), bodyHeight)
 	lines = append(lines, strings.Split(body, "\n")...)
-	lines = append(lines, hintStyle.Render("e focus details • enter edit target • i markdown editor"))
 
 	borderColor := dim
-	if m.threadDetailsActive {
+	if m.threadPanelFocus == threadPanelDetails {
 		borderColor = accent
 	}
 	return lipgloss.NewStyle().
@@ -164,7 +106,6 @@ func (m Model) renderThreadCommentsPanel(accent, muted, dim color.Color, section
 		"",
 		sectionTitleStyle.Render("New Comment"),
 		composer.View(),
-		hintStyle.Render("i focus composer • ctrl+s post • enter newline"),
 	}
 
 	commentListHeight := max(1, contentHeight-len(composerBlock)-1)
@@ -179,7 +120,7 @@ func (m Model) renderThreadCommentsPanel(accent, muted, dim color.Color, section
 	lines = append(lines, composerBlock...)
 
 	borderColor := dim
-	if m.threadComposerActive {
+	if m.threadPanelFocus == threadPanelComments || m.threadComposerActive {
 		borderColor = accent
 	}
 	return lipgloss.NewStyle().
@@ -188,6 +129,30 @@ func (m Model) renderThreadCommentsPanel(accent, muted, dim color.Color, section
 		Padding(0, 1).
 		Width(width).
 		Render(fitLines(strings.Join(lines, "\n"), contentHeight))
+}
+
+// threadSurfaceHeader returns the shared bordered-surface title and subtitle for thread mode.
+func (m Model) threadSurfaceHeader() (string, string) {
+	switch m.threadTarget.TargetType {
+	case domain.CommentTargetTypeProject:
+		title := "Project Thread"
+		projectName := strings.TrimSpace(m.threadTitle)
+		if projectName == "" {
+			projectName = strings.TrimSpace(m.threadTarget.TargetID)
+		}
+		return title, fmt.Sprintf("project: %s • comments: %d • mode: thread", projectName, len(m.threadComments))
+	default:
+		taskID := strings.TrimSpace(m.threadTarget.TargetID)
+		if task, ok := m.taskByID(taskID); ok {
+			return taskInfoNodeLabel(task) + " Thread", fmt.Sprintf(
+				"kind: %s • state: %s • complete: %s • mode: thread",
+				string(task.Kind),
+				lifecycleStateLabel(m.lifecycleStateForTask(task)),
+				completionLabel(m.lifecycleStateForTask(task) == domain.StateDone),
+			)
+		}
+		return "Task Thread", fmt.Sprintf("task: %s • comments: %d • mode: thread", truncate(taskID, 36), len(m.threadComments))
+	}
 }
 
 // renderThreadContextPanel renders owner/target/history context to the right of description/comments.
@@ -221,14 +186,41 @@ func (m Model) renderThreadContextPanel(accent, muted, dim color.Color, sectionT
 			}
 		}
 	}
-	lines = append(lines, "", hintStyle.Render("enter: open edit when details focused"))
-
+	borderColor := dim
+	if m.threadPanelFocus == threadPanelContext {
+		borderColor = accent
+	}
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(dim).
+		BorderForeground(borderColor).
 		Padding(0, 1).
 		Width(width).
 		Render(fitLines(strings.Join(lines, "\n"), contentHeight))
+}
+
+// focusThreadPanel moves focus across the thread panels while preserving composer/edit intent.
+func (m *Model) focusThreadPanel(panel int) tea.Cmd {
+	if m == nil {
+		return nil
+	}
+	m.threadPanelFocus = wrapIndex(panel, 0, threadPanelCount)
+	m.threadDetailsActive = m.threadPanelFocus == threadPanelDetails
+	if m.threadPanelFocus != threadPanelComments && m.threadComposerActive {
+		m.threadComposerActive = false
+		m.threadInput.Blur()
+	}
+	if m.threadPanelFocus == threadPanelComments && m.threadComposerActive {
+		return m.threadInput.Focus()
+	}
+	return nil
+}
+
+// moveThreadPanelFocus shifts focus between thread panels.
+func (m *Model) moveThreadPanelFocus(delta int) tea.Cmd {
+	if m == nil {
+		return nil
+	}
+	return m.focusThreadPanel(wrapIndex(m.threadPanelFocus, delta, threadPanelCount))
 }
 
 // renderThreadDescriptionEditorView renders a full-screen markdown description editor with live Glamour preview.
@@ -400,7 +392,7 @@ func (m Model) startTaskThread(task domain.Task, backMode inputMode) (tea.Model,
 
 // startThread initializes thread-mode state and kicks off comment loading.
 func (m Model) startThread(backMode inputMode, target domain.CommentTarget, title, description string) (tea.Model, tea.Cmd) {
-	if backMode != modeTaskInfo {
+	if backMode != modeTaskInfo && backMode != modeEditTask {
 		backMode = modeNone
 	}
 	m.mode = modeThread
@@ -412,7 +404,8 @@ func (m Model) startThread(backMode inputMode, target domain.CommentTarget, titl
 	m.threadScroll = 0
 	m.threadPendingCommentBody = ""
 	m.threadComposerActive = false
-	m.threadDetailsActive = false
+	m.threadDetailsActive = true
+	m.threadPanelFocus = threadPanelDetails
 	m.threadDetailsEditorActive = false
 	m.threadInput.SetValue("")
 	m.threadInput.CursorEnd()

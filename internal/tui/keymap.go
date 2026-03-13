@@ -18,7 +18,6 @@ type keyMap struct {
 	moveUp           key.Binding
 	moveDown         key.Binding
 	addTask          key.Binding
-	addSubtask       key.Binding
 	taskInfo         key.Binding
 	editTask         key.Binding
 	newProject       key.Binding
@@ -54,7 +53,6 @@ func newKeyMap() keyMap {
 		moveUp:           key.NewBinding(key.WithKeys("k", "up"), key.WithHelp("k/↑", "move up")),
 		moveDown:         key.NewBinding(key.WithKeys("j", "down"), key.WithHelp("j/↓", "move down")),
 		addTask:          key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "new task")),
-		addSubtask:       key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "new subtask")),
 		taskInfo:         key.NewBinding(key.WithKeys("i", "enter"), key.WithHelp("i/enter", "task info")),
 		editTask:         key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit task")),
 		newProject:       key.NewBinding(key.WithKeys("N"), key.WithHelp("N", "new project")),
@@ -93,14 +91,14 @@ func (k *keyMap) applyConfig(cfg KeyConfig) {
 // ShortHelp handles short help.
 func (k keyMap) ShortHelp() []key.Binding {
 	return []key.Binding{
-		k.addTask, k.addSubtask, k.taskInfo, k.editTask, k.focusSubtree, k.toggleSelectMode, k.commandPalette, k.undo, k.activityLog, k.quit,
+		k.addTask, k.taskInfo, k.editTask, k.focusSubtree, k.toggleSelectMode, k.commandPalette, k.undo, k.activityLog, k.quit,
 	}
 }
 
 // FullHelp handles full help.
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.addTask, k.addSubtask, k.taskInfo, k.editTask, k.newProject, k.editProject, k.commandPalette, k.quickActions, k.search, k.projects, k.toggleArchived, k.toggleSelectMode, k.focusSubtree, k.clearFocus, k.toggleHelp, k.reload, k.quit},
+		{k.addTask, k.taskInfo, k.editTask, k.newProject, k.editProject, k.commandPalette, k.quickActions, k.search, k.projects, k.toggleArchived, k.toggleSelectMode, k.focusSubtree, k.clearFocus, k.toggleHelp, k.reload, k.quit},
 		{k.moveLeft, k.moveRight, k.moveUp, k.moveDown, k.moveTaskLeft, k.moveTaskRight},
 		{k.deleteTask, k.hardDeleteTask, k.restoreTask, k.multiSelect, k.undo, k.redo, k.activityLog},
 	}

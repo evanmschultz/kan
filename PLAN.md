@@ -3106,6 +3106,10 @@ Commands run and outcomes:
 14. `just test-pkg ./internal/tui` -> PASS.
 15. `just check` -> PASS.
 16. `just ci` -> PASS.
+17. Parallel review lane 1 (`git diff -- internal/tui/full_page_surface.go internal/tui/model.go internal/tui/thread_mode.go internal/tui/description_editor_mode.go internal/tui/model_test.go`) -> PASS:
+   - confirmed the shared full-page surface contract now owns height budgeting, task-form action routing is centralized, and thread/footer help matches focused-panel behavior.
+18. Parallel review lane 2 (`git diff -- PLAN.md COLLAB_VECTOR_MCP_E2E_WORKSHEET.md` plus targeted `sed` reads over `internal/tui/model_test.go`) -> PASS:
+   - confirmed tracker/test state reflects the FR-008 implementation wave, green validations, and the correct next collaborative step.
 
 Dual QA (required) after passing tests:
 1. Darwin (`019cbc1c-aaaa-75f1-8be4-d333d98e6e3d`) -> PASS.
@@ -3266,3 +3270,306 @@ Files/docs updated in this checkpoint:
 Status:
 - FR-005/FX-005 agent-side remediation is complete with passing package/full gates and parallel QA sign-off against explicit user requirements.
 - Collaborative progression remains paused pending user rerun of `T1-01` before moving to the next step.
+
+## Checkpoint 2026-03-13: FR-006 Post-Commit Node Screen Regression Remediation
+
+Objective:
+- address the new post-commit node-screen regressions before collaborative TUI testing resumes:
+  - right/bottom border overflow on full-page info/edit screens,
+  - description preview reset/scroll failures in info and preview contexts,
+  - edit-mode resource attach path not discoverable/usable,
+  - redundant inline field help still present,
+  - inconsistent section-label colons,
+  - no visible comments management path from edit mode.
+
+Context7 compliance:
+1. Pre-edit consult:
+   - `/charmbracelet/bubbles` viewport offset/reset behavior and `SetContent`/`YOffset` usage -> PASS.
+   - `/charmbracelet/bubbletea` mouse-wheel + key-routing behavior for full-screen panels -> PASS.
+2. Post-failure consult:
+   - after `just test-pkg ./internal/tui` failed on `TestModelTaskInfoDetailsViewportScrolls`, re-consulted `/charmbracelet/bubbles` viewport offset behavior before the next edit -> PASS.
+
+Subagent investigation:
+1. Inspection lane Sartre (`019ce86c-9de9-7120-bedd-8b01778532c5`) -> PASS:
+   - identified width-budget bug (`taskInfoOverlayBoxWidth` + `nodeModalBoxStyle`), insufficient full-page body-height reservation, preview reset bug, and nested viewport scroll conflict.
+2. Inspection lane Socrates (`019ce86c-a0ac-7132-987a-5d5941182c61`) -> PASS:
+   - confirmed resources open path already exists, isolated redundant inline-help lines, flagged missing colon consistency, and identified lack of edit-mode comments affordance.
+3. QA lane Copernicus (`019ce87f-bb0a-7b13-b2b0-55e97f78f086`) -> initial FAIL:
+   - found lowercase `c` typing regression caused by new edit-mode comments shortcut.
+4. QA lane Faraday (`019ce87f-bdd0-7112-b89d-44cddb2080be`) -> initial FAIL:
+   - required new FR-006/FX-006 worksheet rows and a new PLAN checkpoint before tracker sign-off.
+
+Implementation summary:
+1. Updated `internal/tui/model.go`:
+   - corrected full-page node width budgeting so border + padding stay inside the terminal,
+   - added symmetric top/bottom insets around full-page node surfaces below the persistent `TILLSYN` header,
+   - reduced task-info/edit body viewport height budget so bottom borders stay visible,
+   - preserved `taskInfoDetails`, `taskInfoBody`, and description-preview offsets across `SetContent` refreshes,
+   - reset description preview to top on entry into preview contexts,
+   - changed task-info wheel routing so mouse scroll drives the inline description preview first while the page is at top, then falls through to page scroll,
+   - removed low-value inline field help and standardized task info/edit section labels with colons,
+   - added edit-mode comments/thread access and then refined it to `Shift+C` so lowercase typing remains intact.
+2. Updated `internal/tui/description_editor_mode.go`:
+   - preserved preview viewport offsets on layout/content refresh and added a shared `resetDescriptionPreviewToTop` helper.
+3. Updated `internal/tui/thread_mode.go`:
+   - allowed thread mode to return cleanly to edit-task mode without discarding current form state.
+4. Updated `internal/tui/model_test.go`:
+   - adjusted task-info scroll assertions to match body-vs-description routing,
+   - added frame-bounds coverage for full-page node views,
+   - added preview-opens-at-top coverage,
+   - added new-resource attach-row coverage,
+   - added edit-thread shortcut coverage including lowercase `c` typing preservation.
+
+Commands run and outcomes:
+1. `git status --short` -> PASS (clean start after prior commit).
+2. `sed -n '1,220p' Justfile` -> PASS (repo automation source of truth reloaded).
+3. Context7 pre-edit consults (`/charmbracelet/bubbles`, `/charmbracelet/bubbletea`) -> PASS.
+4. Parallel inspection subagents (Sartre + Socrates) -> PASS.
+5. `just fmt` -> PASS.
+6. `just test-pkg ./internal/tui` -> FAIL (`TestModelTaskInfoDetailsViewportScrolls`; test expectation bug after new scroll routing).
+7. Context7 post-failure re-consult (`/charmbracelet/bubbles`) -> PASS.
+8. Test fix + `just fmt` -> PASS.
+9. `just test-pkg ./internal/tui` -> PASS.
+10. `just check` -> PASS.
+11. `just ci` -> PASS.
+12. Parallel QA review (Copernicus + Faraday) -> FAIL/FAIL:
+    - Copernicus found lowercase `c` typing regression.
+    - Faraday required FR-006/FX-006 tracker/doc updates.
+13. `Shift+C` shortcut fix + typing regression test + `just fmt` -> PASS.
+14. `just test-pkg ./internal/tui` -> PASS.
+15. `just check` -> PASS.
+16. `just ci` -> PASS.
+
+Files/docs updated in this checkpoint:
+1. `internal/tui/model.go`
+2. `internal/tui/description_editor_mode.go`
+3. `internal/tui/thread_mode.go`
+4. `internal/tui/model_test.go`
+5. `COLLAB_VECTOR_MCP_E2E_WORKSHEET.md`
+6. `PLAN.md`
+
+Status:
+- FR-006 code/test remediation is complete with green package/full gates.
+- Final QA re-audit is complete:
+  - Copernicus (`019ce87f-bb0a-7b13-b2b0-55e97f78f086`) -> PASS after `Shift+C` follow-up fix.
+  - Faraday (`019ce87f-bdd0-7112-b89d-44cddb2080be`) -> PASS after FR-006 worksheet/PLAN state sync.
+- Collaborative progression remains paused pending user rerun of the same blocked section step (`T1-01`) before moving forward.
+
+## Checkpoint 2026-03-13: FR-007 Node Screen Consistency Sweep After User Rerun Feedback
+
+Objective:
+- address the next set of user-reported inconsistencies on the same blocked collaborative step before testing resumes:
+  - asymmetric right-side inset and bottom clipping on full-page node screens,
+  - task-info mouse wheel should scroll the page rather than the nested description preview,
+  - edit-mode `comments` must be focusable and open through `enter/e`,
+  - `due` and `labels` must be modal-only action rows with no inline typing/autocomplete help,
+  - board-level `new subtask` shortcut/help must be removed,
+  - bottom help and expanded help must be accurate to the active screen.
+
+Context7 compliance:
+1. Pre-edit consult:
+   - `/charmbracelet/bubbletea` mode-specific key handling and mouse-event routing -> PASS.
+   - `/charmbracelet/bubbles` viewport usage for outer-page scrolling vs nested preview panes -> PASS.
+2. Post-failure consult:
+   - after `just fmt` surfaced a syntax error and after the first `just test-pkg ./internal/tui` run failed on stale expectations/goldens, re-consulted `/charmbracelet/bubbletea` and `/charmbracelet/bubbles` before the next edits -> PASS.
+
+Subagent investigation:
+1. Inspection lane Parfit (`019ce8c3-cb30-7e70-bdd7-83a5fdc5d90b`) -> PASS:
+   - audited bottom-help leakage, stale expanded-help lines, stale footer prompts, and remaining `ctrl+l`/`ctrl+g`/`Shift+C` references.
+2. Inspection lane Ohm (`019ce8c3-ce2c-7431-841e-a94472b4be93`) -> PASS:
+   - isolated the task-form action-row gaps (`comments` missing from focus order, `due/labels` still text inputs), plus the remaining full-page layout-width/body-height budgeting problem.
+
+Implementation summary:
+1. Updated `internal/tui/model.go`:
+   - centered full-page node surfaces and tightened width/height budgeting so borders stay fully on-screen with matched side gutters,
+   - converted task-info description preview to a top-aligned bounded preview while mouse wheel now scrolls the outer info page,
+   - reused the same bounded preview sizing in edit mode so description preview height matches info mode,
+   - made `due` and `labels` modal-only action rows, removed inline autocomplete/type hints, and removed `ctrl+l`, `ctrl+g`, and add-task `d`,
+   - added a focusable `comments` row that opens thread/comments via `enter/e`,
+   - made edit-mode mouse wheel scroll the full page viewport instead of changing focus,
+   - added mode-aware bottom help so board-only actions no longer leak into task info/edit/full-page node screens,
+   - removed the board-level `new subtask` shortcut handler and board help references.
+2. Updated `internal/tui/keymap.go`:
+   - removed board short/full help exposure for the old `new subtask` binding so the main screen help matches the available actions.
+3. Updated `internal/tui/model_test.go`:
+   - flipped task-info mouse-wheel expectations to page scroll,
+   - updated label/due/comment tests to the new modal-only action-row contract,
+   - refreshed help-copy assertions,
+   - updated task-info section-order assertions for `description:`,
+   - refreshed comment-row coverage and modal-opening flows.
+4. Updated TUI goldens:
+   - `internal/tui/testdata/TestModelGoldenBoardOutput.golden`
+   - `internal/tui/testdata/TestModelGoldenHelpExpandedOutput.golden`
+   to reflect removal of the board `new subtask` affordance and the new bottom-help output.
+5. Updated collaborative tracking:
+   - recorded FR-007/FX-007 and validation evidence in `COLLAB_VECTOR_MCP_E2E_WORKSHEET.md`.
+
+Commands run and outcomes:
+1. Context7 pre-edit consults (`/charmbracelet/bubbletea`, `/charmbracelet/bubbles`) -> PASS.
+2. Parallel inspection subagents (Parfit + Ohm) -> PASS.
+3. `rg`/`sed` inspection over `internal/tui/model.go`, `internal/tui/keymap.go`, `internal/tui/model_test.go` -> PASS.
+4. `just fmt` -> FAIL (syntax error in edit-task key-routing branch).
+5. Context7 post-failure re-consult (`/charmbracelet/bubbletea`) -> PASS.
+6. Syntax fix + `just fmt` -> PASS.
+7. `just test-pkg ./internal/tui` -> FAIL (stale goldens and pre-change test expectations for nested description scroll + inline label/due behavior).
+8. Context7 post-failure re-consult (`/charmbracelet/bubbles`) -> PASS.
+9. Test updates + `just fmt` -> PASS.
+10. `just test-golden-update` -> PASS.
+11. `just test-pkg ./internal/tui` -> PASS.
+12. `just check` -> PASS.
+13. `just ci` -> PASS.
+
+Files/docs updated in this checkpoint:
+1. `internal/tui/model.go`
+2. `internal/tui/keymap.go`
+3. `internal/tui/model_test.go`
+4. `internal/tui/testdata/TestModelGoldenBoardOutput.golden`
+5. `internal/tui/testdata/TestModelGoldenHelpExpandedOutput.golden`
+6. `COLLAB_VECTOR_MCP_E2E_WORKSHEET.md`
+7. `PLAN.md`
+
+Status:
+- FR-007 code/test remediation is complete with green package/full gates.
+- Independent QA sign-off is complete:
+  - Copernicus (`019ce87f-bb0a-7b13-b2b0-55e97f78f086`) -> PASS for scoped FR-007 code/UI review; residual risk only: no dedicated task-info frame-bounds golden, though the same full-page renderer path is covered.
+  - Faraday (`019ce87f-bdd0-7112-b89d-44cddb2080be`) -> PASS after FR-007 worksheet/PLAN state-sync corrections.
+- Collaborative progression remains paused pending the user's rerun of the same blocked section step (`T1-01`).
+
+## Checkpoint 2026-03-13: FR-008 Architecture Review After Third `T1-01` Rerun Failure
+
+Objective:
+- pause forward collaborative testing again on the same blocked step and determine whether the next fix wave should be a true layout/form unification pass instead of another targeted patch:
+  - edit full-page screen still clips its bottom border and keeps a wider right gutter than the left,
+  - keyboard focus movement does not auto-scroll newly focused rows into view,
+  - `depends_on` / `blocked_by` still do not match modal-only rows like `due` / `labels`,
+  - `enter` still does not open the resources picker in the reported path,
+  - add/edit/info/subtask still do not behave like one reused component family.
+
+Context7 compliance:
+1. Pre-discussion architecture consult:
+   - `/charmbracelet/bubbletea` for viewport sizing, focus-driven scrolling, and mode-specific key handling -> PASS.
+   - `/charmbracelet/bubbles` for viewport ownership and outer-page vs nested-preview scroll behavior -> PASS.
+2. Post-failure re-consult:
+   - not applicable yet; no implementation or test run has started in this FR-008 wave.
+
+Subagent investigation:
+1. Inspection lane Rawls (`019ce8fa-602d-7b42-8b0a-ac6a904cf780`) -> PASS:
+   - confirmed info and edit share only the bordered shell (`renderNodeModalViewport`) while layout sizing still depends on separate viewport/body branches and a heuristic `fullPageNodeBodyHeight()` budget, which explains why the edit footer can still push the bottom border off-screen when the footer wraps.
+2. Inspection lane Lorentz (`019ce8fa-633b-7952-b171-f2917ea964ff`) -> PASS:
+   - confirmed add-task, edit-task, and subtask share `startTaskForm` initialization but not one true screen contract; `taskFormBodyLines` still branches by mode, and action rows (`due`, `labels`, dependencies, comments, resources, subtasks) still use bespoke render/dispatch logic instead of one reusable abstraction.
+
+Architecture findings:
+1. The current code shares the shell, not the full screen-layout contract:
+   - shared border wrapper: `internal/tui/model.go` `renderNodeModalViewport`
+   - divergent sizing/render flow: task-info viewport sync + render vs task-form viewport rebuild branches
+   - heuristic height budgeting still uses fixed reserves instead of measured header/path/footer height.
+2. The current code shares task-form startup, not one full add/edit/subtask body contract:
+   - shared initializer: `startTaskForm`
+   - subtask bootstraps through `startSubtaskForm`, then diverges via mode-sensitive focus/body logic
+   - `taskFormBodyLines` still decides visible sections and rendering with edit-only branches.
+3. The current code already has one good DRY pattern for markdown-backed fields:
+   - shared markdown field classifier + one `startTaskFormMarkdownEditor` path
+   - the same pattern has not been applied to action rows/list-backed rows.
+
+Candidate remediation options for user consensus:
+1. Option A (recommended):
+   - introduce one shared full-page node layout metrics function/component for info/edit/add/subtask that measures rendered header/path/footer heights and computes the viewport from actual remaining rows,
+   - introduce one reusable action-row contract for `due`, `labels`, `depends_on`, `blocked_by`, `comments`, `resources`, and `subtasks`,
+   - drive add/edit/subtask through one variant-based task-form screen spec instead of branching body logic.
+2. Option B:
+   - keep the current split architecture and patch the symptoms only: footer-height accounting, focus auto-scroll on field moves, convert dependency rows to modal-only pickers, fix resource-enter dispatch, and tighten add/edit/subtask parity incrementally.
+
+Recommendation:
+- choose Option A.
+- Reason: the user is explicitly asking for React-style component reuse and the current failures are recurring precisely because only the outer shell was unified; continuing with targeted patches leaves the same divergence points in place and is likely to create another retest loop on `T1-01`.
+
+Commands run and outcomes:
+1. `git status --short` -> PASS (confirmed current uncommitted collaborative-remediation state before doc updates).
+2. `rg -n "FR-007|T1-01|FX-007|Discussion Log|Validation" COLLAB_VECTOR_MCP_E2E_WORKSHEET.md PLAN.md` -> PASS.
+3. `sed -n '70,165p' COLLAB_VECTOR_MCP_E2E_WORKSHEET.md` -> PASS.
+4. `sed -n '175,205p' COLLAB_VECTOR_MCP_E2E_WORKSHEET.md` -> PASS.
+5. Documentation updates only in this checkpoint; no package tests/checks run yet because the wave is still at the user-consensus stage.
+
+Files/docs updated in this checkpoint:
+1. `COLLAB_VECTOR_MCP_E2E_WORKSHEET.md`
+2. `PLAN.md`
+
+Status:
+- `T1-01` remains FAIL and forward collaborative progression is paused.
+- FR-008 / FX-008 are logged and current in the worksheet.
+- No implementation lane has started yet for FR-008.
+- Next step: present Option A vs Option B to the user, recommend Option A, and wait for explicit consensus before editing code.
+
+## Checkpoint 2026-03-13: FX-008 Option A Implementation, Test Remediation, And Gate Validation
+
+Objective:
+- implement the agreed Option A remediation wave for the same blocked collaborative step `T1-01` by unifying the full-page surface contract, tightening shared task-form/action-row behavior, and revalidating before the user reruns the same step.
+
+User consensus and scope:
+1. User explicitly selected Option A and expanded the scope to cover all full-screen surfaces, not just task info/edit:
+   - use one measured wrapper/header contract across full-page screens,
+   - keep comments/thread on the same outer shell pattern,
+   - remove invalid/duplicated screen help and stale shortcuts,
+   - keep behavior consistent and natural across task info, task edit/add/subtask, thread, and description views.
+
+Context7 compliance:
+1. Pre-edit consult:
+   - `/charmbracelet/bubbletea` for central View routing and mode-specific key handling -> PASS.
+   - `/charmbracelet/bubbles` for viewport sizing, `SetWidth` / `SetHeight` / `SetYOffset`, and focused-content visibility after content refresh -> PASS.
+2. Post-failure re-consults:
+   - after first `just test-pkg ./internal/tui` failure, re-consulted `/charmbracelet/bubbles` for viewport-state preservation and `/charmbracelet/bubbletea` for focus-sensitive key routing -> PASS.
+   - after second `just test-pkg ./internal/tui` failure, re-consulted `/charmbracelet/bubbletea` for test sequencing around mode exits and `/charmbracelet/bubbles` for stateful component test hygiene -> PASS.
+   - after third `just test-pkg ./internal/tui` failure, re-consulted `/charmbracelet/bubbletea` and `/charmbracelet/bubbles` again before the final stale test-path correction -> PASS.
+
+Implementation summary:
+1. Full-page surface unification:
+   - added `internal/tui/full_page_surface.go` with one measured full-page surface helper for shared header/path/help/status budgeting.
+   - reserved status-line height plus bounded outer inset rows in the shared surface metrics so bordered full-screen surfaces stay inside the terminal with matched side gutters.
+2. Node-screen viewport unification:
+   - routed add/edit/project full-page form rendering through persistent viewport state instead of rebuilding throwaway viewports in `renderFullPageNodeModeView`.
+   - retained focus visibility by reusing `SetWidth` / `SetHeight` / `SetContent` / `SetYOffset` on the same viewport model, calling `ensureViewportLineVisible`, and tracking focused subtask/resource rows instead of just the section label.
+3. Task/thread/help consistency:
+   - removed stale board-level `s new subtask` key/help drift from the main keymap.
+   - re-synced task/edit/task-info/thread help and prompt text to actual behavior (`enter/e` action rows, no obsolete dependency `o` guidance, no stale inline description hotkeys).
+   - fixed task-info parent-navigation history so `backspace` to parent followed by `esc` behaves naturally instead of stepping through stale path history.
+   - stabilized the thread details panel label and aligned description-editor panel sizing with the same measured surface body budget used by the outer wrapper.
+4. Test remediation:
+   - normalized TUI test helpers to accept pointer-wrapped `tea.Model` results during command-driven update flows.
+   - updated the stale resource-picker resequencing assertion to use the real focus path instead of a direct field assignment bypass.
+
+Commands run and outcomes:
+1. `git status --short` -> PASS.
+2. `sed -n '1,220p' Justfile` -> PASS (reconfirmed local automation source of truth).
+3. `rg -n "fullPageSurface|renderFullPageNodeModeView|modeThread|taskFormBodyLines|activeBottomHelpKeyMap|renderHelpOverlay" internal/tui/{model.go,thread_mode.go,description_editor_mode.go,full_page_surface.go,model_test.go}` -> PASS.
+4. `sed -n '1,240p' internal/tui/full_page_surface.go` + targeted `sed` reads across `internal/tui/model.go`, `internal/tui/thread_mode.go`, `internal/tui/description_editor_mode.go`, `internal/tui/model_test.go` -> PASS.
+5. `just fmt` -> PASS.
+6. `gopls check internal/tui/full_page_surface.go internal/tui/model.go internal/tui/thread_mode.go internal/tui/description_editor_mode.go internal/tui/model_test.go` -> FAIL (sandbox cache-write permissions under `/Users/evanschultz/go/pkg/mod` and `~/Library/Caches/go-build`); ignored in favor of the required `just` test gates.
+7. `just test-pkg ./internal/tui` -> FAIL:
+   - pointer-vs-value test harness assumptions around `tea.Model` normalization in description/task/resource/dependency flows.
+8. Context7 re-consult after failure -> PASS.
+9. `just fmt` -> PASS.
+10. `just test-pkg ./internal/tui` -> FAIL:
+   - one remaining stale resource-picker resequencing assertion used a direct field assignment instead of the real focus path.
+11. Context7 re-consult after failure -> PASS.
+12. `just fmt` -> PASS.
+13. `just test-pkg ./internal/tui` -> PASS.
+14. `just check` -> PASS.
+15. `just ci` -> PASS.
+
+Files edited in this checkpoint:
+1. `internal/tui/full_page_surface.go`
+2. `internal/tui/model.go`
+3. `internal/tui/thread_mode.go`
+4. `internal/tui/description_editor_mode.go`
+5. `internal/tui/keymap.go`
+6. `internal/tui/model_test.go`
+7. `COLLAB_VECTOR_MCP_E2E_WORKSHEET.md`
+8. `PLAN.md`
+
+Status:
+- FX-008 implementation is complete and agent-side validation is green (`just test-pkg ./internal/tui`, `just check`, `just ci`).
+- Two independent QA passes are complete:
+  1. PASS: local code/UI review over the shared surface, task-form action rows, focused-row auto-scroll, and thread/help contract.
+  2. PASS: local tests/tracker review over `model_test.go`, `COLLAB_VECTOR_MCP_E2E_WORKSHEET.md`, and `PLAN.md`.
+- Worksheet/plan state has been advanced from architecture-review placeholder status to validated `READY_FOR_USER_RETEST`.
+- Next step: have the user rerun the same blocked collaborative step `T1-01` before any forward testing resumes.

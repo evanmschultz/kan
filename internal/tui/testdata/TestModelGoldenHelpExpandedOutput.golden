@@ -25,7 +25,7 @@
  tasks: 1 • selected: Help Golden Task • level: task
  deps: total 1 • blocked 0 • unresolved 0 • edges 0
  0 overdue * 0 due soon
- n new task • s new subtask • i/enter task info • e edit task • f focus subtree …[6A[J[H[K
+ n new task • i/enter task info • e edit task • f focus subtree • ctrl+y text select mode …[6A[J[H[K
 [K
 [K
 [K
@@ -36,7 +36,7 @@
     │ screen: board                                                           [3P
     │                                                   [3P
     │ - h/l or left/right move columns; j/k or up/down move task selection [3P
-    │ - n new task; s new subtask; i/enter task info; e edit task [3P
+    │ - n new task; i/enter task info; e edit task           [3P
     │ - space multi-select; [ / ] move task; d delete; D hard delete; u restore [3P
     │ - f focus subtree; F full board; t toggle archived                  [3P
     │ - / search; p project picker; : command palette; . quick actions                     │[K

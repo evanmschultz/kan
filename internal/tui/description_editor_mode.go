@@ -45,31 +45,18 @@ func (m Model) renderDescriptionEditorModeView() tea.View {
 	muted := lipgloss.Color("241")
 	dim := lipgloss.Color("239")
 
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("252"))
-	hintStyle := lipgloss.NewStyle().Foreground(muted)
-	statusStyle := lipgloss.NewStyle().Foreground(dim)
 	sectionTitleStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
-
+	title := "Description Editor"
+	subtitle := "mode: edit"
+	if m.descriptionEditorMode == descriptionEditorViewModePreview {
+		subtitle = "mode: preview"
+	}
+	boxWidth := taskInfoOverlayBoxWidth(max(0, m.fullPageNodeContentWidth()))
+	metrics := m.fullPageSurfaceMetrics(accent, muted, dim, boxWidth, title, subtitle, "")
 	layout := m.descriptionEditorLayout()
-	frame := m.descriptionEditorFrameText(layout.layoutWidth)
-	header := titleStyle.Render(frame.header)
-	pathLine := hintStyle.Render(frame.path)
-	footer := hintStyle.Render(frame.footer)
-	statusLine := ""
-	if frame.status != "" {
-		statusLine = statusStyle.Render(frame.status)
-	}
-
-	headerBlock := strings.Join([]string{header, pathLine, ""}, "\n")
-	footerParts := []string{"", footer}
-	if statusLine != "" {
-		footerParts = append(footerParts, statusLine)
-	}
-	footerBlock := strings.Join(footerParts, "\n")
-
 	workspace := ""
 	if m.descriptionEditorMode == descriptionEditorViewModePreview {
-		preview := m.descriptionEditorPreviewViewport(max(20, layout.layoutWidth-4), layout.previewModeBodyHeight, false)
+		preview := m.descriptionEditorPreviewViewport(max(20, layout.layoutWidth-4), max(4, layout.previewModeBodyHeight), false)
 		workspace = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(accent).
@@ -80,9 +67,8 @@ func (m Model) renderDescriptionEditorModeView() tea.View {
 		editor := m.descriptionEditorInput
 		editor.ShowLineNumbers = true
 		editor.SetWidth(max(20, layout.editorWidth-4))
-		editor.SetHeight(layout.editorBodyHeight)
-		_ = editor.Focus()
-		preview := m.descriptionEditorPreviewViewport(max(20, layout.previewWidth-4), layout.previewBodyHeight, true)
+		editor.SetHeight(max(3, layout.editorBodyHeight))
+		preview := m.descriptionEditorPreviewViewport(max(20, layout.previewWidth-4), max(3, layout.previewBodyHeight), true)
 
 		editorPanel := lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
@@ -111,47 +97,27 @@ func (m Model) renderDescriptionEditorModeView() tea.View {
 			)
 		}
 	}
-
-	content := strings.Join([]string{headerBlock, workspace, footerBlock}, "\n")
-	if m.height > 0 {
-		content = fitLines(content, m.height)
-	}
-	if m.help.ShowAll {
-		overlay := m.renderHelpOverlay(accent, muted, dim, hintStyle, m.width-8)
-		if overlay != "" {
-			overlayHeight := lipgloss.Height(content)
-			if m.height > 0 {
-				overlayHeight = m.height
-			}
-			content = overlayOnContent(content, overlay, max(1, m.width), max(1, overlayHeight))
-		}
-	}
-
-	v := tea.NewView(content)
-	v.MouseMode = m.activeMouseMode()
-	v.AltScreen = true
-	return v
+	surface := renderFullPageSurfaceBody(accent, muted, metrics.boxWidth, title, subtitle, "", workspace)
+	return m.renderFullPageSurfaceView(accent, muted, dim, metrics, surface)
 }
 
 // descriptionEditorLayout computes render dimensions for edit/preview submodes.
 func (m Model) descriptionEditorLayout() descriptionEditorLayoutMetrics {
-	layoutWidth := 120
-	if m.width > 0 {
-		layoutWidth = max(20, m.width-2)
+	accent := lipgloss.Color("62")
+	if project, ok := m.currentProject(); ok {
+		accent = projectAccentColor(project)
 	}
-	frame := m.descriptionEditorFrameText(layoutWidth)
-	headerBlockHeight := 3 // header, path, blank spacer (all single-line after clamping).
-	footerBlockHeight := 2 // blank spacer + footer (single-line after clamping).
-	if frame.status != "" {
-		footerBlockHeight++
+	muted := lipgloss.Color("241")
+	dim := lipgloss.Color("239")
+	title := "Description Editor"
+	subtitle := "mode: edit"
+	if m.descriptionEditorMode == descriptionEditorViewModePreview {
+		subtitle = "mode: preview"
 	}
-	workspaceHeight := 18
-	if m.height > 0 {
-		workspaceHeight = m.height - headerBlockHeight - footerBlockHeight
-	}
-	if workspaceHeight < 10 {
-		workspaceHeight = 10
-	}
+	boxWidth := taskInfoOverlayBoxWidth(max(0, m.fullPageNodeContentWidth()))
+	metrics := m.fullPageSurfaceMetrics(accent, muted, dim, boxWidth, title, subtitle, "")
+	layoutWidth := max(20, metrics.contentWidth)
+	workspaceHeight := max(10, metrics.bodyHeight)
 
 	previewModePanelContentHeight := max(6, workspaceHeight-2)
 	previewModeBodyHeight := max(4, previewModePanelContentHeight-1)
@@ -240,11 +206,14 @@ func (m Model) descriptionEditorPathLabel() string {
 // descriptionEditorPreviewViewport prepares preview viewport rendering for current dimensions.
 func (m Model) descriptionEditorPreviewViewport(width, height int, syncWithEditor bool) viewport.Model {
 	vp := m.descriptionPreview
+	prevYOffset := vp.YOffset()
 	vp.SetWidth(max(1, width))
 	vp.SetHeight(max(1, height))
 	vp.SetContent(m.descriptionEditorRenderedPreview(max(1, width)))
 	if syncWithEditor {
 		vp.SetYOffset(max(0, m.descriptionEditorInput.ScrollYOffset()))
+	} else {
+		vp.SetYOffset(prevYOffset)
 	}
 	return vp
 }
@@ -266,18 +235,22 @@ func (m *Model) syncDescriptionEditorViewportLayout() {
 	layout := m.descriptionEditorLayout()
 	if m.descriptionEditorMode == descriptionEditorViewModePreview {
 		previewWidth := max(20, layout.layoutWidth-4)
+		prevYOffset := m.descriptionPreview.YOffset()
 		m.descriptionPreview.SetWidth(max(1, previewWidth))
 		m.descriptionPreview.SetHeight(max(1, layout.previewModeBodyHeight))
 		m.descriptionPreview.SetContent(m.descriptionEditorRenderedPreview(previewWidth))
+		m.descriptionPreview.SetYOffset(prevYOffset)
 		return
 	}
 	m.descriptionEditorInput.ShowLineNumbers = true
 	m.descriptionEditorInput.SetWidth(max(20, layout.editorWidth-4))
 	m.descriptionEditorInput.SetHeight(layout.editorBodyHeight)
 	previewWidth := max(20, layout.previewWidth-4)
+	prevYOffset := m.descriptionPreview.YOffset()
 	m.descriptionPreview.SetWidth(max(1, previewWidth))
 	m.descriptionPreview.SetHeight(max(1, layout.previewBodyHeight))
 	m.descriptionPreview.SetContent(m.descriptionEditorRenderedPreview(previewWidth))
+	m.descriptionPreview.SetYOffset(prevYOffset)
 }
 
 // syncDescriptionPreviewOffsetToEditor keeps preview viewport scrolling aligned to editor scroll offset.
@@ -287,6 +260,15 @@ func (m *Model) syncDescriptionPreviewOffsetToEditor() {
 	}
 	m.syncDescriptionEditorViewportLayout()
 	m.descriptionPreview.SetYOffset(max(0, m.descriptionEditorInput.ScrollYOffset()))
+}
+
+// resetDescriptionPreviewToTop refreshes preview layout and ensures preview-mode opens from the top.
+func (m *Model) resetDescriptionPreviewToTop() {
+	if m == nil {
+		return
+	}
+	m.syncDescriptionEditorViewportLayout()
+	m.descriptionPreview.SetYOffset(0)
 }
 
 // descriptionEditorPathForTaskForm returns a project-rooted path label for task-form description editing.
