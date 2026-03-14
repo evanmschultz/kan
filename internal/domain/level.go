@@ -10,12 +10,11 @@ type ScopeLevel string
 
 // ScopeLevel values.
 const (
-	ScopeLevelProject  ScopeLevel = "project"
-	ScopeLevelBranch   ScopeLevel = "branch"
-	ScopeLevelPhase    ScopeLevel = "phase"
-	ScopeLevelSubphase ScopeLevel = "subphase"
-	ScopeLevelTask     ScopeLevel = "task"
-	ScopeLevelSubtask  ScopeLevel = "subtask"
+	ScopeLevelProject ScopeLevel = "project"
+	ScopeLevelBranch  ScopeLevel = "branch"
+	ScopeLevelPhase   ScopeLevel = "phase"
+	ScopeLevelTask    ScopeLevel = "task"
+	ScopeLevelSubtask ScopeLevel = "subtask"
 )
 
 // validScopeLevels stores all supported level values.
@@ -23,7 +22,6 @@ var validScopeLevels = []ScopeLevel{
 	ScopeLevelProject,
 	ScopeLevelBranch,
 	ScopeLevelPhase,
-	ScopeLevelSubphase,
 	ScopeLevelTask,
 	ScopeLevelSubtask,
 }
@@ -98,8 +96,6 @@ func ScopeLevelFromKindAppliesTo(scope KindAppliesTo) ScopeLevel {
 		return ScopeLevelBranch
 	case KindAppliesToPhase:
 		return ScopeLevelPhase
-	case KindAppliesToSubphase:
-		return ScopeLevelSubphase
 	case KindAppliesToSubtask:
 		return ScopeLevelSubtask
 	case KindAppliesToTask:
@@ -118,8 +114,6 @@ func ScopeLevelFromCapabilityScopeType(scope CapabilityScopeType) ScopeLevel {
 		return ScopeLevelBranch
 	case CapabilityScopePhase:
 		return ScopeLevelPhase
-	case CapabilityScopeSubphase:
-		return ScopeLevelSubphase
 	case CapabilityScopeSubtask:
 		return ScopeLevelSubtask
 	case CapabilityScopeTask:
@@ -138,8 +132,6 @@ func (level ScopeLevel) ToCapabilityScopeType() CapabilityScopeType {
 		return CapabilityScopeBranch
 	case ScopeLevelPhase:
 		return CapabilityScopePhase
-	case ScopeLevelSubphase:
-		return CapabilityScopeSubphase
 	case ScopeLevelSubtask:
 		return CapabilityScopeSubtask
 	case ScopeLevelTask:
@@ -158,8 +150,6 @@ func (level ScopeLevel) ToKindAppliesTo() KindAppliesTo {
 		return KindAppliesToBranch
 	case ScopeLevelPhase:
 		return KindAppliesToPhase
-	case ScopeLevelSubphase:
-		return KindAppliesToSubphase
 	case ScopeLevelSubtask:
 		return KindAppliesToSubtask
 	case ScopeLevelTask:

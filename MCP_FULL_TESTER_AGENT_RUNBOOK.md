@@ -135,7 +135,6 @@ Seed deterministic data for all scope levels:
 - project
 - branch
 - phase
-- subphase
 - task
 - subtask
 
@@ -145,7 +144,7 @@ Also create:
 - at least one dependency edge/blocking signal
 
 Record all IDs in report:
-- `PROJECT_ID`, `BRANCH_ID`, `PHASE_ID`, `SUBPHASE_ID`, `TASK_ID`, `SUBTASK_ID`, `ATTN_ID_*`, `LEASE_INSTANCE_ID`, `LEASE_TOKEN`.
+- `PROJECT_ID`, `BRANCH_ID`, `PHASE_ID`, `NESTED_PHASE_ID`, `TASK_ID`, `SUBTASK_ID`, `ATTN_ID_*`, `LEASE_INSTANCE_ID`, `LEASE_TOKEN`.
 
 ## 7) MCP Protocol and Stateless Matrix (Lane A)
 Required checks:
@@ -169,7 +168,7 @@ For each tool, run:
 
 ### 8.1 `till.capture_state`
 Cover scope tuple variants:
-- `project`, `branch`, `phase`, `subphase`, `task`, `subtask`
+- `project`, `branch`, `phase`, `task`, `subtask`
 
 Failure matrix:
 - missing `project_id`

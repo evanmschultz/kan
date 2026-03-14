@@ -18,10 +18,10 @@ func (a *AppServiceAdapter) GetBootstrapGuide(_ context.Context) (BootstrapGuide
 	return BootstrapGuide{
 		Mode:      "bootstrap_required",
 		Summary:   "No project context exists yet. Start by creating your first project and then capture state.",
-		WhatKanIs: "Kan is a strict task/state planner with level-scoped work (project|branch|phase|subphase|task|subtask), guardrailed mutations, and summary-first recovery context.",
+		WhatKanIs: "Kan is a strict task/state planner with level-scoped work (project|branch|phase|task|subtask), guardrailed mutations, and summary-first recovery context.",
 		Capabilities: []string{
 			"Level-scoped capture_state for summary-first recovery",
-			"Task graph operations across branch/phase/subphase/task/subtask scopes",
+			"Task graph operations across branch/phase/task/subtask scopes",
 			"Attention/blocker signaling with user-action visibility",
 			"Kind catalog and template-driven child/checklist auto-actions",
 			"Capability lease issuance and guardrailed non-user mutations",

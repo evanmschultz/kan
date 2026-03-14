@@ -275,7 +275,7 @@ var quickActionSpecs = []quickActionSpec{
 var canonicalSearchStatesOrdered = []string{"todo", "progress", "done", "archived"}
 
 // canonicalSearchLevelsOrdered stores canonical searchable hierarchy levels.
-var canonicalSearchLevelsOrdered = []string{"project", "branch", "phase", "subphase", "task", "subtask"}
+var canonicalSearchLevelsOrdered = []string{"project", "branch", "phase", "task", "subtask"}
 
 // bootstrapActorTypes stores canonical actor-type options for bootstrap settings.
 var bootstrapActorTypes = []string{
@@ -294,12 +294,11 @@ var canonicalSearchStateLabels = map[string]string{
 
 // canonicalSearchLevelLabels stores display labels for canonical hierarchy levels.
 var canonicalSearchLevelLabels = map[string]string{
-	"project":  "Project",
-	"branch":   "Branch",
-	"phase":    "Phase",
-	"subphase": "Subphase",
-	"task":     "Task",
-	"subtask":  "Subtask",
+	"project": "Project",
+	"branch":  "Branch",
+	"phase":   "Phase",
+	"task":    "Task",
+	"subtask": "Subtask",
 }
 
 // commandPaletteItem describes one command-palette command.
@@ -898,8 +897,8 @@ func NewModel(svc Service, opts ...Option) Model {
 		labelPickerInput:               labelPickerInput,
 		searchStates:                   []string{"todo", "progress", "done"},
 		searchDefaultStates:            []string{"todo", "progress", "done"},
-		searchLevels:                   []string{"project", "branch", "phase", "subphase", "task", "subtask"},
-		searchDefaultLevels:            []string{"project", "branch", "phase", "subphase", "task", "subtask"},
+		searchLevels:                   []string{"project", "branch", "phase", "task", "subtask"},
+		searchDefaultLevels:            []string{"project", "branch", "phase", "task", "subtask"},
 		dependencyStates:               []string{"todo", "progress", "done"},
 		launchPicker:                   false,
 		boardGroupBy:                   "none",
@@ -2205,8 +2204,10 @@ func activityEntityLabel(metadata map[string]string) string {
 		label = strings.TrimSpace(strings.ToLower(metadata["item_kind"]))
 	}
 	switch label {
-	case "project", "branch", "phase", "subphase", "task", "subtask", "decision", "note":
+	case "project", "branch", "phase", "task", "subtask", "decision", "note":
 		return label
+	case "subphase":
+		return "phase"
 	default:
 		return "task"
 	}
@@ -2628,30 +2629,19 @@ func (m *Model) startBranchForm(parent *domain.Task) tea.Cmd {
 	return cmd
 }
 
-// startPhaseForm opens the task form preconfigured for a phase/subphase work item.
-func (m *Model) startPhaseForm(parent *domain.Task, subphase bool) tea.Cmd {
+// startPhaseForm opens the task form preconfigured for a phase work item.
+func (m *Model) startPhaseForm(parent *domain.Task) tea.Cmd {
 	cmd := m.startTaskForm(nil)
 	m.taskFormKind = domain.WorkKindPhase
+	m.taskFormScope = domain.KindAppliesToPhase
 	m.taskFormParentID = ""
 	if parent != nil && strings.TrimSpace(parent.ID) != "" {
 		m.taskFormParentID = parent.ID
 	}
-	if subphase {
-		m.taskFormScope = domain.KindAppliesToSubphase
-		if len(m.formInputs) > taskFieldTitle {
-			m.formInputs[taskFieldTitle].Placeholder = "subphase title (required)"
-		}
-		m.status = "new subphase"
-	} else {
-		m.taskFormScope = domain.KindAppliesToTask
-		if parent != nil && strings.TrimSpace(parent.ID) != "" {
-			m.taskFormScope = domain.KindAppliesToPhase
-		}
-		if len(m.formInputs) > taskFieldTitle {
-			m.formInputs[taskFieldTitle].Placeholder = "phase title (required)"
-		}
-		m.status = "new phase"
+	if len(m.formInputs) > taskFieldTitle {
+		m.formInputs[taskFieldTitle].Placeholder = "phase title (required)"
 	}
+	m.status = "new phase"
 	m.refreshTaskFormLabelSuggestions()
 	return cmd
 }
@@ -3296,7 +3286,7 @@ func (m *Model) startLabelsConfigForm() tea.Cmd {
 			m.labelsConfigInputs[2].SetValue(strings.Join(branch.Labels, ","))
 		}
 	}
-	if phase, ok := m.labelsConfigContextTask("phase", "subphase"); ok {
+	if phase, ok := m.labelsConfigContextTask("phase"); ok {
 		m.labelsConfigPhaseTaskID = phase.ID
 		if len(phase.Labels) > 0 {
 			m.labelsConfigInputs[3].SetValue(strings.Join(phase.Labels, ","))
@@ -4193,7 +4183,6 @@ func commandPaletteItems() []commandPaletteItem {
 		{Command: "new-subtask", Aliases: []string{"task-subtask"}, Description: "create subtask for selected item"},
 		{Command: "new-branch", Aliases: []string{"branch-new"}, Description: "create a new branch"},
 		{Command: "new-phase", Aliases: []string{"phase-new"}, Description: "create a new phase"},
-		{Command: "new-subphase", Aliases: []string{"subphase-new"}, Description: "create a new subphase"},
 		{Command: "edit-branch", Aliases: []string{"branch-edit"}, Description: "edit selected branch"},
 		{Command: "archive-branch", Aliases: []string{"branch-archive"}, Description: "archive selected branch"},
 		{Command: "delete-branch", Aliases: []string{"branch-delete"}, Description: "hard delete selected branch"},
@@ -8518,24 +8507,14 @@ func (m Model) executeCommandPalette(command string) (tea.Model, tea.Cmd) {
 		}
 		return m, m.startBranchForm(nil)
 	case "new-phase", "phase-new":
-		parent, ok := m.focusedScopeTaskAtLevel("branch")
+		parent, ok := m.selectedTaskAtLevels("phase", "branch")
 		if !ok {
-			parent, ok = m.selectedTaskAtLevel("branch")
+			parent, ok = m.focusedScopeTaskAtLevels("phase", "branch")
 		}
 		if ok {
-			return m, m.startPhaseForm(&parent, false)
+			return m, m.startPhaseForm(&parent)
 		}
-		return m, m.startPhaseForm(nil, false)
-	case "new-subphase", "subphase-new":
-		parent, ok := m.focusedScopeTaskAtLevels("phase", "subphase")
-		if !ok {
-			parent, ok = m.selectedTaskAtLevels("phase", "subphase")
-		}
-		if !ok {
-			m.status = "select a phase/subphase for new subphase"
-			return m, nil
-		}
-		return m, m.startPhaseForm(&parent, true)
+		return m, m.startPhaseForm(nil)
 	case "edit-branch", "branch-edit":
 		task, ok := m.selectedBranchTask()
 		if !ok {
@@ -10060,8 +10039,6 @@ func baseSearchLevelForTask(task domain.Task) string {
 	switch domain.NormalizeKindAppliesTo(task.Scope) {
 	case domain.KindAppliesToBranch:
 		return "branch"
-	case domain.KindAppliesToSubphase:
-		return "subphase"
 	case domain.KindAppliesToPhase:
 		return "phase"
 	case domain.KindAppliesToTask:
@@ -10074,8 +10051,6 @@ func baseSearchLevelForTask(task domain.Task) string {
 		return "branch"
 	case "phase":
 		return "phase"
-	case "subphase":
-		return "subphase"
 	case "subtask":
 		return "subtask"
 	case "task":
@@ -10118,13 +10093,6 @@ func (m Model) searchLevelByTaskID(tasks []domain.Task) map[string]string {
 		}
 		visiting[taskID] = struct{}{}
 		level := baseSearchLevelForTask(task)
-		// Nested phase nodes represent subphases in board/search level filters.
-		if level == "phase" {
-			parentLevel := resolve(task.ParentID, visiting)
-			if parentLevel == "phase" || parentLevel == "subphase" {
-				level = "subphase"
-			}
-		}
 		delete(visiting, taskID)
 		out[taskID] = level
 		return level
@@ -10777,8 +10745,6 @@ func commentTargetTypeForScopeLevel(scopeType domain.ScopeLevel) (domain.Comment
 		return domain.CommentTargetTypeBranch, true
 	case domain.ScopeLevelPhase:
 		return domain.CommentTargetTypePhase, true
-	case domain.ScopeLevelSubphase:
-		return domain.CommentTargetTypeSubphase, true
 	case domain.ScopeLevelTask:
 		return domain.CommentTargetTypeTask, true
 	case domain.ScopeLevelSubtask:
@@ -12151,8 +12117,7 @@ func taskHierarchyMarker(task domain.Task) string {
 	switch baseSearchLevelForTask(task) {
 	case "branch":
 		return "branch"
-	case "phase", "subphase":
-		// Subphases are phase-level nodes for board labeling and drill-down workflows.
+	case "phase":
 		return "phase"
 	default:
 		return ""
@@ -12403,8 +12368,6 @@ func taskNodeLabel(scope domain.KindAppliesTo, kind domain.WorkKind) string {
 		return "Branch"
 	case domain.KindAppliesToPhase:
 		return "Phase"
-	case domain.KindAppliesToSubphase:
-		return "Subphase"
 	case domain.KindAppliesToSubtask:
 		return "Subtask"
 	case domain.KindAppliesToTask:
@@ -12417,8 +12380,6 @@ func taskNodeLabel(scope domain.KindAppliesTo, kind domain.WorkKind) string {
 			return "Branch"
 		case "phase":
 			return "Phase"
-		case "subphase":
-			return "Subphase"
 		case "subtask":
 			return "Subtask"
 		default:

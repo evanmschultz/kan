@@ -74,7 +74,7 @@ Actions:
 
 1. In another terminal, run the TUI against the same DB/config.
 2. Create one project with this hierarchy:
-   - `branch -> phase -> subphase -> task -> subtask`
+   - `branch -> phase -> nested phase -> task -> subtask`
 3. Add at least one open blocker/approval-required item in the same branch.
 4. Capture IDs needed for API/tool calls.
 
@@ -93,7 +93,7 @@ Expected:
 
 - Pass/Fail (set one: pass|fail|blocked): pass
 - Evidence (required): `.tmp/phase0-collab-20260227_141800/manual/m0_section0_evidence_20260227.md`
-- Notes: User confirmed hierarchy creation in TUI and requested agent-side ID extraction. MCP retrieval confirmed full hierarchy and IDs: project `dd5a30ff-893a-463a-8153-d21ab10a0c88`, branch `af1ffc21-c23a-48e7-bca8-553894a07665`, phase `524b6d9a-6425-473b-8ccd-9230c29767f2`, subphase `69b8c8cd-32c3-4d5f-b740-3d19c1900953`, task `f56ba6b4-23f7-4f43-b35d-138504a9dfad`, subtask `a566f8e4-8453-4fea-abdf-cd7a8d6498b8`. To satisfy unresolved blocker/user-action fixture requirement, attention item `1a96a924-84cb-4d70-ace8-43374a4ce322` (`approval_required`, `open`, `requires_user_action=true`) was added on the same branch scope.
+- Notes: User confirmed hierarchy creation in TUI and requested agent-side ID extraction. MCP retrieval confirmed full hierarchy and IDs: project `dd5a30ff-893a-463a-8153-d21ab10a0c88`, branch `af1ffc21-c23a-48e7-bca8-553894a07665`, phase `524b6d9a-6425-473b-8ccd-9230c29767f2`, nested phase `69b8c8cd-32c3-4d5f-b740-3d19c1900953`, task `f56ba6b4-23f7-4f43-b35d-138504a9dfad`, subtask `a566f8e4-8453-4fea-abdf-cd7a8d6498b8`. To satisfy unresolved blocker/user-action fixture requirement, attention item `1a96a924-84cb-4d70-ace8-43374a4ce322` (`approval_required`, `open`, `requires_user_action=true`) was added on the same branch scope.
 
 ---
 
@@ -104,7 +104,7 @@ Expected:
 Actions:
 
 1. Call `capture_state` for each scope level:
-   - `project`, `branch`, `phase`, `subphase`, `task`, `subtask`.
+   - `project`, `branch`, `phase`, `task`, `subtask`.
 2. Use equivalent REST endpoint or MCP tool call.
 3. Record one response per level.
 
@@ -115,8 +115,8 @@ REST example payload:
   "actor_type": "user",
   "project_id": "<project_id>",
   "branch_id": "<branch_id>",
-  "scope_type": "subphase",
-  "scope_id": "<subphase_id>",
+  "scope_type": "phase",
+  "scope_id": "<nested_phase_id>",
   "view": "summary"
 }
 ```
@@ -131,7 +131,7 @@ Expected:
 
 - Pass/Fail (set one: pass|fail|blocked): pass
 - Evidence (required): `.tmp/phase0-collab-20260227_141800/manual/section1_capture_state_evidence_20260227.md`
-- Notes: Scope-by-scope `capture_state` validation completed on seeded hierarchy for all required levels (`project`, `branch`, `phase`, `subphase`, `task`, `subtask`). Each response was deterministic summary-first with populated `scope_path` and `resume_hints`.
+- Notes: Scope-by-scope `capture_state` validation completed on seeded hierarchy for all required levels (`project`, `branch`, `phase`, `task`, `subtask`), with nested phase coverage represented through phase lineage. Each response was deterministic summary-first with populated `scope_path` and `resume_hints`.
 
 ---
 
@@ -272,7 +272,7 @@ Expected:
 Actions:
 
 1. Run search/filter at each scope level:
-   - `project`, `branch`, `phase`, `subphase`, `task`, `subtask`.
+   - `project`, `branch`, `phase`, `task`, `subtask`.
 2. Use one query that should match descendants and one that should not.
 
 Expected:

@@ -338,6 +338,9 @@ func (r *Repository) migrate(ctx context.Context) error {
 	if err := r.migrateChangeEventsActorName(ctx); err != nil {
 		return err
 	}
+	if err := r.migratePhaseScopeContract(ctx); err != nil {
+		return err
+	}
 	if err := r.ensureCommentIndexes(ctx); err != nil {
 		return err
 	}
@@ -357,6 +360,108 @@ func (r *Repository) migrate(ctx context.Context) error {
 		return fmt.Errorf("migrate sqlite vec capability probe: %w", err)
 	}
 	return nil
+}
+
+// migratePhaseScopeContract rewrites legacy subphase markers into the canonical phase contract.
+func (r *Repository) migratePhaseScopeContract(ctx context.Context) error {
+	rewriteStatements := []struct {
+		name string
+		sql  string
+		args []any
+	}{
+		{name: "tasks.scope", sql: `UPDATE tasks SET scope = ? WHERE scope = ?`, args: []any{string(domain.KindAppliesToPhase), "subphase"}},
+		{name: "work_items.scope", sql: `UPDATE work_items SET scope = ? WHERE scope = ?`, args: []any{string(domain.KindAppliesToPhase), "subphase"}},
+		{name: "comments.target_type", sql: `UPDATE comments SET target_type = ? WHERE target_type = ?`, args: []any{string(domain.CommentTargetTypePhase), "subphase"}},
+		{name: "capability_leases.scope_type", sql: `UPDATE capability_leases SET scope_type = ? WHERE scope_type = ?`, args: []any{string(domain.CapabilityScopePhase), "subphase"}},
+		{name: "attention_items.scope_type", sql: `UPDATE attention_items SET scope_type = ? WHERE scope_type = ?`, args: []any{string(domain.ScopeLevelPhase), "subphase"}},
+		{name: "change_events.metadata_json", sql: `UPDATE change_events SET metadata_json = replace(metadata_json, '\"subphase\"', '\"phase\"') WHERE metadata_json LIKE '%\"subphase\"%'`, args: nil},
+	}
+	for _, stmt := range rewriteStatements {
+		if _, err := r.db.ExecContext(ctx, stmt.sql, stmt.args...); err != nil {
+			return fmt.Errorf("migrate phase scope contract %s: %w", stmt.name, err)
+		}
+	}
+	if _, err := r.db.ExecContext(ctx, `UPDATE work_items SET scope = ? WHERE kind = ? AND scope = ?`, string(domain.KindAppliesToPhase), string(domain.WorkKindPhase), string(domain.KindAppliesToTask)); err != nil {
+		return fmt.Errorf("migrate phase scope contract work_items project phase scope: %w", err)
+	}
+	if _, err := r.db.ExecContext(ctx, `UPDATE tasks SET scope = ? WHERE kind = ? AND scope = ?`, string(domain.KindAppliesToPhase), string(domain.WorkKindPhase), string(domain.KindAppliesToTask)); err != nil {
+		return fmt.Errorf("migrate phase scope contract tasks project phase scope: %w", err)
+	}
+
+	rows, err := r.db.QueryContext(ctx, `SELECT id, applies_to_json, allowed_parent_scopes_json FROM kind_catalog`)
+	if err != nil {
+		return fmt.Errorf("migrate phase scope contract query kind_catalog: %w", err)
+	}
+	defer rows.Close()
+
+	type kindRow struct {
+		id          string
+		appliesTo   []domain.KindAppliesTo
+		parentScope []domain.KindAppliesTo
+	}
+	toUpdate := make([]kindRow, 0)
+	for rows.Next() {
+		var id, appliesRaw, parentRaw string
+		if err := rows.Scan(&id, &appliesRaw, &parentRaw); err != nil {
+			return fmt.Errorf("migrate phase scope contract scan kind_catalog: %w", err)
+		}
+
+		var appliesTo []domain.KindAppliesTo
+		if err := json.Unmarshal([]byte(appliesRaw), &appliesTo); err != nil {
+			return fmt.Errorf("migrate phase scope contract decode kind applies_to %q: %w", id, err)
+		}
+		var parentScopes []domain.KindAppliesTo
+		if err := json.Unmarshal([]byte(parentRaw), &parentScopes); err != nil {
+			return fmt.Errorf("migrate phase scope contract decode kind parent scopes %q: %w", id, err)
+		}
+
+		normalizedApplies := rewriteSubphaseKindAppliesTo(appliesTo)
+		normalizedParents := rewriteSubphaseKindAppliesTo(parentScopes)
+		if kindAppliesToEqual(appliesTo, normalizedApplies) && kindAppliesToEqual(parentScopes, normalizedParents) {
+			continue
+		}
+		toUpdate = append(toUpdate, kindRow{id: id, appliesTo: normalizedApplies, parentScope: normalizedParents})
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("migrate phase scope contract iterate kind_catalog: %w", err)
+	}
+
+	now := time.Now().UTC()
+	for _, row := range toUpdate {
+		appliesJSON, err := json.Marshal(row.appliesTo)
+		if err != nil {
+			return fmt.Errorf("migrate phase scope contract encode kind applies_to %q: %w", row.id, err)
+		}
+		parentJSON, err := json.Marshal(row.parentScope)
+		if err != nil {
+			return fmt.Errorf("migrate phase scope contract encode kind parent scopes %q: %w", row.id, err)
+		}
+		if _, err := r.db.ExecContext(ctx, `UPDATE kind_catalog SET applies_to_json = ?, allowed_parent_scopes_json = ?, updated_at = ? WHERE id = ?`, string(appliesJSON), string(parentJSON), ts(now), row.id); err != nil {
+			return fmt.Errorf("migrate phase scope contract update kind_catalog %q: %w", row.id, err)
+		}
+	}
+	return nil
+}
+
+// rewriteSubphaseKindAppliesTo replaces the removed subphase marker with phase and de-duplicates.
+func rewriteSubphaseKindAppliesTo(values []domain.KindAppliesTo) []domain.KindAppliesTo {
+	out := make([]domain.KindAppliesTo, 0, len(values))
+	seen := map[domain.KindAppliesTo]struct{}{}
+	for _, raw := range values {
+		scope := domain.NormalizeKindAppliesTo(raw)
+		if scope == "" {
+			continue
+		}
+		if scope == "subphase" {
+			scope = domain.KindAppliesToPhase
+		}
+		if _, ok := seen[scope]; ok {
+			continue
+		}
+		seen[scope] = struct{}{}
+		out = append(out, scope)
+	}
+	return out
 }
 
 // migrateCommentsOwnershipTuple rewrites comments to the canonical ownership tuple columns.
@@ -625,11 +730,11 @@ func (r *Repository) seedDefaultKindCatalog(ctx context.Context) error {
 	records := []seedRecord{
 		{id: domain.DefaultProjectKind, displayName: "Project", description: "Built-in project kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToProject}},
 		{id: domain.KindID(domain.WorkKindTask), displayName: "Task", description: "Built-in task kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask}},
-		{id: domain.KindID(domain.WorkKindSubtask), displayName: "Subtask", description: "Built-in subtask kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}, parentScope: []domain.KindAppliesTo{domain.KindAppliesToTask, domain.KindAppliesToSubtask, domain.KindAppliesToSubphase, domain.KindAppliesToPhase, domain.KindAppliesToBranch}},
-		{id: domain.KindID(domain.WorkKindPhase), displayName: "Phase", description: "Built-in phase kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase, domain.KindAppliesToSubphase, domain.KindAppliesToTask}, parentScope: []domain.KindAppliesTo{domain.KindAppliesToBranch, domain.KindAppliesToPhase, domain.KindAppliesToSubphase, domain.KindAppliesToTask}},
+		{id: domain.KindID(domain.WorkKindSubtask), displayName: "Subtask", description: "Built-in subtask kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}, parentScope: []domain.KindAppliesTo{domain.KindAppliesToTask, domain.KindAppliesToSubtask, domain.KindAppliesToPhase, domain.KindAppliesToBranch}},
+		{id: domain.KindID(domain.WorkKindPhase), displayName: "Phase", description: "Built-in phase kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}, parentScope: []domain.KindAppliesTo{domain.KindAppliesToBranch, domain.KindAppliesToPhase}},
 		{id: domain.KindID("branch"), displayName: "Branch", description: "Built-in branch kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToBranch}, parentScope: []domain.KindAppliesTo{domain.KindAppliesToBranch}},
-		{id: domain.KindID(domain.WorkKindDecision), displayName: "Decision", description: "Built-in decision kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask, domain.KindAppliesToSubphase, domain.KindAppliesToSubtask}},
-		{id: domain.KindID(domain.WorkKindNote), displayName: "Note", description: "Built-in note kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask, domain.KindAppliesToSubphase, domain.KindAppliesToSubtask}},
+		{id: domain.KindID(domain.WorkKindDecision), displayName: "Decision", description: "Built-in decision kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask, domain.KindAppliesToPhase, domain.KindAppliesToSubtask}},
+		{id: domain.KindID(domain.WorkKindNote), displayName: "Note", description: "Built-in note kind", appliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask, domain.KindAppliesToPhase, domain.KindAppliesToSubtask}},
 	}
 
 	now := time.Now().UTC()
@@ -1090,11 +1195,7 @@ func (r *Repository) CreateTask(ctx context.Context, t domain.Task) error {
 
 	scope := domain.NormalizeKindAppliesTo(t.Scope)
 	if scope == "" {
-		if strings.TrimSpace(t.ParentID) == "" {
-			scope = domain.KindAppliesToTask
-		} else {
-			scope = domain.KindAppliesToSubtask
-		}
+		scope = domain.DefaultTaskScope(t.Kind, t.ParentID)
 	}
 
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -1187,11 +1288,7 @@ func (r *Repository) UpdateTask(ctx context.Context, t domain.Task) error {
 
 	scope := domain.NormalizeKindAppliesTo(t.Scope)
 	if scope == "" {
-		if strings.TrimSpace(t.ParentID) == "" {
-			scope = domain.KindAppliesToTask
-		} else {
-			scope = domain.KindAppliesToSubtask
-		}
+		scope = domain.DefaultTaskScope(t.Kind, t.ParentID)
 	}
 
 	tx, err := r.db.BeginTx(ctx, nil)

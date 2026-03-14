@@ -68,6 +68,24 @@ type TaskInput struct {
 	UpdatedByType  ActorType
 }
 
+// DefaultTaskScope returns the canonical default scope for one work-item kind and parent tuple.
+func DefaultTaskScope(kind WorkKind, parentID string) KindAppliesTo {
+	parentID = strings.TrimSpace(parentID)
+	switch strings.TrimSpace(strings.ToLower(string(kind))) {
+	case "branch":
+		return KindAppliesToBranch
+	case "phase":
+		return KindAppliesToPhase
+	case "subtask":
+		return KindAppliesToSubtask
+	default:
+		if parentID == "" {
+			return KindAppliesToTask
+		}
+		return KindAppliesToSubtask
+	}
+}
+
 // NewTask constructs a new value for this package.
 func NewTask(in TaskInput, now time.Time) (Task, error) {
 	in.ID = strings.TrimSpace(in.ID)
@@ -110,11 +128,7 @@ func NewTask(in TaskInput, now time.Time) (Task, error) {
 	}
 	in.Scope = NormalizeKindAppliesTo(in.Scope)
 	if in.Scope == "" {
-		if in.ParentID == "" {
-			in.Scope = KindAppliesToTask
-		} else {
-			in.Scope = KindAppliesToSubtask
-		}
+		in.Scope = DefaultTaskScope(in.Kind, in.ParentID)
 	}
 	if !IsValidWorkItemAppliesTo(in.Scope) {
 		return Task{}, ErrInvalidKindAppliesTo

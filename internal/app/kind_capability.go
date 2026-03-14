@@ -386,8 +386,6 @@ func capabilityScopeTypeForTask(task domain.Task) domain.CapabilityScopeType {
 		return domain.CapabilityScopeBranch
 	case domain.KindAppliesToPhase:
 		return domain.CapabilityScopePhase
-	case domain.KindAppliesToSubphase:
-		return domain.CapabilityScopeSubphase
 	case domain.KindAppliesToSubtask:
 		return domain.CapabilityScopeSubtask
 	default:
@@ -583,14 +581,7 @@ func (s *Service) validateTaskKind(ctx context.Context, projectID string, kindID
 	if kindID == "" {
 		kindID = domain.KindID(domain.WorkKindTask)
 	}
-	scope = domain.NormalizeKindAppliesTo(scope)
-	if scope == "" {
-		if parent != nil {
-			scope = domain.KindAppliesToSubtask
-		} else {
-			scope = domain.KindAppliesToTask
-		}
-	}
+	scope = normalizeTaskScopeForKind(kindID, scope, parent)
 	if !domain.IsValidWorkItemAppliesTo(scope) {
 		return domain.KindDefinition{}, domain.ErrInvalidKindAppliesTo
 	}
@@ -621,6 +612,28 @@ func (s *Service) validateTaskKind(ctx context.Context, projectID string, kindID
 		return domain.KindDefinition{}, err
 	}
 	return kind, nil
+}
+
+// normalizeTaskScopeForKind infers the canonical stored scope for one work-item kind.
+func normalizeTaskScopeForKind(kindID domain.KindID, scope domain.KindAppliesTo, parent *domain.Task) domain.KindAppliesTo {
+	scope = domain.NormalizeKindAppliesTo(scope)
+	if scope != "" {
+		return scope
+	}
+
+	switch domain.NormalizeKindID(kindID) {
+	case domain.KindID(domain.KindAppliesToBranch):
+		return domain.KindAppliesToBranch
+	case domain.KindID(domain.WorkKindPhase):
+		return domain.KindAppliesToPhase
+	case domain.KindID(domain.WorkKindSubtask):
+		return domain.KindAppliesToSubtask
+	default:
+		if parent != nil {
+			return domain.KindAppliesToSubtask
+		}
+		return domain.KindAppliesToTask
+	}
 }
 
 // resolveProjectAllowedKinds returns explicit project allowlist values or built-in fallback.
@@ -749,11 +762,11 @@ func defaultKindDefinitionInputs() []domain.KindDefinitionInput {
 	return []domain.KindDefinitionInput{
 		{ID: domain.DefaultProjectKind, DisplayName: "Project", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToProject}},
 		{ID: domain.KindID(domain.WorkKindTask), DisplayName: "Task", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask}},
-		{ID: domain.KindID(domain.WorkKindSubtask), DisplayName: "Subtask", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}, AllowedParentScopes: []domain.KindAppliesTo{domain.KindAppliesToTask, domain.KindAppliesToSubtask, domain.KindAppliesToSubphase, domain.KindAppliesToPhase, domain.KindAppliesToBranch}},
-		{ID: domain.KindID(domain.WorkKindPhase), DisplayName: "Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase, domain.KindAppliesToSubphase, domain.KindAppliesToTask}, AllowedParentScopes: []domain.KindAppliesTo{domain.KindAppliesToBranch, domain.KindAppliesToPhase, domain.KindAppliesToSubphase, domain.KindAppliesToTask}},
+		{ID: domain.KindID(domain.WorkKindSubtask), DisplayName: "Subtask", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToSubtask}, AllowedParentScopes: []domain.KindAppliesTo{domain.KindAppliesToTask, domain.KindAppliesToSubtask, domain.KindAppliesToPhase, domain.KindAppliesToBranch}},
+		{ID: domain.KindID(domain.WorkKindPhase), DisplayName: "Phase", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToPhase}, AllowedParentScopes: []domain.KindAppliesTo{domain.KindAppliesToBranch, domain.KindAppliesToPhase}},
 		{ID: domain.KindID("branch"), DisplayName: "Branch", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToBranch}, AllowedParentScopes: []domain.KindAppliesTo{domain.KindAppliesToBranch}},
-		{ID: domain.KindID(domain.WorkKindDecision), DisplayName: "Decision", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask, domain.KindAppliesToSubphase, domain.KindAppliesToSubtask}},
-		{ID: domain.KindID(domain.WorkKindNote), DisplayName: "Note", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask, domain.KindAppliesToSubphase, domain.KindAppliesToSubtask}},
+		{ID: domain.KindID(domain.WorkKindDecision), DisplayName: "Decision", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask, domain.KindAppliesToPhase, domain.KindAppliesToSubtask}},
+		{ID: domain.KindID(domain.WorkKindNote), DisplayName: "Note", AppliesTo: []domain.KindAppliesTo{domain.KindAppliesToTask, domain.KindAppliesToPhase, domain.KindAppliesToSubtask}},
 	}
 }
 

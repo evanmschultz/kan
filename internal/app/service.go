@@ -50,12 +50,11 @@ const (
 
 // supportedSearchLevelFilters lists accepted level values for search filters.
 var supportedSearchLevelFilters = map[string]struct{}{
-	string(domain.KindAppliesToProject):  {},
-	string(domain.KindAppliesToBranch):   {},
-	string(domain.KindAppliesToPhase):    {},
-	string(domain.KindAppliesToSubphase): {},
-	string(domain.KindAppliesToTask):     {},
-	string(domain.KindAppliesToSubtask):  {},
+	string(domain.KindAppliesToProject): {},
+	string(domain.KindAppliesToBranch):  {},
+	string(domain.KindAppliesToPhase):   {},
+	string(domain.KindAppliesToTask):    {},
+	string(domain.KindAppliesToSubtask): {},
 }
 
 // ServiceConfig holds configuration for service.
@@ -461,7 +460,8 @@ func (s *Service) CreateTask(ctx context.Context, in CreateTaskInput) (domain.Ta
 		return domain.Task{}, err
 	}
 
-	kindDef, err := s.validateTaskKind(ctx, in.ProjectID, domain.KindID(in.Kind), in.Scope, parent, in.Metadata.KindPayload)
+	scope := normalizeTaskScopeForKind(domain.KindID(in.Kind), in.Scope, parent)
+	kindDef, err := s.validateTaskKind(ctx, in.ProjectID, domain.KindID(in.Kind), scope, parent, in.Metadata.KindPayload)
 	if err != nil {
 		return domain.Task{}, err
 	}
@@ -489,7 +489,7 @@ func (s *Service) CreateTask(ctx context.Context, in CreateTaskInput) (domain.Ta
 		ProjectID:      in.ProjectID,
 		ParentID:       in.ParentID,
 		Kind:           domain.WorkKind(kindDef.ID),
-		Scope:          in.Scope,
+		Scope:          scope,
 		LifecycleState: lifecycleState,
 		ColumnID:       in.ColumnID,
 		Position:       position,

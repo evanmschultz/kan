@@ -6,13 +6,13 @@ import (
 	"time"
 )
 
-// TestNewLevelTupleSubphaseSupport verifies subphase-aware level tuple normalization.
-func TestNewLevelTupleSubphaseSupport(t *testing.T) {
+// TestNewLevelTuplePhaseSupport verifies phase-aware level tuple normalization.
+func TestNewLevelTuplePhaseSupport(t *testing.T) {
 	level, err := NewLevelTuple(LevelTupleInput{
 		ProjectID: " p1 ",
 		BranchID:  " ",
-		ScopeType: ScopeLevelSubphase,
-		ScopeID:   " subphase-1 ",
+		ScopeType: ScopeLevelPhase,
+		ScopeID:   " phase-1 ",
 	})
 	if err != nil {
 		t.Fatalf("NewLevelTuple() error = %v", err)
@@ -20,10 +20,10 @@ func TestNewLevelTupleSubphaseSupport(t *testing.T) {
 	if level.ProjectID != "p1" {
 		t.Fatalf("expected trimmed project id, got %q", level.ProjectID)
 	}
-	if level.ScopeType != ScopeLevelSubphase {
-		t.Fatalf("expected subphase scope type, got %q", level.ScopeType)
+	if level.ScopeType != ScopeLevelPhase {
+		t.Fatalf("expected phase scope type, got %q", level.ScopeType)
 	}
-	if level.ScopeID != "subphase-1" {
+	if level.ScopeID != "phase-1" {
 		t.Fatalf("expected trimmed scope id, got %q", level.ScopeID)
 	}
 
@@ -46,22 +46,22 @@ func TestNewLevelTupleSubphaseSupport(t *testing.T) {
 	}
 }
 
-// TestSubphaseScopeCompatibility verifies subphase support across scope type systems.
-func TestSubphaseScopeCompatibility(t *testing.T) {
-	if !IsValidKindAppliesTo(KindAppliesToSubphase) {
-		t.Fatal("expected subphase to be valid for kind definitions")
+// TestPhaseScopeCompatibility verifies phase support across scope type systems.
+func TestPhaseScopeCompatibility(t *testing.T) {
+	if !IsValidKindAppliesTo(KindAppliesToPhase) {
+		t.Fatal("expected phase to be valid for kind definitions")
 	}
-	if !IsValidWorkItemAppliesTo(KindAppliesToSubphase) {
-		t.Fatal("expected subphase to be valid for work-item scope")
+	if !IsValidWorkItemAppliesTo(KindAppliesToPhase) {
+		t.Fatal("expected phase to be valid for work-item scope")
 	}
-	if !IsValidCapabilityScopeType(CapabilityScopeSubphase) {
-		t.Fatal("expected subphase to be valid capability scope")
+	if !IsValidCapabilityScopeType(CapabilityScopePhase) {
+		t.Fatal("expected phase to be valid capability scope")
 	}
-	if ScopeLevelFromKindAppliesTo(KindAppliesToSubphase) != ScopeLevelSubphase {
-		t.Fatalf("expected kind->level conversion to return subphase")
+	if ScopeLevelFromKindAppliesTo(KindAppliesToPhase) != ScopeLevelPhase {
+		t.Fatalf("expected kind->level conversion to return phase")
 	}
-	if ScopeLevelSubphase.ToCapabilityScopeType() != CapabilityScopeSubphase {
-		t.Fatalf("expected level->capability conversion to return subphase")
+	if ScopeLevelPhase.ToCapabilityScopeType() != CapabilityScopePhase {
+		t.Fatalf("expected level->capability conversion to return phase")
 	}
 }
 

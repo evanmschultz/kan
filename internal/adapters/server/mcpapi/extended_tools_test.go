@@ -1190,17 +1190,17 @@ func TestHandlerExpandedCommentToolsForwardHierarchyTargetTypes(t *testing.T) {
 
 	_, listResp := postJSONRPC(t, server.Client(), server.URL, callToolRequest(402, "till.list_comments_by_target", map[string]any{
 		"project_id":  "p1",
-		"target_type": "subphase",
-		"target_id":   "subphase-1",
+		"target_type": "phase",
+		"target_id":   "phase-1",
 	}))
 	if isError, _ := listResp.Result["isError"].(bool); isError {
 		t.Fatalf("list_comments_by_target returned isError=true: %#v", listResp.Result)
 	}
-	if got := service.lastListCommentReq.TargetType; got != "subphase" {
-		t.Fatalf("list_comments_by_target target_type = %q, want subphase", got)
+	if got := service.lastListCommentReq.TargetType; got != "phase" {
+		t.Fatalf("list_comments_by_target target_type = %q, want phase", got)
 	}
-	if got := service.lastListCommentReq.TargetID; got != "subphase-1" {
-		t.Fatalf("list_comments_by_target target_id = %q, want subphase-1", got)
+	if got := service.lastListCommentReq.TargetID; got != "phase-1" {
+		t.Fatalf("list_comments_by_target target_id = %q, want phase-1", got)
 	}
 }
 

@@ -6,7 +6,7 @@ import (
 	"github.com/hylla/tillsyn/internal/domain"
 )
 
-// TestCommentTargetTypeForWorkKindSupportsHierarchyKinds verifies branch/subphase kind coverage.
+// TestCommentTargetTypeForWorkKindSupportsHierarchyKinds verifies branch/phase kind coverage.
 func TestCommentTargetTypeForWorkKindSupportsHierarchyKinds(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -20,12 +20,7 @@ func TestCommentTargetTypeForWorkKindSupportsHierarchyKinds(t *testing.T) {
 			want:   domain.CommentTargetTypeBranch,
 			wantOK: true,
 		},
-		{
-			name:   "subphase kind",
-			kind:   domain.WorkKind(domain.KindAppliesToSubphase),
-			want:   domain.CommentTargetTypeSubphase,
-			wantOK: true,
-		},
+		{name: "phase kind", kind: domain.WorkKindPhase, want: domain.CommentTargetTypePhase, wantOK: true},
 		{
 			name:   "unknown kind",
 			kind:   domain.WorkKind("unknown"),
@@ -45,7 +40,7 @@ func TestCommentTargetTypeForWorkKindSupportsHierarchyKinds(t *testing.T) {
 	}
 }
 
-// TestCommentTargetTypeForTaskUsesScopeOverrides verifies scope-aware subphase/branch mapping.
+// TestCommentTargetTypeForTaskUsesScopeOverrides verifies scope-aware branch mapping.
 func TestCommentTargetTypeForTaskUsesScopeOverrides(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -53,12 +48,6 @@ func TestCommentTargetTypeForTaskUsesScopeOverrides(t *testing.T) {
 		want   domain.CommentTargetType
 		wantOK bool
 	}{
-		{
-			name:   "subphase scope on phase kind",
-			task:   domain.Task{Kind: domain.WorkKindPhase, Scope: domain.KindAppliesToSubphase},
-			want:   domain.CommentTargetTypeSubphase,
-			wantOK: true,
-		},
 		{
 			name:   "branch scope on task kind",
 			task:   domain.Task{Kind: domain.WorkKindTask, Scope: domain.KindAppliesToBranch},

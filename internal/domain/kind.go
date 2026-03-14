@@ -20,12 +20,11 @@ type KindAppliesTo string
 
 // KindAppliesTo values.
 const (
-	KindAppliesToProject  KindAppliesTo = "project"
-	KindAppliesToBranch   KindAppliesTo = "branch"
-	KindAppliesToPhase    KindAppliesTo = "phase"
-	KindAppliesToSubphase KindAppliesTo = "subphase"
-	KindAppliesToTask     KindAppliesTo = "task"
-	KindAppliesToSubtask  KindAppliesTo = "subtask"
+	KindAppliesToProject KindAppliesTo = "project"
+	KindAppliesToBranch  KindAppliesTo = "branch"
+	KindAppliesToPhase   KindAppliesTo = "phase"
+	KindAppliesToTask    KindAppliesTo = "task"
+	KindAppliesToSubtask KindAppliesTo = "subtask"
 )
 
 // validKindAppliesTo stores all supported applies_to values.
@@ -33,7 +32,6 @@ var validKindAppliesTo = []KindAppliesTo{
 	KindAppliesToProject,
 	KindAppliesToBranch,
 	KindAppliesToPhase,
-	KindAppliesToSubphase,
 	KindAppliesToTask,
 	KindAppliesToSubtask,
 }
@@ -42,7 +40,6 @@ var validKindAppliesTo = []KindAppliesTo{
 var validWorkItemAppliesTo = []KindAppliesTo{
 	KindAppliesToBranch,
 	KindAppliesToPhase,
-	KindAppliesToSubphase,
 	KindAppliesToTask,
 	KindAppliesToSubtask,
 }

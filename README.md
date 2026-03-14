@@ -40,15 +40,15 @@ Implemented now:
 - Keep collaborative validation notes in `COLLABORATIVE_POST_FIX_VALIDATION_WORKSHEET.md`.
 - Use `MCP_FULL_TESTER_AGENT_RUNBOOK.md` for MCP full-sweep execution protocol and evidence contract.
 - Local-only TUI + SQLite workflows (including startup bootstrap, project picker, threads/comments, and import/export snapshots).
-- Board info line includes hierarchy-aware focus guidance (`f` focus subtree, `F` return full board) with selected level and child counts for branch/phase/subphase navigation.
-- Board scope rendering is level-scoped: project shows immediate project children, and focused branch/phase/subphase views show immediate children for that level (not full descendant dumps).
+- Board info line includes hierarchy-aware focus guidance (`f` focus subtree, `F` return full board) with selected level and child counts for branch/phase navigation, including nested phases.
+- Board scope rendering is level-scoped: project shows immediate project children, and focused branch/phase views show immediate children for that level (not full descendant dumps).
 - Task-focused scope renders direct subtasks in the board so `f` on a task opens subtask-level board context.
 - Board path context is always visible above columns (`path: project -> ...`) and updates on each `f` drill-down.
 - Board cards now include hierarchy markers in metadata (`[branch|...]` / `[phase|...]`) so branch/phase rows are visually distinct from task rows.
 - Wide layouts render a right-side notices panel with unresolved attention summary, selected-item context, and recent activity hints.
-- `n` now respects active focus scope: in focused branch/phase/subphase it creates a child in that scope, and in focused task scope it creates a subtask.
+- `n` now respects active focus scope: in focused branch/phase it creates a child in that scope, and in focused task scope it creates a subtask.
 - Kind-catalog bootstrap + project `allowed_kinds` enforcement is active for project/task write paths.
-- Project-level `kind` and task-level `scope` persistence are active (`project|branch|phase|subphase|task|subtask` semantics enforced by kind rules).
+- Project-level `kind` and task-level `scope` persistence are active (`project|branch|phase|task|subtask` semantics enforced by kind rules, with nested phases inferred from parent lineage).
 - Kind template system actions can auto-append checklist items and auto-create child work items during task creation.
 - Capability-lease/mutation-guard enforcement scaffolding is active in app/service write paths for non-user actors.
 
@@ -217,7 +217,7 @@ Full template: `config.example.toml`
 
 Command palette highlights:
 - `new-branch`, `edit-branch`, `archive-branch`, `restore-branch`, `delete-branch`
-- `new-phase`, `new-subphase`
+- `new-phase`
 - `new-project`, `edit-project`, `archive-project`, `restore-project`, `delete-project`
 - while subtree focus is active, `new-branch` is blocked and shows a warning modal; clear focus (`F`) first
 

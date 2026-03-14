@@ -16,7 +16,6 @@ const (
 	CommentTargetTypeTask     CommentTargetType = CommentTargetType(WorkKindTask)
 	CommentTargetTypeSubtask  CommentTargetType = CommentTargetType(WorkKindSubtask)
 	CommentTargetTypePhase    CommentTargetType = CommentTargetType(WorkKindPhase)
-	CommentTargetTypeSubphase CommentTargetType = CommentTargetType(KindAppliesToSubphase)
 	CommentTargetTypeDecision CommentTargetType = CommentTargetType(WorkKindDecision)
 	CommentTargetTypeNote     CommentTargetType = CommentTargetType(WorkKindNote)
 )
@@ -28,7 +27,6 @@ var validCommentTargetTypes = []CommentTargetType{
 	CommentTargetTypeTask,
 	CommentTargetTypeSubtask,
 	CommentTargetTypePhase,
-	CommentTargetTypeSubphase,
 	CommentTargetTypeDecision,
 	CommentTargetTypeNote,
 }

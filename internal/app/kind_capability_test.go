@@ -486,8 +486,8 @@ func TestKindCapabilityHelpers(t *testing.T) {
 	}
 }
 
-// TestDefaultKindDefinitionInputsIncludeSubphase verifies built-in defaults include subphase hierarchy support.
-func TestDefaultKindDefinitionInputsIncludeSubphase(t *testing.T) {
+// TestDefaultKindDefinitionInputsIncludeNestedPhaseSupport verifies built-in defaults include nested phase support.
+func TestDefaultKindDefinitionInputsIncludeNestedPhaseSupport(t *testing.T) {
 	inputs := defaultKindDefinitionInputs()
 	byID := map[domain.KindID]domain.KindDefinitionInput{}
 	for _, input := range inputs {
@@ -498,15 +498,15 @@ func TestDefaultKindDefinitionInputsIncludeSubphase(t *testing.T) {
 	if !ok {
 		t.Fatal("expected phase kind definition to exist")
 	}
-	if !slices.Contains(phase.AppliesTo, domain.KindAppliesToSubphase) {
-		t.Fatalf("expected phase applies_to to include subphase, got %#v", phase.AppliesTo)
+	if !slices.Contains(phase.AppliesTo, domain.KindAppliesToPhase) {
+		t.Fatalf("expected phase applies_to to include phase, got %#v", phase.AppliesTo)
 	}
 
 	subtask, ok := byID[domain.KindID(domain.WorkKindSubtask)]
 	if !ok {
 		t.Fatal("expected subtask kind definition to exist")
 	}
-	if !slices.Contains(subtask.AllowedParentScopes, domain.KindAppliesToSubphase) {
-		t.Fatalf("expected subtask parent scopes to include subphase, got %#v", subtask.AllowedParentScopes)
+	if !slices.Contains(subtask.AllowedParentScopes, domain.KindAppliesToPhase) {
+		t.Fatalf("expected subtask parent scopes to include phase, got %#v", subtask.AllowedParentScopes)
 	}
 }

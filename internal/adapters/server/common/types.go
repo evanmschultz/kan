@@ -19,9 +19,6 @@ const ScopeTypeBranch = "branch"
 // ScopeTypePhase identifies phase-level scope for capture and attention operations.
 const ScopeTypePhase = "phase"
 
-// ScopeTypeSubphase identifies subphase-level scope for capture and attention operations.
-const ScopeTypeSubphase = "subphase"
-
 // ScopeTypeTask identifies task-level scope for capture and attention operations.
 const ScopeTypeTask = "task"
 
@@ -33,7 +30,6 @@ var supportedScopeTypes = []string{
 	ScopeTypeProject,
 	ScopeTypeBranch,
 	ScopeTypePhase,
-	ScopeTypeSubphase,
 	ScopeTypeTask,
 	ScopeTypeSubtask,
 }
@@ -52,8 +48,6 @@ func commentTargetTypeFromScope(scopeType string) (domain.CommentTargetType, boo
 		return domain.CommentTargetTypeBranch, true
 	case ScopeTypePhase:
 		return domain.CommentTargetTypePhase, true
-	case ScopeTypeSubphase:
-		return domain.CommentTargetTypeSubphase, true
 	case ScopeTypeTask:
 		return domain.CommentTargetTypeTask, true
 	case ScopeTypeSubtask:

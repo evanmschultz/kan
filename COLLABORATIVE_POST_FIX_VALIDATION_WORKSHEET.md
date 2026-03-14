@@ -83,7 +83,7 @@ Precondition status:
 3. C9: typing keys preserved in text inputs; selection/copy key redesign works; due picker include-time + fuzzy date works.
 4. C10: emoji input support + icon behavior is defined and visible.
 5. C11: `?` help available in all modals with correct scoped shortcuts.
-6. C12: branch path flow, focused-empty phase/subphase creation behavior, `new-branch` block under focus.
+6. C12: branch path flow, focused-empty phase creation behavior (including nested phases), `new-branch` block under focus.
 7. C13: archive/restore/project lifecycle semantics and search archived behavior (decoupled from global visibility toggle as expected).
 
 - Result: BLOCKED
@@ -400,7 +400,7 @@ M0.3 fixture + ID capture:
    - project: `dd5a30ff-893a-463a-8153-d21ab10a0c88`
    - branch: `af1ffc21-c23a-48e7-bca8-553894a07665`
    - phase: `524b6d9a-6425-473b-8ccd-9230c29767f2`
-   - subphase: `69b8c8cd-32c3-4d5f-b740-3d19c1900953`
+   - nested phase: `69b8c8cd-32c3-4d5f-b740-3d19c1900953`
    - task: `f56ba6b4-23f7-4f43-b35d-138504a9dfad`
    - subtask: `a566f8e4-8453-4fea-abdf-cd7a8d6498b8`
 3. Agent seeded unresolved user-action fixture item on same branch scope:
@@ -427,7 +427,7 @@ Evidence:
 
 M1.1 scope-by-scope `capture_state` responses:
 1. Completed for all required levels on seeded hierarchy:
-   - `project`, `branch`, `phase`, `subphase`, `task`, `subtask`.
+   - `project`, `branch`, `phase`, `task`, `subtask`.
 2. Result: PASS.
 3. Assertions met:
    - deterministic summary-first bundles returned,

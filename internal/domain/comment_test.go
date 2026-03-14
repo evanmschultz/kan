@@ -204,7 +204,7 @@ func TestNormalizeCommentTarget(t *testing.T) {
 	}
 }
 
-// TestNormalizeCommentTargetSupportsHierarchyNodes verifies branch/subphase target normalization.
+// TestNormalizeCommentTargetSupportsHierarchyNodes verifies branch/phase target normalization.
 func TestNormalizeCommentTargetSupportsHierarchyNodes(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -212,7 +212,7 @@ func TestNormalizeCommentTargetSupportsHierarchyNodes(t *testing.T) {
 		wantType   CommentTargetType
 	}{
 		{name: "branch", targetType: CommentTargetType(" BRANCH "), wantType: CommentTargetTypeBranch},
-		{name: "subphase", targetType: CommentTargetType(" SUBPHASE "), wantType: CommentTargetTypeSubphase},
+		{name: "phase", targetType: CommentTargetType(" PHASE "), wantType: CommentTargetTypePhase},
 	}
 
 	for _, tc := range tests {

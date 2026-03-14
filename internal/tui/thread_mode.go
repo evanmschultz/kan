@@ -653,10 +653,6 @@ func commentSummaryText(comment domain.Comment) string {
 
 // commentTargetTypeForTask maps one work item into comment target types with scope-aware overrides.
 func commentTargetTypeForTask(task domain.Task) (domain.CommentTargetType, bool) {
-	// Subphase items are modeled as phase kind + subphase scope, so scope takes precedence.
-	if task.Scope == domain.KindAppliesToSubphase {
-		return domain.CommentTargetTypeSubphase, true
-	}
 	if task.Scope == domain.KindAppliesToBranch {
 		return domain.CommentTargetTypeBranch, true
 	}
@@ -674,8 +670,6 @@ func commentTargetTypeForWorkKind(kind domain.WorkKind) (domain.CommentTargetTyp
 		return domain.CommentTargetTypeSubtask, true
 	case domain.WorkKindPhase:
 		return domain.CommentTargetTypePhase, true
-	case domain.WorkKind(domain.KindAppliesToSubphase):
-		return domain.CommentTargetTypeSubphase, true
 	case domain.WorkKindDecision:
 		return domain.CommentTargetTypeDecision, true
 	case domain.WorkKindNote:

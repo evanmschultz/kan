@@ -43,7 +43,7 @@ This is the full remediation inventory from Section `0.x`, Sections `C/D/E`, and
 | R-12 | Nav back behavior | `esc` should step back contextually (browser-back style), not jump to project root by default. | 0.4.10, C3/C4/C8 |
 | R-13 | Info modal return | Info modal must return to exact modal-open origin state. | C4 |
 | R-14 | Branch creation flow | Branch creation must support required path parameter behavior. | 0.4.7, C12 |
-| R-15 | Scoped phase creation | `new-phase` / `new-subphase` must work from selected and focused-empty scopes. | locked C12 requirement |
+| R-15 | Scoped phase creation | `new-phase` must support project, branch, and nested phase parents from selected and focused-empty scopes. | locked C12 requirement |
 | R-16 | Focus guardrail | `new-branch` must be blocked during subtree focus with warning modal guidance. | locked C12 requirement |
 | R-17 | Icon semantics | Define icon feature purpose/UX and make icon behavior visibly functional. | 0.4.13, C10 |
 | R-18 | Marker clarity | Keep/clarify metadata marker meanings (`!3`, overdue marker) in help/legend. | 0.4.9, C5 |
@@ -156,7 +156,7 @@ Acceptance:
 ## 4.4 Branch/Project Lifecycle + Search/Archived Semantics
 
 1. Fix branch path parameter flow and C12 command matrix.
-2. Keep `new-phase`/`new-subphase` selected + focused-empty behavior.
+2. Keep `new-phase` selected + focused-empty behavior for project, branch, and nested phase creation.
 3. Enforce `new-branch` block under subtree focus.
 4. Fix C13 archive confirm nouns and archive/restore key policy.
 5. Add `.` quick restore.

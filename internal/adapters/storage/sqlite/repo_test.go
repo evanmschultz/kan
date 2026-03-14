@@ -1583,8 +1583,8 @@ func TestRepository_AttentionItemValidationErrors(t *testing.T) {
 	})
 }
 
-// TestRepository_SeedDefaultKindsIncludeSubphase verifies seeded defaults include subphase support.
-func TestRepository_SeedDefaultKindsIncludeSubphase(t *testing.T) {
+// TestRepository_SeedDefaultKindsIncludeNestedPhaseSupport verifies seeded defaults include nested phase support.
+func TestRepository_SeedDefaultKindsIncludeNestedPhaseSupport(t *testing.T) {
 	ctx := context.Background()
 	repo, err := OpenInMemory()
 	if err != nil {
@@ -1598,11 +1598,11 @@ func TestRepository_SeedDefaultKindsIncludeSubphase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetKindDefinition(phase) error = %v", err)
 	}
-	if !phase.AppliesToScope(domain.KindAppliesToSubphase) {
-		t.Fatalf("expected phase kind to apply to subphase, got %#v", phase.AppliesTo)
+	if !phase.AppliesToScope(domain.KindAppliesToPhase) {
+		t.Fatalf("expected phase kind to apply to phase, got %#v", phase.AppliesTo)
 	}
-	if !phase.AllowsParentScope(domain.KindAppliesToSubphase) {
-		t.Fatalf("expected phase kind parent scopes to include subphase, got %#v", phase.AllowedParentScopes)
+	if !phase.AllowsParentScope(domain.KindAppliesToPhase) {
+		t.Fatalf("expected phase kind parent scopes to include phase, got %#v", phase.AllowedParentScopes)
 	}
 }
 
@@ -1661,28 +1661,28 @@ func TestRepository_PersistsProjectKindAndTaskScope(t *testing.T) {
 		t.Fatalf("expected persisted task scope phase, got %q", loadedTask.Scope)
 	}
 
-	subphaseTask, err := domain.NewTask(domain.TaskInput{
-		ID:        "t-subphase",
+	nestedPhaseTask, err := domain.NewTask(domain.TaskInput{
+		ID:        "t-nested-phase",
 		ProjectID: project.ID,
 		ParentID:  task.ID,
 		ColumnID:  column.ID,
-		Scope:     domain.KindAppliesToSubphase,
+		Scope:     domain.KindAppliesToPhase,
 		Kind:      domain.WorkKindPhase,
 		Position:  1,
-		Title:     "subphase",
+		Title:     "nested phase",
 		Priority:  domain.PriorityMedium,
 	}, now)
 	if err != nil {
-		t.Fatalf("NewTask(subphase) error = %v", err)
+		t.Fatalf("NewTask(nested phase) error = %v", err)
 	}
-	if err := repo.CreateTask(ctx, subphaseTask); err != nil {
-		t.Fatalf("CreateTask(subphase) error = %v", err)
+	if err := repo.CreateTask(ctx, nestedPhaseTask); err != nil {
+		t.Fatalf("CreateTask(nested phase) error = %v", err)
 	}
-	loadedSubphaseTask, err := repo.GetTask(ctx, subphaseTask.ID)
+	loadedNestedPhaseTask, err := repo.GetTask(ctx, nestedPhaseTask.ID)
 	if err != nil {
-		t.Fatalf("GetTask(subphase) error = %v", err)
+		t.Fatalf("GetTask(nested phase) error = %v", err)
 	}
-	if loadedSubphaseTask.Scope != domain.KindAppliesToSubphase {
-		t.Fatalf("expected persisted task scope subphase, got %q", loadedSubphaseTask.Scope)
+	if loadedNestedPhaseTask.Scope != domain.KindAppliesToPhase {
+		t.Fatalf("expected persisted task scope phase, got %q", loadedNestedPhaseTask.Scope)
 	}
 }

@@ -2334,7 +2334,7 @@ func TestCreateCommentValidation(t *testing.T) {
 	}
 }
 
-// TestSnapshotCommentTargetTypeForTaskSupportsHierarchyNodes verifies branch/subphase comment target mapping.
+// TestSnapshotCommentTargetTypeForTaskSupportsHierarchyNodes verifies branch/phase comment target mapping.
 func TestSnapshotCommentTargetTypeForTaskSupportsHierarchyNodes(t *testing.T) {
 	tests := []struct {
 		name string
@@ -2352,17 +2352,7 @@ func TestSnapshotCommentTargetTypeForTaskSupportsHierarchyNodes(t *testing.T) {
 			want: domain.CommentTargetTypeBranch,
 		},
 		{
-			name: "subphase scope on phase kind",
-			task: domain.Task{Kind: domain.WorkKindPhase, Scope: domain.KindAppliesToSubphase},
-			want: domain.CommentTargetTypeSubphase,
-		},
-		{
-			name: "subphase kind",
-			task: domain.Task{Kind: domain.WorkKind(domain.KindAppliesToSubphase)},
-			want: domain.CommentTargetTypeSubphase,
-		},
-		{
-			name: "phase backward compatible",
+			name: "phase kind",
 			task: domain.Task{Kind: domain.WorkKindPhase, Scope: domain.KindAppliesToPhase},
 			want: domain.CommentTargetTypePhase,
 		},

@@ -150,7 +150,7 @@ func WithSearchConfig(cfg SearchConfig) Option {
 			m.searchDefaultLevels = canonicalSearchLevels(cfg.Levels)
 			m.searchLevels = append([]string(nil), m.searchDefaultLevels...)
 		} else {
-			m.searchDefaultLevels = []string{"project", "branch", "phase", "subphase", "task", "subtask"}
+			m.searchDefaultLevels = []string{"project", "branch", "phase", "task", "subtask"}
 			m.searchLevels = append([]string(nil), m.searchDefaultLevels...)
 		}
 	}
