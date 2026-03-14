@@ -8507,12 +8507,20 @@ func (m Model) executeCommandPalette(command string) (tea.Model, tea.Cmd) {
 		}
 		return m, m.startBranchForm(nil)
 	case "new-phase", "phase-new":
-		parent, ok := m.selectedTaskAtLevels("phase", "branch")
-		if !ok {
-			parent, ok = m.focusedScopeTaskAtLevels("phase", "branch")
-		}
+		parent, ok := m.focusedScopeTaskAtLevels("phase", "branch")
 		if ok {
 			return m, m.startPhaseForm(&parent)
+		}
+		if rootID := strings.TrimSpace(m.projectionRootTaskID); rootID != "" {
+			root, found := m.taskByID(rootID)
+			if found {
+				m.status = "phase creation blocked in current focus"
+				m.startWarningModal(
+					"Phase Creation Blocked",
+					fmt.Sprintf("%s is a %s screen. Phases can only be created from project, branch, or phase screens.", root.Title, baseSearchLevelForTask(root)),
+				)
+				return m, nil
+			}
 		}
 		return m, m.startPhaseForm(nil)
 	case "edit-branch", "branch-edit":

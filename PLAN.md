@@ -2,7 +2,7 @@
 
 Created: 2026-02-21
 Updated: 2026-03-14
-Status: In progress; collaborative remediation remains paused on blocked TUI step `T1-01`, with FR-014 one-nestable-phase migration implemented, validated, QA-closed, and awaiting the user's rerun of that same step before any forward testing resumes.
+Status: In progress; collaborative remediation remains paused on blocked TUI step `T1-01`, with FR-015 focus-root-only phase creation semantics implemented and validated, and awaiting the user's rerun of that same step before any forward testing resumes.
 
 ## 1) Primary Goal
 
@@ -4012,4 +4012,60 @@ Status:
 - FR-014 implementation and the follow-up snapshot contract hardening are complete.
 - Validation is green on both the original migration sweep and the closeout reruns.
 - Final dual QA sign-off is complete, and worksheet/plan state is synchronized.
+- Next step: hand the same blocked step `T1-01` back to the user for rerun.
+
+## Checkpoint 2026-03-14: FR-015 Focus-Root-Only Phase Creation
+
+Objective:
+- close the next blocked gap on `T1-01` by making `new-phase` derive parentage from the active `f` focus screen only, never from the hovered/selected child row.
+
+User finding captured for this wave:
+1. After reviewing the FR-014 behavior, the user clarified the remaining `new_phase` rule:
+   - project screen -> project-level phase,
+   - focused branch screen -> child of that branch,
+   - focused phase screen -> child of that phase,
+   - task/subtask-focused screens must not create phases,
+   - hovered or selected child rows must not change phase parentage unless they become the active screen via `f`.
+
+Context7:
+1. Pre-edit consult:
+   - `/websites/pkg_go_dev_github_com_charmbracelet_bubbletea` for keeping action semantics bound to explicit model state rather than cursor selection -> PASS.
+
+Local inspection completed before edits:
+1. `executeCommandPalette("new-phase")` still preferred `selectedTaskAtLevels("phase", "branch")` before checking the active focus root.
+2. `focusedScopeTaskAtLevels(...)` already exposed the exact single source of truth needed for screen-based parentage through `projectionRootTaskID`.
+3. The remaining edge case was task/subtask-focused screens, which cannot legally parent phases and therefore needed a visible blocking warning instead of silently falling back to project-level creation.
+
+Implementation summary:
+1. TUI command routing:
+   - `new-phase` now reads only `focusedScopeTaskAtLevels("phase", "branch")` for child parentage.
+   - no subtree focus still opens a project-level phase form.
+   - focused task/subtask screens now open a warning modal explaining that phases can only be created from project, branch, or phase screens.
+2. Regression coverage:
+   - updated the existing phase-creation tests so a merely selected branch row on the project board still yields a project-level phase,
+   - confirmed a focused branch screen keeps parentage on the branch even when a child phase row is selected,
+   - kept focused phase-screen nested creation coverage,
+   - added a focused-task blocking test,
+   - preserved normalized command-id coverage for `new_phase` and `new phase`.
+
+Commands run and outcomes:
+1. Context7 Bubble Tea focused-state consult -> PASS.
+2. `just fmt` -> PASS.
+3. `just test-pkg ./internal/tui` -> PASS.
+4. `just test-golden` -> PASS.
+5. `just check` -> PASS.
+6. `just ci` -> PASS (`internal/tui` coverage 70.6%).
+7. QA pass 1 (`019ceb96-08e2-72c1-91ba-bf0bbeb39067` Poincare) -> initial LOW test-gap finding (missing phase-selected/no-focus + subtask-focused regression coverage) -> remediated with extra tests.
+8. Context7 Bubble Tea view/testing guidance re-consult after the failing regression loop -> PASS.
+9. `just fmt` -> PASS.
+10. `just test-pkg ./internal/tui` -> PASS.
+11. `just test-golden` -> PASS.
+12. `just check` -> PASS.
+13. `just ci` -> PASS (`internal/tui` coverage 70.6%).
+14. QA pass 1 (`019ceb96-08e2-72c1-91ba-bf0bbeb39067` Poincare) final -> PASS.
+15. QA pass 2 (`019ceb96-0cda-70c1-b9ee-9c99e38f027c` Leibniz) final -> PASS.
+
+Status:
+- FR-015 implementation is complete and validation is green.
+- Final QA sign-off is complete and tracker state is synchronized.
 - Next step: hand the same blocked step `T1-01` back to the user for rerun.

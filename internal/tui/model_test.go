@@ -2429,7 +2429,7 @@ func TestModelCommandPaletteTypedNormalizedProjectPhaseCreation(t *testing.T) {
 	}
 }
 
-// TestModelCommandPalettePhaseCreationActions verifies new-phase supports project, branch, and nested phase parents.
+// TestModelCommandPalettePhaseCreationActions verifies new-phase derives parentage from the active focus screen only.
 func TestModelCommandPalettePhaseCreationActions(t *testing.T) {
 	now := time.Date(2026, 2, 23, 10, 0, 0, 0, time.UTC)
 	p, _ := domain.NewProject("p1", "Roadmap", "", now)
@@ -2485,8 +2485,8 @@ func TestModelCommandPalettePhaseCreationActions(t *testing.T) {
 	if m.mode != modeAddTask {
 		t.Fatalf("expected add-task mode for new phase, got %v", m.mode)
 	}
-	if m.taskFormParentID != branch.ID || m.taskFormKind != domain.WorkKindPhase || m.taskFormScope != domain.KindAppliesToPhase {
-		t.Fatalf("expected selected-branch phase defaults, got parent=%q kind=%q scope=%q", m.taskFormParentID, m.taskFormKind, m.taskFormScope)
+	if m.taskFormParentID != "" || m.taskFormKind != domain.WorkKindPhase || m.taskFormScope != domain.KindAppliesToPhase {
+		t.Fatalf("expected project-level phase defaults when only a child row is selected, got parent=%q kind=%q scope=%q", m.taskFormParentID, m.taskFormKind, m.taskFormScope)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
 
@@ -2508,6 +2508,17 @@ func TestModelCommandPalettePhaseCreationActions(t *testing.T) {
 		t.Fatal("expected to clear focused subtree after branch-leaf phase test")
 	}
 
+	m.focusTaskByID(phase.ID)
+	updated, cmd = m.executeCommandPalette("new-phase")
+	m = applyResult(t, updated, cmd)
+	if m.mode != modeAddTask {
+		t.Fatalf("expected add-task mode for project-screen new phase with selected phase row, got mode=%v status=%q", m.mode, m.status)
+	}
+	if m.taskFormParentID != "" || m.taskFormKind != domain.WorkKindPhase || m.taskFormScope != domain.KindAppliesToPhase {
+		t.Fatalf("expected project-level phase defaults when only a phase row is selected, got parent=%q kind=%q scope=%q", m.taskFormParentID, m.taskFormKind, m.taskFormScope)
+	}
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
+
 	m.focusTaskByID(branch.ID)
 	m = applyMsg(t, m, keyRune('f'))
 	if m.projectionRootTaskID != branch.ID {
@@ -2517,10 +2528,10 @@ func TestModelCommandPalettePhaseCreationActions(t *testing.T) {
 	updated, cmd = m.executeCommandPalette("new-phase")
 	m = applyResult(t, updated, cmd)
 	if m.mode != modeAddTask {
-		t.Fatalf("expected add-task mode for nested new phase, got mode=%v status=%q", m.mode, m.status)
+		t.Fatalf("expected add-task mode for branch-screen new phase, got mode=%v status=%q", m.mode, m.status)
 	}
-	if m.taskFormParentID != phase.ID || m.taskFormKind != domain.WorkKindPhase || m.taskFormScope != domain.KindAppliesToPhase {
-		t.Fatalf("expected selected-phase nested phase defaults, got parent=%q kind=%q scope=%q", m.taskFormParentID, m.taskFormKind, m.taskFormScope)
+	if m.taskFormParentID != branch.ID || m.taskFormKind != domain.WorkKindPhase || m.taskFormScope != domain.KindAppliesToPhase {
+		t.Fatalf("expected focused-branch phase defaults even when a child phase row is selected, got parent=%q kind=%q scope=%q", m.taskFormParentID, m.taskFormKind, m.taskFormScope)
 	}
 	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEscape})
 
@@ -2557,6 +2568,7 @@ func TestModelCommandPalettePhaseCreationAcceptsNormalizedCommandIDs(t *testing.
 
 	m := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{branch})))
 	m.focusTaskByID(branch.ID)
+	m = applyMsg(t, m, keyRune('f'))
 
 	for _, raw := range []string{"new_phase", "new phase"} {
 		updated, cmd := m.executeCommandPalette(raw)
@@ -2567,6 +2579,81 @@ func TestModelCommandPalettePhaseCreationAcceptsNormalizedCommandIDs(t *testing.
 		if next.taskFormParentID != branch.ID || next.taskFormKind != domain.WorkKindPhase || next.taskFormScope != domain.KindAppliesToPhase {
 			t.Fatalf("raw command %q should preserve phase defaults, got parent=%q kind=%q scope=%q", raw, next.taskFormParentID, next.taskFormKind, next.taskFormScope)
 		}
+	}
+}
+
+// TestModelCommandPalettePhaseCreationBlocksTaskFocusedScreens verifies task and subtask screens cannot parent phases.
+func TestModelCommandPalettePhaseCreationBlocksTaskFocusedScreens(t *testing.T) {
+	now := time.Date(2026, 2, 23, 10, 20, 0, 0, time.UTC)
+	p, _ := domain.NewProject("p1", "Roadmap", "", now)
+	c, _ := domain.NewColumn("c1", p.ID, "To Do", 0, 0, now)
+	task, _ := domain.NewTask(domain.TaskInput{
+		ID:        "t1",
+		ProjectID: p.ID,
+		ColumnID:  c.ID,
+		Position:  0,
+		Kind:      domain.WorkKindTask,
+		Scope:     domain.KindAppliesToTask,
+		Title:     "Task",
+		Priority:  domain.PriorityMedium,
+	}, now)
+	subtask, _ := domain.NewTask(domain.TaskInput{
+		ID:        "st1",
+		ProjectID: p.ID,
+		ParentID:  task.ID,
+		ColumnID:  c.ID,
+		Position:  1,
+		Kind:      domain.WorkKindSubtask,
+		Scope:     domain.KindAppliesToSubtask,
+		Title:     "Subtask",
+		Priority:  domain.PriorityLow,
+	}, now)
+	for _, tc := range []struct {
+		name        string
+		enterScreen func(Model) Model
+		wantRootID  string
+	}{
+		{
+			name: "task",
+			enterScreen: func(in Model) Model {
+				in.focusTaskByID(task.ID)
+				return applyMsg(t, in, keyRune('f'))
+			},
+			wantRootID: task.ID,
+		},
+		{
+			name: "subtask",
+			enterScreen: func(in Model) Model {
+				in.focusTaskByID(task.ID)
+				in = applyMsg(t, in, keyRune('f'))
+				return applyMsg(t, in, keyRune('f'))
+			},
+			wantRootID: subtask.ID,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			current := loadReadyModel(t, NewModel(newFakeService([]domain.Project{p}, []domain.Column{c}, []domain.Task{task, subtask})))
+			current = tc.enterScreen(current)
+			if current.projectionRootTaskID != tc.wantRootID {
+				t.Fatalf("expected focused %s root %q, got %q", tc.name, tc.wantRootID, current.projectionRootTaskID)
+			}
+
+			updated, cmd := current.executeCommandPalette("new-phase")
+			current = applyResult(t, updated, cmd)
+			if current.mode != modeWarning {
+				t.Fatalf("expected warning modal mode for %s-focused new phase, got %v", tc.name, current.mode)
+			}
+			if current.status != "phase creation blocked in current focus" {
+				t.Fatalf("expected focused-%s warning status, got %q", tc.name, current.status)
+			}
+			warning := current.renderModeOverlay(lipgloss.Color("62"), lipgloss.Color("241"), lipgloss.Color("239"), lipgloss.NewStyle(), 96)
+			if !strings.Contains(warning, "Phase Creation Blocked") {
+				t.Fatalf("expected warning title in modal, got %q", warning)
+			}
+			if !strings.Contains(warning, "project, branch, or phase") || !strings.Contains(warning, "screens.") {
+				t.Fatalf("expected warning guidance in modal, got %q", warning)
+			}
+		})
 	}
 }
 
